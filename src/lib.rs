@@ -33,6 +33,7 @@ pub mod asynch;
 extern crate windows;
 
 pub mod ipc;
+pub mod multiplex;
 pub mod platform;
 pub mod router;
 
