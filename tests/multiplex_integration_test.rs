@@ -19,20 +19,20 @@ use std::{env, process};
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 #[test]
 fn multiplexing() {
-    let (mut multi_sender, mut multi_receiver) = multiplex::multi_channel().unwrap();
-    let sub_sender = multi_sender.new(&mut multi_receiver);
+    let (multi_sender, multi_receiver) = multiplex::multi_channel().unwrap();
+    let sub_sender = multi_sender.new();
     sub_sender.send(45 as u8).unwrap();
     let scid = sub_sender.sub_channel_id();
 
-    let mut sub_receiver = multi_receiver.attach(scid);
+    let mut sub_receiver = multi_receiver.attach(scid).unwrap();
     let data: u8 = sub_receiver.recv().unwrap();
     assert_eq!(data, 45);
-    
-    let sub_sender2 = multi_sender.new(&mut multi_receiver);
+
+    let sub_sender2 = multi_sender.new();
     sub_sender2.send("bananas".to_string()).unwrap();
     let scid2 = sub_sender2.sub_channel_id();
 
-    let mut sub_receiver2 = multi_receiver.attach(scid2);
+    let mut sub_receiver2 = multi_receiver.attach(scid2).unwrap();
     let data2: String = sub_receiver2.recv().unwrap();
     assert_eq!(data2, "bananas");
 }
@@ -46,7 +46,8 @@ fn spawn_one_shot_multi_server_client() {
 
     let executable_path: String = env!("CARGO_BIN_EXE_spawn_multi_client_test_helper").to_string();
 
-    let (server, token) = multiplex::OneShotMultiServer::new().expect("Failed to create one-shot multi server.");
+    let (server, token) =
+        multiplex::OneShotMultiServer::new().expect("Failed to create one-shot multi server.");
 
     let mut command = process::Command::new(executable_path);
     let child_process = command.arg(token);
@@ -56,10 +57,11 @@ fn spawn_one_shot_multi_server_client() {
         .expect("Failed to start child process");
 
     let mut multi_receiver = server.accept().expect("accept failed");
-    multi_receiver.receive().expect("receive failed");
-    let (subchannel_id, name) = multi_receiver.receive_sub_channel().expect("receive sub channel failed");
+    let (subchannel_id, name) = multi_receiver
+        .receive_sub_channel()
+        .expect("receive sub channel failed");
     assert_eq!(name, "test subchannel");
-    let mut sub_receiver = multi_receiver.attach(subchannel_id);
+    let mut sub_receiver = multi_receiver.attach(subchannel_id).unwrap();
     let data: String = sub_receiver.recv().unwrap();
     assert_eq!(data, "test message");
 

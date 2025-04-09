@@ -17,10 +17,18 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let token = args.get(1).expect("missing argument");
 
-    let mut multi_sender: MultiSender = MultiSender::connect(token.to_string()).expect("connect failed");
-    let sub_channel_sender = multi_sender.new2();
-    multi_sender.notify_sub_channel(sub_channel_sender.sub_channel_id(), "test subchannel".to_string()).expect("notify failed");
-    sub_channel_sender.send("test message".to_string()).expect("send failed");
+    let multi_sender: MultiSender =
+        MultiSender::connect(token.to_string()).expect("connect failed");
+    let sub_channel_sender = multi_sender.new();
+    multi_sender
+        .notify_sub_channel(
+            sub_channel_sender.sub_channel_id(),
+            "test subchannel".to_string(),
+        )
+        .expect("notify failed");
+    sub_channel_sender
+        .send("test message".to_string())
+        .expect("send failed");
 
     process::exit(0);
 }

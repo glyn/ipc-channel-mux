@@ -39,5 +39,7 @@ pub mod router;
 
 #[cfg(test)]
 mod test;
+#[cfg(test)]
+mod multiplex_test;
 
 pub use bincode::{Error, ErrorKind};
