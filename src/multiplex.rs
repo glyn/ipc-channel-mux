@@ -263,7 +263,6 @@ impl fmt::Debug for MultiSender {
 pub enum MultiplexError {
     IpcError(IpcError),
     MpmcSendError, // FIXME: add error details once std::sync::mpmc::SendError is stable
-    MpmcRecvError, // FIXME: add error details once std::sync::mpmc::RecvError is stable
     Disconnected,
     PoisonError,
     InternalError(String),
@@ -276,10 +275,6 @@ impl fmt::Display for MultiplexError {
             MultiplexError::MpmcSendError => write!(
                 fmt,
                 "std::sync::mpmc::SenderError: receiver may have hung up or been dropped"
-            ),
-            MultiplexError::MpmcRecvError => write!(
-                fmt,
-                "std::sync::mpmc::RecvError: sender may have hung up or been dropped"
             ),
             MultiplexError::Disconnected => write!(fmt, "disconnected"),
             MultiplexError::PoisonError => write!(fmt, "poisoned mutex"),
