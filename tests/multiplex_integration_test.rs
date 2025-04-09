@@ -8,7 +8,7 @@
 // except according to those terms.
 
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
-use ipc_channel::multiplex;
+use ipc_channel::multiplex::{self, MultiReceiver};
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use std::{env, process};
 
@@ -24,7 +24,7 @@ fn multiplexing() {
     sub_sender.send(45 as u8).unwrap();
     let scid = sub_sender.sub_channel_id();
 
-    let mut sub_receiver = multi_receiver.attach(scid).unwrap();
+    let sub_receiver = MultiReceiver::attach(&multi_receiver, scid).unwrap();
     let data: u8 = sub_receiver.recv().unwrap();
     assert_eq!(data, 45);
 
@@ -32,7 +32,7 @@ fn multiplexing() {
     sub_sender2.send("bananas".to_string()).unwrap();
     let scid2 = sub_sender2.sub_channel_id();
 
-    let mut sub_receiver2 = multi_receiver.attach(scid2).unwrap();
+    let sub_receiver2 = MultiReceiver::attach(&multi_receiver, scid2).unwrap();
     let data2: String = sub_receiver2.recv().unwrap();
     assert_eq!(data2, "bananas");
 }
@@ -56,12 +56,11 @@ fn spawn_one_shot_multi_server_client() {
         .spawn()
         .expect("Failed to start child process");
 
-    let mut multi_receiver = server.accept().expect("accept failed");
-    let (subchannel_id, name) = multi_receiver
-        .receive_sub_channel()
+    let multi_receiver = server.accept().expect("accept failed");
+    let (subchannel_id, name) = MultiReceiver::receive_sub_channel(&multi_receiver)
         .expect("receive sub channel failed");
     assert_eq!(name, "test subchannel");
-    let mut sub_receiver = multi_receiver.attach(subchannel_id).unwrap();
+    let sub_receiver = MultiReceiver::attach(&multi_receiver, subchannel_id).unwrap();
     let data: String = sub_receiver.recv().unwrap();
     assert_eq!(data, "test message");
 

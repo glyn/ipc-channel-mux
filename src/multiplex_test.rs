@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::multiplex::{self, OneShotMultiServer, MultiSender, SubChannelReceiver, SubChannelSender};
+use crate::multiplex::{self, OneShotMultiServer, MultiReceiver, MultiSender, SubChannelReceiver, SubChannelSender};
 use std::thread;
 use test_log::test;
 
@@ -17,13 +17,13 @@ fn embedded_multiplexed_senders() {
     let (multi_sender, multi_receiver) = multiplex::multi_channel().unwrap();
     let sub_tx: SubChannelSender<(String, i32)> = multi_sender.new();
     let sub_scid = sub_tx.sub_channel_id();
-    let mut sub_rx: SubChannelReceiver<(String, i32)> = multi_receiver.attach(sub_scid).unwrap();
+    let sub_rx: SubChannelReceiver<(String, i32)> = MultiReceiver::attach(&multi_receiver, sub_scid).unwrap();
 
     let person_and_sender = (person.clone(), sub_tx);
     let super_tx = multi_sender.new();
     let super_scid = super_tx.sub_channel_id();
-    let mut super_rx: SubChannelReceiver<((String, i32), SubChannelSender<(String, i32)>)> =
-        multi_receiver.attach(super_scid).unwrap();
+    let super_rx: SubChannelReceiver<((String, i32), SubChannelSender<(String, i32)>)> =
+        MultiReceiver::attach(&multi_receiver, super_scid).unwrap();
 
     super_tx.send(person_and_sender).unwrap();
     let received_person_and_sender: ((String, i32), SubChannelSender<(String, i32)>) =
@@ -48,16 +48,16 @@ fn embedded_multiplexed_two_senders() {
     let (multi_sender, multi_receiver) = multiplex::multi_channel().unwrap();
     let sub_tx: SubChannelSender<(String, i32)> = multi_sender.new();
     let sub_scid = sub_tx.sub_channel_id();
-    let mut sub_rx: SubChannelReceiver<(String, i32)> = multi_receiver.attach(sub_scid).unwrap();
+    let sub_rx: SubChannelReceiver<(String, i32)> = MultiReceiver::attach(&multi_receiver, sub_scid).unwrap();
     let sub_tx2: SubChannelSender<(String, i32)> = multi_sender.new();
     let sub_scid2 = sub_tx2.sub_channel_id();
-    let mut sub_rx2: SubChannelReceiver<(String, i32)> = multi_receiver.attach(sub_scid2).unwrap();
+    let sub_rx2: SubChannelReceiver<(String, i32)> = MultiReceiver::attach(&multi_receiver, sub_scid2).unwrap();
 
     let person_and_two_senders = (person.clone(), sub_tx, sub_tx2);
     let super_tx = multi_sender.new();
     let super_scid = super_tx.sub_channel_id();
-    let mut super_rx: SubChannelReceiver<((String, i32), SubChannelSender<(String, i32)>, SubChannelSender<(String, i32)>)> =
-        multi_receiver.attach(super_scid).unwrap();
+    let super_rx: SubChannelReceiver<((String, i32), SubChannelSender<(String, i32)>, SubChannelSender<(String, i32)>)> =
+        MultiReceiver::attach(&multi_receiver, super_scid).unwrap();
 
     super_tx.send(person_and_two_senders).unwrap();
     let received_person_and_two_senders: ((String, i32), SubChannelSender<(String, i32)>, SubChannelSender<(String, i32)>) =
@@ -92,17 +92,17 @@ fn embedded_multiplexed_two_senders() {
 fn multiplexed_senders_interacting() {
     let (multi_sender1, multi_receiver1) = multiplex::multi_channel().unwrap();
     let super_tx1 = multi_sender1.new();
-    let mut super_rx1: SubChannelReceiver<SubChannelSender<i32>> =
-    multi_receiver1.attach(super_tx1.sub_channel_id()).unwrap();
+    let super_rx1: SubChannelReceiver<SubChannelSender<i32>> =
+    MultiReceiver::attach(&multi_receiver1, super_tx1.sub_channel_id()).unwrap();
     let sub_tx1: SubChannelSender<i32> = multi_sender1.new();
-    let mut sub_rx1: SubChannelReceiver<i32> = multi_receiver1.attach(sub_tx1.sub_channel_id()).unwrap();
+    let sub_rx1: SubChannelReceiver<i32> = MultiReceiver::attach(&multi_receiver1, sub_tx1.sub_channel_id()).unwrap();
 
     let (multi_sender2, multi_receiver2) = multiplex::multi_channel().unwrap();
     let super_tx2 = multi_sender2.new();
-    let mut super_rx2: SubChannelReceiver<SubChannelSender<i32>> =
-    multi_receiver2.attach(super_tx2.sub_channel_id()).unwrap();
+    let super_rx2: SubChannelReceiver<SubChannelSender<i32>> =
+    MultiReceiver::attach(&multi_receiver2, super_tx2.sub_channel_id()).unwrap();
     let sub_tx2: SubChannelSender<i32> = multi_sender2.new();
-    let mut sub_rx2: SubChannelReceiver<i32> = multi_receiver2.attach(sub_tx2.sub_channel_id()).unwrap();
+    let sub_rx2: SubChannelReceiver<i32> = MultiReceiver::attach(&multi_receiver2, sub_tx2.sub_channel_id()).unwrap();
 
     super_tx1.send(sub_tx2).unwrap();
     super_tx2.send(sub_tx1).unwrap();
@@ -116,6 +116,64 @@ fn multiplexed_senders_interacting() {
     assert_eq!(sub_rx1.recv().unwrap(), 1);
 }
 
+#[test]
+fn embedded_multiplexed_receivers() {
+    let person = ("Patrick Walton".to_owned(),29);
+
+    let (sub_multi_sender, sub_multi_receiver) = multiplex::multi_channel().unwrap();
+    let sub_tx: SubChannelSender<(String, i32)> = sub_multi_sender.new();
+    let sub_rx: SubChannelReceiver<(String, i32)> = MultiReceiver::attach(&sub_multi_receiver, sub_tx.sub_channel_id()).unwrap();
+
+    let person_and_receiver = (person.clone(), sub_rx);
+
+    // Need a separate MultiReceiver so that it has an IpcReceiver which will not be taken when sub_rx is sent.
+    let (super_multi_sender, super_multi_receiver) = multiplex::multi_channel().unwrap();
+    let super_tx: SubChannelSender<((String, i32), SubChannelReceiver<(String, i32)>)> = super_multi_sender.new();
+    let super_rx: SubChannelReceiver<((String, i32), SubChannelReceiver<(String, i32)>)> =
+        MultiReceiver::attach(&super_multi_receiver, super_tx.sub_channel_id()).unwrap();
+
+    super_tx.send(person_and_receiver).unwrap();
+    let received_person_and_receiver = super_rx.recv().unwrap();
+    assert_eq!(received_person_and_receiver.0, person);
+    sub_tx.send(person.clone()).unwrap();
+    let received_person = received_person_and_receiver.1.recv().unwrap();
+    assert_eq!(received_person, person);
+}
+
+#[test]
+fn embedded_multiplexed_receivers_used_before_and_after_transmission() {
+    let person = ("Patrick Walton".to_owned(),29);
+
+    let (sub_multi_sender, sub_multi_receiver) = multiplex::multi_channel().unwrap();
+    let sub_tx: SubChannelSender<(String, i32)> = sub_multi_sender.new();
+    let sub_rx: SubChannelReceiver<(String, i32)> = MultiReceiver::attach(&sub_multi_receiver, sub_tx.sub_channel_id()).unwrap();
+
+    sub_tx.send(person.clone()).unwrap();
+    let received_person1 = sub_rx.recv().unwrap();
+    assert_eq!(received_person1, person);
+
+    let person_and_receiver = (person.clone(), sub_rx);
+
+    // Need a separate MultiReceiver so that it has an IpcReceiver which will not be taken when sub_rx is sent.
+    let (super_multi_sender, super_multi_receiver) = multiplex::multi_channel().unwrap();
+    let super_tx: SubChannelSender<((String, i32), SubChannelReceiver<(String, i32)>)> = super_multi_sender.new();
+    let super_rx: SubChannelReceiver<((String, i32), SubChannelReceiver<(String, i32)>)> =
+        MultiReceiver::attach(&super_multi_receiver, super_tx.sub_channel_id()).unwrap();
+
+    super_tx.send(person_and_receiver).unwrap();
+    let received_person_and_receiver = super_rx.recv().unwrap();
+    assert_eq!(received_person_and_receiver.0, person);
+    sub_tx.send(person.clone()).unwrap();
+    let received_person2 = received_person_and_receiver.1.recv().unwrap();
+    assert_eq!(received_person2, person);
+}
+
+#[cfg(not(any(
+    feature = "force-inprocess",
+    target_os = "windows",
+    target_os = "android",
+    target_os = "ios"
+)))]
 // This test demonstrates the basic purpose of multiplexing. If IpcChannels were
 // used, then this test would fail on Unix variants since the spawned process
 // would run out of file descriptors. Using multiplexed channels, the spawned
@@ -124,7 +182,7 @@ fn multiplexed_senders_interacting() {
 fn receiving_many_subchannels() {
     let (multi_sender, multi_receiver) = multiplex::multi_channel().unwrap();
     let send2 = multi_sender.new();
-    let mut recv2: SubChannelReceiver<bool> = multi_receiver.attach(send2.sub_channel_id()).unwrap();
+    let recv2: SubChannelReceiver<bool> = MultiReceiver::attach(&multi_receiver, send2.sub_channel_id()).unwrap();
   
     // this will be used to receive from the spawned thread
      let (bootstrap_server, bootstrap_token) = OneShotMultiServer::new().unwrap();
@@ -136,7 +194,7 @@ fn receiving_many_subchannels() {
          
         let (multi_sender, multi_receiver) = multiplex::multi_channel().unwrap();
         let send1: SubChannelSender<SubChannelSender<bool>> = multi_sender.new();
-        let mut recv1: SubChannelReceiver<SubChannelSender<bool>> = multi_receiver.attach(send1.sub_channel_id()).unwrap();
+        let recv1: SubChannelReceiver<SubChannelSender<bool>> = MultiReceiver::attach(&multi_receiver, send1.sub_channel_id()).unwrap();
         
         bootstrap_sub_channel_sender.send(send1).unwrap();
 
@@ -151,10 +209,10 @@ fn receiving_many_subchannels() {
         }
     });
     
-    let mut bootstrap_multi_receiver = bootstrap_server.accept().unwrap();
-    let (subchannel_id, name) = bootstrap_multi_receiver.receive_sub_channel().unwrap();
+    let bootstrap_multi_receiver = bootstrap_server.accept().unwrap();
+    let (subchannel_id, name) = MultiReceiver::receive_sub_channel(&bootstrap_multi_receiver).unwrap();
     assert_eq!(name, "bootstrap".to_string());
-    let mut bootstrap_sub_channel_receiver = bootstrap_multi_receiver.attach(subchannel_id).unwrap();
+    let bootstrap_sub_channel_receiver = MultiReceiver::attach(&bootstrap_multi_receiver, subchannel_id).unwrap();
     let send1: SubChannelSender<SubChannelSender<bool>> = bootstrap_sub_channel_receiver.recv().unwrap();
  
     for _ in 0..10000 {
@@ -162,3 +220,4 @@ fn receiving_many_subchannels() {
         let _ = recv2.recv();
     }
 }
+
