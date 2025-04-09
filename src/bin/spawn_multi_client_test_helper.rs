@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ipc_channel::multiplex::MultiSender;
+use ipc_channel::multiplex::SubSender;
 use std::{env, process};
 
 /// Test executable which connects to the one-shot server with name
@@ -17,18 +17,9 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let token = args.get(1).expect("missing argument");
 
-    let multi_sender: MultiSender =
-        MultiSender::connect(token.to_string()).expect("connect failed");
-    let sub_channel_sender = multi_sender.new();
-    multi_sender
-        .notify_sub_channel(
-            sub_channel_sender.sub_channel_id(),
-            "test subchannel".to_string(),
-        )
-        .expect("notify failed");
-    sub_channel_sender
-        .send("test message".to_string())
-        .expect("send failed");
+    let tx: SubSender<String> = SubSender::connect(token.to_string()).expect("connect failed");
+    tx.send("test message".to_string()).expect("send failed");
 
     process::exit(0);
 }
+

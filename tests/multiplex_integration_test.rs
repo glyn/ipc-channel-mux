@@ -8,7 +8,7 @@
 // except according to those terms.
 
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
-use ipc_channel::multiplex::{self, MultiReceiver};
+use ipc_channel::multiplex;
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use std::{env, process};
 
@@ -19,20 +19,20 @@ use std::{env, process};
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 #[test]
 fn multiplexing() {
-    let (multi_sender, multi_receiver) = multiplex::multi_channel().unwrap();
-    let sub_sender = multi_sender.new();
-    sub_sender.send(45 as u8).unwrap();
-    let scid = sub_sender.sub_channel_id();
+    // let (multi_sender, multi_receiver) = multiplex::multi_channel().unwrap();
+    // let sub_sender = multi_sender.new();
 
-    let sub_receiver = MultiReceiver::attach(&multi_receiver, scid).unwrap();
+    use ipc_channel::multiplex;
+    let channel = multiplex::Channel::new().unwrap();
+    let (sub_sender, sub_receiver) = channel.sub_channel().unwrap();
+    sub_sender.send(45 as u8).unwrap();
+
     let data: u8 = sub_receiver.recv().unwrap();
     assert_eq!(data, 45);
 
-    let sub_sender2 = multi_sender.new();
+    let (sub_sender2, sub_receiver2) = channel.sub_channel().unwrap();
     sub_sender2.send("bananas".to_string()).unwrap();
-    let scid2 = sub_sender2.sub_channel_id();
 
-    let sub_receiver2 = MultiReceiver::attach(&multi_receiver, scid2).unwrap();
     let data2: String = sub_receiver2.recv().unwrap();
     assert_eq!(data2, "bananas");
 }
@@ -41,13 +41,11 @@ fn multiplexing() {
 /// one-shot multi server in the parent process.
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 #[test]
-fn spawn_one_shot_multi_server_client() {
-    use ipc_channel::multiplex;
-
+fn spawn_sub_one_shot_server_client() {
     let executable_path: String = env!("CARGO_BIN_EXE_spawn_multi_client_test_helper").to_string();
 
     let (server, token) =
-        multiplex::OneShotMultiServer::new().expect("Failed to create one-shot multi server.");
+        multiplex::SubOneShotServer::<String>::new().expect("Failed to create sub one-shot server");
 
     let mut command = process::Command::new(executable_path);
     let child_process = command.arg(token);
@@ -56,13 +54,8 @@ fn spawn_one_shot_multi_server_client() {
         .spawn()
         .expect("Failed to start child process");
 
-    let multi_receiver = server.accept().expect("accept failed");
-    let (subchannel_id, name) = MultiReceiver::receive_sub_channel(&multi_receiver)
-        .expect("receive sub channel failed");
-    assert_eq!(name, "test subchannel");
-    let sub_receiver = MultiReceiver::attach(&multi_receiver, subchannel_id).unwrap();
-    let data: String = sub_receiver.recv().unwrap();
-    assert_eq!(data, "test message");
+    let (_rx, msg) = server.accept().expect("accept failed");
+    assert_eq!("test message", msg);
 
     let result = child.wait().expect("wait for child process failed");
     assert!(
