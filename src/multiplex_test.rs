@@ -141,6 +141,38 @@ fn multiplex_simple() {
 }
 
 #[test]
+fn compare_base_transmission_dropped() {
+    let channel = multiplex::Channel::new().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel::<i32>().unwrap();
+
+    let (super_tx, super_rx) = channel.sub_channel().unwrap();
+    super_tx.send(sub_tx).unwrap();
+    drop(super_rx);
+
+    match sub_rx.recv().unwrap_err() {
+        multiplex::MultiplexError::MpmcSendError => (),
+        e => panic!("expected send error, got {:?}", e),
+    }
+}
+
+// The following test deadlocks. Compare the above test.
+// #[test]
+// fn compare_base_transmission_dropped_distinct() {
+//     let sub_channel = multiplex::Channel::new().unwrap();
+//     let (sub_tx, sub_rx) = sub_channel.sub_channel::<i32>().unwrap();
+    
+//     let channel = multiplex::Channel::new().unwrap();
+//     let (super_tx, super_rx) = channel.sub_channel().unwrap();
+//     super_tx.send(sub_tx).unwrap();
+//     drop(super_rx);
+
+//     match sub_rx.recv().unwrap_err() {
+//         multiplex::MultiplexError::MpmcSendError => (),
+//         e => panic!("expected send error, got {:?}", e),
+//     }
+// }
+
+#[test]
 fn embedded_multiplexed_senders() {
     let person = ("Patrick Walton".to_owned(), 29);
 
