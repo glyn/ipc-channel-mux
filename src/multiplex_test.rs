@@ -172,7 +172,7 @@ fn compare_base_transmission_dropped() {
 
     let (super_tx, super_rx) = channel.sub_channel().unwrap();
     super_tx.send(sub_tx).unwrap();
-    drop(super_rx); // commenting this out should produce a deadlock
+    drop(super_rx); // commenting this out makes sub_rx.recv() deadlock
 
     match sub_rx.recv().unwrap_err() {
         multiplex::MultiplexError::MpmcSendError => (),
@@ -180,7 +180,7 @@ fn compare_base_transmission_dropped() {
     }
 }
 
-// The following test deadlocks. Compare the above test.
+// The following test deadlocks because the sub_rx is not dropped
 // #[test]
 // fn compare_base_transmission_dropped_distinct() {
 //     let sub_channel = multiplex::Channel::new().unwrap();

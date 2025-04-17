@@ -100,11 +100,7 @@ where
     pub fn connect(name: String) -> Result<SubSender<T>, MultiplexError> {
         let multi_sender: MultiSender = MultiSender::connect(name.to_string())?;
         let sub_channel_sender: SubChannelSender<T> = multi_sender.new();
-        multi_sender
-        .notify_sub_channel(
-            sub_channel_sender.sub_channel_id(),
-            name,
-        )?;
+        multi_sender.notify_sub_channel(sub_channel_sender.sub_channel_id(), name)?;
         Ok(SubSender {
             sub_channel_sender: sub_channel_sender,
             phantom: PhantomData,
@@ -186,7 +182,10 @@ where
         let (subchannel_id, name) = MultiReceiver::receive_sub_channel(&multi_receiver)
             .expect("receive sub channel failed");
         if name != self.name {
-            return Err(MultiplexError::InternalError(format!("unexpected sub channel name {}", name)));
+            return Err(MultiplexError::InternalError(format!(
+                "unexpected sub channel name {}",
+                name
+            )));
         }
         let sub_receiver = MultiReceiver::attach(&multi_receiver, subchannel_id).unwrap();
         let msg: T = sub_receiver.recv()?;
@@ -468,12 +467,8 @@ impl MultiReceiver {
                             IpcSenderAndOrId::IpcSenderId(id) => {
                                 let uuid = Uuid::parse_str(&id).unwrap();
                                 log::trace!("looking up IpcSender associated with {}", uuid);
-                                let maybe_sender = mr
-                                    .borrow()
-                                    .mutator
-                                    .borrow()
-                                    .ipc_senders_by_id
-                                    .look_up(uuid);
+                                let maybe_sender =
+                                    mr.borrow().mutator.borrow().ipc_senders_by_id.look_up(uuid);
                                 log::trace!("result of looking up IpcSender is {:?}", maybe_sender);
                                 maybe_sender.unwrap()
                             },
@@ -509,10 +504,7 @@ impl MultiReceiver {
                                             ipc_senders_by_id: Target::new(),
                                             ipc_receivers_by_id: Target::new(),
                                             multi_receiver_grid: Rc::clone(
-                                                &mr.borrow()
-                                                    .mutator
-                                                    .borrow()
-                                                    .multi_receiver_grid,
+                                                &mr.borrow().mutator.borrow().multi_receiver_grid,
                                             ),
                                         }),
                                     };
@@ -832,27 +824,31 @@ where
 {
     #[instrument(level = "debug", err(level = "debug"))]
     fn recv(&self) -> Result<T, MultiplexError> {
-        let multi_receiver_result = self.multi_receiver.borrow().receive();
-        log::trace!(
-            "SubChannelReceiver::recv multi_receiver_result = {:#?}",
-            multi_receiver_result.as_ref()
-        );
-        multi_receiver_result?;
-        log::trace!("SubChannelReceiver = {:#?}", self);
-        let recvd = self
-            .channel
-            .recv() // this may block if multireceiver received a message for another subchannel
-            // but if/when the other subchannel receiver recv is called, it will unblock
-            // FIXME: cope with the case where the other subchannel receiver recv is not called
-            // Maybe the solution is to loop receiving messages and use channel try_recv
-            .map_err(|_| MultiplexError::Disconnected)?;
-        log::trace!("SubChannelReceiver::recv recvd = {:#?}", recvd);
-        let result = bincode::deserialize(recvd.as_slice());
-        IPC_SENDERS_RECEIVED.with(|senders| {
-            senders.borrow_mut().clear();
-            Ok::<(), MultiplexError>(())
-        })?;
-        result.map_err(From::from)
+        loop {
+            match self.channel.try_recv() {
+                Ok(payload) => {
+                    log::trace!("SubChannelReceiver::recv received = {:#?}", payload);
+                    let result = bincode::deserialize(payload.as_slice());
+                    IPC_SENDERS_RECEIVED.with(|senders| {
+                        senders.borrow_mut().clear();
+                        Ok::<(), MultiplexError>(())
+                    })?;
+                    return result.map_err(From::from);
+                },
+                Err(mpsc::TryRecvError::Empty) => {
+                    // receive another message, possibly for another subchannel
+                    let multi_receiver_result = self.multi_receiver.borrow().receive();
+                    log::trace!(
+                        "SubChannelReceiver::recv multi_receiver_result = {:#?}",
+                        multi_receiver_result.as_ref()
+                    );
+                    multi_receiver_result?;
+                },
+                Err(_) => {
+                    return Err(MultiplexError::Disconnected);
+                },
+            }
+        }
     }
 }
 
