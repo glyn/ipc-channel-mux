@@ -147,7 +147,7 @@ fn compare_base_transmission_dropped() {
 
     let (super_tx, super_rx) = channel.sub_channel().unwrap();
     super_tx.send(sub_tx).unwrap();
-    drop(super_rx);
+    drop(super_rx); // commenting this out should produce a deadlock
 
     match sub_rx.recv().unwrap_err() {
         multiplex::MultiplexError::MpmcSendError => (),
