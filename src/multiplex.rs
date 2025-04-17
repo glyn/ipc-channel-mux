@@ -579,7 +579,9 @@ impl MultiReceiver {
                 // CURRENT_MULTI_RECEIVER.with(|multi_receiver| {
                 //     multi_receiver.borrow_mut().take();
                 // });
-                result
+                
+                //result // This causes SubReceiver::recv() to fail even if the error was for another subchannel
+                Ok(())
             },
             MultiMessage::Disconnect(scid) => {
                 // FIXME: all senders (the original, its clones, and any transmitted copies) need to disconnect
