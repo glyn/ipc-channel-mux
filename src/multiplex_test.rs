@@ -141,6 +141,31 @@ fn multiplex_simple() {
 }
 
 #[test]
+fn multiplex_two_subchannels() {
+    let channel = multiplex::Channel::new().unwrap();
+    let (tx1, rx1) = channel.sub_channel().unwrap();
+    tx1.send(1).unwrap();
+    assert_eq!(1, rx1.recv().unwrap());
+    
+    let (tx2, rx2) = channel.sub_channel().unwrap();
+    tx2.send(2).unwrap();
+    assert_eq!(2, rx2.recv().unwrap());
+}
+
+#[test]
+fn multiplex_two_subchannels_reverse_ordered() {
+    let channel = multiplex::Channel::new().unwrap();
+    let (tx1, rx1) = channel.sub_channel().unwrap();
+    tx1.send(1).unwrap();
+    
+    let (tx2, rx2) = channel.sub_channel().unwrap();
+    tx2.send(2).unwrap();
+
+    assert_eq!(2, rx2.recv().unwrap());
+    assert_eq!(1, rx1.recv().unwrap());
+}
+
+#[test]
 fn compare_base_transmission_dropped() {
     let channel = multiplex::Channel::new().unwrap();
     let (sub_tx, sub_rx) = channel.sub_channel::<i32>().unwrap();
