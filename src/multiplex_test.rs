@@ -165,7 +165,7 @@ fn multiplex_two_subchannels_reverse_ordered() {
     assert_eq!(1, rx1.recv().unwrap());
 }
 
-// The following test deadlocks because the sub_rx is not dropped
+// The following test deadlocks because sub_rx is not closed
 // #[test]
 // fn compare_base_transmission_dropped() {
 //     let channel = multiplex::Channel::new().unwrap();
@@ -181,7 +181,7 @@ fn multiplex_two_subchannels_reverse_ordered() {
 //     }
 // }
 
-// The following test deadlocks because the sub_rx is not dropped
+// The following test deadlocks because sub_rx is not closed
 // #[test]
 // fn compare_base_transmission_dropped_distinct() {
 //     let sub_channel = multiplex::Channel::new().unwrap();
