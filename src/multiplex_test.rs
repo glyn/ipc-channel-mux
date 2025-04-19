@@ -354,6 +354,32 @@ fn receiving_many_subchannels() {
 }
 
 #[test]
+fn sender_transmission_dropped_in_flight() {
+    let channel = multiplex::Channel::new().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel::<i32>().unwrap();
+
+    let (super_tx, super_rx) = channel.sub_channel().unwrap();
+    super_tx.send(sub_tx).unwrap();
+
+    match sub_rx.recv().unwrap_err() {
+        multiplex::MultiplexError::Disconnected => panic!("sub_tx dropped prematurely"),
+        e => panic!("expected disconnected error, got {:?}", e),
+    }
+
+    // match sub_rx.try_recv().unwrap_err() { // try_recv not yet implemented
+    //     ipc::TryRecvError::Empty => (),
+    //     e => assert!(false, "unexpected error {:?}", e),
+    // }
+
+    drop(super_rx); // commenting this out makes sub_rx.recv() deadlock
+
+    match sub_rx.recv().unwrap_err() {
+        multiplex::MultiplexError::Disconnected => (),
+        e => panic!("expected disconnected error, got {:?}", e),
+    }
+}
+
+#[test]
 fn multiplex_drop_only_subsender_for_dropped_channel() {
     let channel = multiplex::Channel::new().unwrap();
     let (tx, rx) = channel.sub_channel::<i32>().unwrap();
