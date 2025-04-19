@@ -353,7 +353,7 @@ fn receiving_many_subchannels() {
     }
 }
 
-use crate::ipc;
+use crate::ipc; // FIXME: Wrap Disconnected error to avoid this import.
 
 #[test]
 fn multiplex_drop_only_subsender_for_dropped_channel() {
