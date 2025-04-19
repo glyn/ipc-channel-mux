@@ -46,7 +46,7 @@ impl Channel {
     {
         let scs = self.multi_sender.new();
         let scid = scs.sub_channel_id();
-        let scr = MultiReceiver::attach(&self.multi_receiver, scid)?;
+        let scr = MultiReceiver::attach(&self.multi_receiver, scid)?; // TODO: if attach could be made error-free, then so could this function
         Ok((
             SubSender {
                 sub_channel_sender: scs,
@@ -407,7 +407,7 @@ impl MultiReceiver {
                     .multi_receiver_grid
                     .borrow()
                     .get(&mr.borrow().ipc_receiver_uuid)
-                    .unwrap(),
+                    .unwrap(), // TODO: if this potential panic could be avoided, attach would never return an error
             ),
             sub_channel_id: sub_channel_id,
             ipc_receiver_uuid: mr.borrow().ipc_receiver_uuid,
