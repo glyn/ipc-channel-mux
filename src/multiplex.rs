@@ -727,6 +727,7 @@ where
                 let result =
                     self.ipc_sender
                         .send(MultiMessage::Data(self.sub_channel_id, data, srs, rrs));
+                // TODO: wait for acknowledgement (esp. if we sent any subchannel senders or receivers)
                 log::debug!("<SubChannelSender::send -> {:#?}", result.as_ref());
                 result.map_err(From::from)
             })

@@ -329,11 +329,11 @@ fn receiving_many_subchannels() {
         let channel = multiplex::Channel::new().unwrap();
         let (send1, recv1) = channel.sub_channel().unwrap();
 
-        bootstrap_sub_sender.send(send1).unwrap();
+        bootstrap_sub_sender.send(send1).unwrap(); // FIXME: this disconnects recv1. Sending a clone works around the bug.
 
         let mut senders = vec![];
-        while let Ok(send2) = recv1.recv() {
-            let _ = send2.send(true);
+        while let send2 = recv1.recv().unwrap() {
+            send2.send(true).unwrap();
             // The fd is private, but this transmute lets us get at it
             let fd: &std::sync::Arc<u32> = unsafe { std::mem::transmute(&send2) };
             println!("fd = {}", *fd);
@@ -348,8 +348,8 @@ fn receiving_many_subchannels() {
     ) = bootstrap_server.accept().unwrap();
 
     for _ in 0..10000 {
-        let _ = send1.send(send2.clone());
-        let _ = recv2.recv();
+        send1.send(send2.clone()).unwrap();
+        recv2.recv().unwrap();
     }
 }
 
