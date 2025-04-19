@@ -636,6 +636,12 @@ impl<T> Clone for SubChannelSender<T> {
     }
 }
 
+impl<T> Drop for SubChannelSender<T> {
+    fn drop(&mut self) {
+        self.ipc_sender.send(MultiMessage::Disconnect(self.sub_channel_id)).unwrap();
+    }
+}
+
 impl<T> SubChannelSender<T>
 where
     T: Serialize,
