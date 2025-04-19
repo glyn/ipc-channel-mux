@@ -353,7 +353,21 @@ fn receiving_many_subchannels() {
     }
 }
 
-// The following test deadlocks because rx is not closed.
+use crate::ipc;
+
+#[test]
+fn multiplex_drop_only_subsender_for_dropped_channel() {
+    let channel = multiplex::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel::<i32>().unwrap();
+    drop(channel);
+
+    drop(tx);
+    match rx.recv().unwrap_err() {
+        multiplex::MultiplexError::IpcError(ipc::IpcError::Disconnected) => (),
+        e => panic!("expected send error, got {:?}", e),
+    }
+}
+
 // #[test]
 // fn multiplex_drop_only_subsender_for_channel() {
 //     let channel = multiplex::Channel::new().unwrap();
@@ -368,11 +382,26 @@ fn receiving_many_subchannels() {
 
 // The following test deadlocks because rx is not closed.
 // #[test]
+// fn multiplex_drop_only_subsender_for_subchannel_of_dropped_channel() {
+//     let channel = multiplex::Channel::new().unwrap();
+//     let (tx1, rx1) = channel.sub_channel::<i32>().unwrap();
+//     let (_tx2, _rx2) = channel.sub_channel::<i32>().unwrap();
+//     drop(channel);
+//
+//     drop(tx1);
+//     match rx1.recv().unwrap_err() {
+//         multiplex::MultiplexError::MpmcSendError => (),
+//         e => panic!("expected send error, got {:?}", e),
+//     }
+// }
+
+// The following test deadlocks because rx is not closed.
+// #[test]
 // fn multiplex_drop_only_subsender_for_subchannel() {
 //     let channel = multiplex::Channel::new().unwrap();
 //     let (tx1, rx1) = channel.sub_channel::<i32>().unwrap();
 //     let (_tx2, _rx2) = channel.sub_channel::<i32>().unwrap();
-
+//
 //     drop(tx1);
 //     match rx1.recv().unwrap_err() {
 //         multiplex::MultiplexError::MpmcSendError => (),
@@ -382,12 +411,35 @@ fn receiving_many_subchannels() {
 
 // The following test fails because tx is not closed.
 // #[test]
+// fn multiplex_drop_only_subreceiver_for_dropped_channel() {
+//     let channel = multiplex::Channel::new().unwrap();
+//     let (tx, rx) = channel.sub_channel::<i32>().unwrap();
+//     drop(channel);
+//
+//     drop(rx);
+//     assert!(tx.send(1).is_err());
+// }
+
+// The following test fails because tx is not closed.
+// #[test]
 // fn multiplex_drop_only_subreceiver_for_channel() {
 //     let channel = multiplex::Channel::new().unwrap();
 //     let (tx, rx) = channel.sub_channel::<i32>().unwrap();
-
+//
 //     drop(rx);
 //     assert!(tx.send(1).is_err());
+// }
+
+// The following test fails because tx is not closed.
+// #[test]
+// fn multiplex_drop_only_subreceiver_for_subchannel_of_dropped_channel() {
+//     let channel = multiplex::Channel::new().unwrap();
+//     let (tx1, rx1) = channel.sub_channel::<i32>().unwrap();
+//     let (_tx2, _rx2) = channel.sub_channel::<i32>().unwrap();
+//     drop(channel);
+//
+//     drop(rx1);
+//     assert!(tx1.send(1).is_err());
 // }
 
 // The following test fails because tx is not closed.
@@ -396,7 +448,7 @@ fn receiving_many_subchannels() {
 //     let channel = multiplex::Channel::new().unwrap();
 //     let (tx1, rx1) = channel.sub_channel::<i32>().unwrap();
 //     let (_tx2, _rx2) = channel.sub_channel::<i32>().unwrap();
-
+//
 //     drop(rx1);
 //     assert!(tx1.send(1).is_err());
 // }
@@ -406,7 +458,6 @@ fn receiving_many_subchannels() {
 // fn compare_base_transmission_dropped() {
 //     let channel = multiplex::Channel::new().unwrap();
 //     let (sub_tx, sub_rx) = channel.sub_channel::<i32>().unwrap();
-
 //     let (super_tx, super_rx) = channel.sub_channel().unwrap();
 //     super_tx.send(sub_tx).unwrap();
 //     drop(super_rx); // commenting this out makes sub_rx.recv() deadlock
