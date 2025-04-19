@@ -302,9 +302,11 @@ impl From<bincode::Error> for MultiplexError {
 impl<'a> MultiSender {
     #[instrument(level = "debug", ret)]
     fn new<T>(&self) -> SubChannelSender<T> {
+        let scid = SubChannelId::new();
         SubChannelSender {
-            sub_channel_id: SubChannelId::new(),
+            sub_channel_id: scid,
             ipc_sender: self.ipc_sender.clone(),
+            disconnector: Rc::new(SubChannelDisconnector { sub_channel_id: scid, ipc_sender: self.ipc_sender.clone() }),
             ipc_sender_uuid: self.uuid,
             sender_id: Rc::clone(&self.sender_id),
             receiver_id: Rc::clone(&self.receiver_id),
@@ -614,9 +616,21 @@ impl MultiReceiver {
     }
 }
 
+struct SubChannelDisconnector {
+    sub_channel_id: SubChannelId,
+    ipc_sender: Rc<IpcSender<MultiMessage>>,
+}
+
+impl Drop for SubChannelDisconnector {
+    fn drop(&mut self) {
+        self.ipc_sender.send(MultiMessage::Disconnect(self.sub_channel_id)).unwrap();
+    }
+}
+
 struct SubChannelSender<T> {
     sub_channel_id: SubChannelId,
     ipc_sender: Rc<IpcSender<MultiMessage>>,
+    disconnector: Rc<SubChannelDisconnector>,
     ipc_sender_uuid: Uuid,
     sender_id: Rc<RefCell<Source<Weak<IpcSender<MultiMessage>>>>>,
     receiver_id: Rc<RefCell<Source<Weak<IpcReceiver<MultiMessage>>>>>,
@@ -628,17 +642,12 @@ impl<T> Clone for SubChannelSender<T> {
         SubChannelSender {
             sub_channel_id: self.sub_channel_id,
             ipc_sender: Rc::clone(&self.ipc_sender),
+            disconnector: Rc::clone(&self.disconnector),
             ipc_sender_uuid: self.ipc_sender_uuid,
             sender_id: Rc::clone(&self.sender_id),
             receiver_id: Rc::clone(&self.receiver_id),
             phantom: self.phantom,
         }
-    }
-}
-
-impl<T> Drop for SubChannelSender<T> {
-    fn drop(&mut self) {
-        self.ipc_sender.send(MultiMessage::Disconnect(self.sub_channel_id)).unwrap();
     }
 }
 
@@ -759,7 +768,8 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
 
         Ok(SubChannelSender {
             sub_channel_id: scsi.sub_channel_id,
-            ipc_sender: ipc_sender,
+            ipc_sender: Rc::clone(&ipc_sender),
+            disconnector: Rc::new(SubChannelDisconnector { sub_channel_id: scsi.sub_channel_id, ipc_sender: ipc_sender }), // FIXME: need to share disconnector with any other SubChannelSenders for this subchannel id
             ipc_sender_uuid: Uuid::parse_str(&scsi.ipc_sender_uuid).unwrap(), // FIXME: handle this error gracefully
             sender_id: Rc::new(RefCell::new(Source::new())),
             receiver_id: Rc::new(RefCell::new(Source::new())), // FIXME: copy from MultiSender

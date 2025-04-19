@@ -396,19 +396,33 @@ fn multiplex_drop_only_subsender_for_subchannel_of_dropped_channel() {
     assert_eq!(rx2.recv().unwrap(), 1);
 }
 
-// The following test deadlocks because rx is not closed.
-// #[test]
-// fn multiplex_drop_only_subsender_for_subchannel() {
-//     let channel = multiplex::Channel::new().unwrap();
-//     let (tx1, rx1) = channel.sub_channel::<i32>().unwrap();
-//     let (_tx2, _rx2) = channel.sub_channel::<i32>().unwrap();
-//
-//     drop(tx1);
-//     match rx1.recv().unwrap_err() {
-//         multiplex::MultiplexError::MpmcSendError => (),
-//         e => panic!("expected send error, got {:?}", e),
-//     }
-// }
+#[test]
+fn multiplex_drop_cloned_subsender() {
+    let channel = multiplex::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel::<i32>().unwrap();
+
+    drop(tx.clone());
+
+    tx.send(1).unwrap();
+    assert_eq!(rx.recv().unwrap(), 1);
+}
+
+#[test]
+fn multiplex_drop_only_subsender_for_subchannel() {
+    let channel = multiplex::Channel::new().unwrap();
+    let (tx1, rx1) = channel.sub_channel::<i32>().unwrap();
+    let (tx2, rx2) = channel.sub_channel::<i32>().unwrap();
+
+    drop(tx1);
+    match rx1.recv().unwrap_err() {
+        multiplex::MultiplexError::Disconnected => (),
+        e => panic!("expected disconnected error, got {:?}", e),
+    }
+
+    // check other subchannel is still working
+    tx2.send(1).unwrap();
+    assert_eq!(rx2.recv().unwrap(), 1);
+}
 
 // The following test fails because tx is not closed.
 // #[test]
