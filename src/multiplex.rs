@@ -280,7 +280,10 @@ impl fmt::Display for MultiplexError {
 
 impl From<IpcError> for MultiplexError {
     fn from(err: IpcError) -> MultiplexError {
-        MultiplexError::IpcError(err)
+        match err {
+            IpcError::Disconnected => MultiplexError::Disconnected,
+            _ => MultiplexError::IpcError(err)
+        }
     }
 }
 

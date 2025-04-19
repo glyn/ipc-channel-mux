@@ -353,8 +353,6 @@ fn receiving_many_subchannels() {
     }
 }
 
-use crate::ipc; // FIXME: Wrap Disconnected error to avoid this import.
-
 #[test]
 fn multiplex_drop_only_subsender_for_dropped_channel() {
     let channel = multiplex::Channel::new().unwrap();
@@ -363,7 +361,7 @@ fn multiplex_drop_only_subsender_for_dropped_channel() {
 
     drop(tx);
     match rx.recv().unwrap_err() {
-        multiplex::MultiplexError::IpcError(ipc::IpcError::Disconnected) => (),
+        multiplex::MultiplexError::Disconnected => (),
         e => panic!("expected send error, got {:?}", e),
     }
 }
