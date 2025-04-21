@@ -130,14 +130,12 @@ fn multiplex_simple() {
     tx.send(person.clone()).unwrap();
     let received_person = rx.recv().unwrap();
     assert_eq!(person, received_person);
-    // TODO: need to implement disconnection when all the copies of a
-    // SubSender have been dropped.
-    // drop(tx);
-    // match rx.recv().unwrap_err() {
-    //     multiplex::MultiplexError::Disconnected => (),
-    //     e => panic!("expected disconnected error, got {:?}", e),
-    // }
-    // FIXME: fail if rx.recv() succeeds
+
+    drop(tx);
+    match rx.recv().unwrap_err() {
+        multiplex::MultiplexError::Disconnected => (),
+        e => panic!("expected disconnected error, got {:?}", e),
+    }
 }
 
 #[test]
