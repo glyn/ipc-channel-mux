@@ -40,6 +40,8 @@ crossbeam-channel = "0.5"
 fnv = "1.0.3"
 futures-channel = { version = "0.3.31", optional = true }
 futures-core = { version = "0.3.31", optional = true }
+hashbag = "0.1.12"
+lazy_static = "1"
 libc = "0.2.162"
 log = "0.4.26"
 serde_core = "1.0"
