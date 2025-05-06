@@ -662,7 +662,29 @@ where
             senders.borrow_mut().clear();
             Ok::<(), MultiplexError>(())
         })?;
+
+        SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| {
+            subchannel_senders.borrow_mut().clear();
+            Ok::<(), MultiplexError>(())
+        })?;
+
         let data = bincode::serialize(&msg)?;
+
+        // Notify transmission of any subchannel senders so that they are counted during transmission.
+        SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| {
+            subchannel_senders.borrow().iter().for_each(|(subchannel_id, ipc_sender)| {
+                // TODO:
+                // We have subchannel_id and ipc_sender, but not the sender and receiver "sources"
+                // send(scid: SubChannelId, via: IpcChannel, src1: Source, src2: Source) 
+            });
+            Ok::<(), MultiplexError>(())
+        })?;
+
+        SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| {
+            subchannel_senders.borrow_mut().clear();
+            Ok::<(), MultiplexError>(())
+        })?;
+
         IPC_SENDERS_TO_SEND.with(|ipc_senders| {
             IPC_RECEIVERS_TO_SEND.with(|ipc_receivers| {
                 let srs = ipc_senders
@@ -791,6 +813,7 @@ impl<'a, T> fmt::Debug for SubChannelSender<T> {
 // FIXME: ensure this is cleared after use
 thread_local! {
     static IPC_SENDERS_TO_SEND: RefCell<Vec<(Uuid, Rc<IpcSender<MultiMessage>>)>> = RefCell::new(vec!());
+    static SERIALIZED_SUBCHANNEL_SENDERS: RefCell<Vec<(SubChannelId, Rc<IpcSender<MultiMessage>>)>> = RefCell::new(vec!());
 }
 
 impl<T> Serialize for SubChannelSender<T> {
@@ -799,13 +822,20 @@ impl<T> Serialize for SubChannelSender<T> {
         S: Serializer,
     {
         log::trace!(
-            "Adding SubChannelSender with SubChannelId {} to IPC_SENDERS_TO_SEND",
+            "Adding SubChannelSender with SubChannelId {} to IPC_SENDERS_TO_SEND and SERIALIZED_SUBCHANNEL_SENDERS",
             self.sub_channel_id
         );
+
         IPC_SENDERS_TO_SEND.with(|ipc_senders| {
             ipc_senders
                 .borrow_mut()
                 .push((self.ipc_sender_uuid, self.ipc_sender.clone()))
+        });
+
+        SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| {
+            subchannel_senders
+            .borrow_mut()
+            .push((self.sub_channel_id, self.ipc_sender.clone()))
         });
 
         let scsi = SubChannelSenderIds {
