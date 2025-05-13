@@ -21,6 +21,10 @@ use std::cell::RefCell;
 use std::{collections::HashMap, hash::Hash};
 use uuid::Uuid;
 
+pub enum Message {
+
+}
+
 pub enum Error {
     SubChannelAlreadyExists,
     SubChannelNotFound,
@@ -51,7 +55,7 @@ impl<SubChannelId> Source<SubChannelId>
 where
     SubChannelId: Eq + Hash,
 {
-    pub fn new() -> Source<SubChannelId> {
+    pub fn new(tx: mpsc::Sender<Message>) -> Source<SubChannelId> {
         Source {
             source_id: SourceId(Uuid::new_v4()),
             senders: HashMap::new(),
@@ -59,6 +63,7 @@ where
     }
 
     pub fn add_subchannel(&mut self, scid: SubChannelId, sender_id: IpcSenderId) -> Result<(), Error> {
+        unimplemented!();
         if self.senders.contains_key(&scid) {
             Err(Error::SubChannelAlreadyExists)
         } else {
@@ -73,6 +78,7 @@ where
     }
 
     pub fn prepare_to_send(&self, scid: SubChannelId, ) -> Result<(SourceId, IpcSenderId), Error> {
+        unimplemented!();
         if let Some(sender) = self.senders.get(&scid) {
             Ok((self.source_id, sender.sender_id))
         } else {
@@ -104,7 +110,7 @@ impl<SubChannelId> Target<SubChannelId>
 where
     SubChannelId: Eq + Hash,
 {
-    pub fn new() -> Target<SubChannelId> {
+    pub fn new(rx: mpsc::Receiver<Message>) -> Target<SubChannelId> {
         Target {
             target_id: TargetId(Uuid::new_v4()),
             receivers: HashMap::new(),
@@ -112,6 +118,7 @@ where
     }
 
     pub fn add_subchannel(&mut self, scid: SubChannelId, receiver_id: Uuid) -> Result<(), Error> {
+        unimplemented!();
         if self.receivers.contains_key(&scid) {
             Err(Error::SubChannelAlreadyExists)
         } else {
@@ -129,6 +136,7 @@ where
     }
 
     pub fn send(&self, scid: SubChannelId, from: SourceId, via: IpcSenderId, tracker: Tracker) -> Result<(), Error> {
+        unimplemented!();
         if let Some(receiver) = self.receivers.get(&scid) {
             let mut cell = receiver.borrow_mut();
             cell.in_flight.insert((from, via));
@@ -140,6 +148,7 @@ where
     }
 
     pub fn is_connected(&self, scid: SubChannelId) -> Result<bool, Error> {
+        unimplemented!();
         if let Some(receiver) = self.receivers.get(&scid) {
             let cell = receiver.borrow();
             Ok(!cell.in_flight.is_empty() || !cell.sources.is_empty())
@@ -149,6 +158,7 @@ where
     }
 
     pub fn receive(&self, scid: SubChannelId, from: SourceId, via: IpcSenderId, to: SourceId) -> Result<(), Error> {
+        unimplemented!();
         if let Some(receiver) = self.receivers.get(&scid) {
             let mut cell = receiver.borrow_mut();
             if cell.in_flight.remove(&(from, via)) == 0 {
@@ -159,5 +169,28 @@ where
         } else {
             Err(Error::SubChannelNotFound)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::mpsc;
+    use uuid::Uuid;
+
+    #[test]
+    fn test_add_subchannel() {
+        let (tx, rx) = mpsc::channel();
+        let mut src = Source::new(tx);
+        let tgt = Target::new(tx);
+
+        let scid = 1;
+        let sender_id = IpcSenderId(Uuid::new_v4());
+        src.add_subchannel(scid, sender_id);
+
+        // How to test effect on tgt?
+        // 1. Let tgt operate on a trait implemented by subreceiver
+        // 2. Wrap subreceiver in a similar way counter.rs does
+
     }
 }
