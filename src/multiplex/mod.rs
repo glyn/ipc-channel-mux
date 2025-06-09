@@ -24,6 +24,8 @@ use uuid::Uuid;
 use weak_table::traits::WeakElement;
 use weak_table::{PtrWeakHashSet, WeakValueHashMap};
 
+mod subchannel_lifecycle;
+
 pub struct Channel {
     multi_sender: MultiSender,
     multi_receiver: Rc<RefCell<MultiReceiver>>,

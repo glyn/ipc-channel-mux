@@ -36,7 +36,6 @@ pub mod ipc;
 pub mod multiplex;
 pub mod platform;
 pub mod router;
-mod subchannel_lifecycle;
 
 #[cfg(test)]
 mod test;
