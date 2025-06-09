@@ -21,6 +21,7 @@ use std::cell::RefCell;
 use std::{collections::HashMap, hash::Hash};
 use std::sync::mpsc;
 use uuid::Uuid;
+use super::SubChannelId;
 
 pub enum Message {
 
@@ -47,16 +48,16 @@ struct Sender {
 }
 
 // There is one Source associated with each multiplexing IpcSender.
-pub struct Source<SubChannelId> {
+pub struct Source {
     source_id: SourceId,
     senders: HashMap<SubChannelId, Sender>,
 }
 
-impl<SubChannelId> Source<SubChannelId>
+impl Source
 where
     SubChannelId: Eq + Hash,
 {
-    pub fn new(tx: mpsc::Sender<Message>) -> Source<SubChannelId> {
+    pub fn new(tx: mpsc::Sender<Message>) -> Source {
         Source {
             source_id: SourceId(Uuid::new_v4()),
             senders: HashMap::new(),
@@ -102,16 +103,16 @@ struct Receiver {
 }
 
 // There is one Target associated with each multiplexing IpcReceiver.
-pub struct Target<SubChannelId> {
+pub struct Target {
     target_id: TargetId,
     receivers: HashMap<SubChannelId, RefCell<Receiver>>,
 }
 
-impl<SubChannelId> Target<SubChannelId>
+impl Target
 where
     SubChannelId: Eq + Hash,
 {
-    pub fn new(rx: mpsc::Receiver<Message>) -> Target<SubChannelId> {
+    pub fn new(rx: mpsc::Receiver<Message>) -> Target {
         Target {
             target_id: TargetId(Uuid::new_v4()),
             receivers: HashMap::new(),
@@ -186,7 +187,7 @@ mod tests {
         let mut src = Source::new(tx);
         //let tgt = Target::new(rx);
 
-        let scid = 1;
+        let scid = SubChannelId(Uuid::new_v4());
         let sender_id = IpcSenderId(Uuid::new_v4());
         src.add_subchannel(scid, sender_id);
 
