@@ -380,7 +380,7 @@ struct MultiReceiver {
 struct MultiReceiverMutator {
     ipc_senders: HashMap<ClientId, IpcSender<MultiResponse>>,
     next_client_id: ClientId,
-    sub_channels: HashMap<SubChannelId, Sender<Vec<u8>>>,
+    sub_channels: HashMap<SubChannelId, subchannel_lifecycle::SubSenderStateMachine<Sender<Vec<u8>>>>,
     ipc_senders_by_id: Target<Weak<IpcSender<MultiMessage>>>,
     ipc_receivers_by_id: Target<Weak<RefCell<Option<IpcReceiver<MultiMessage>>>>>,
     multi_receiver_grid: Rc<RefCell<HashMap<Uuid, Rc<RefCell<MultiReceiver>>>>>,
@@ -411,7 +411,7 @@ impl MultiReceiver {
             .mutator
             .borrow_mut()
             .sub_channels
-            .insert(sub_channel_id, tx);
+            .insert(sub_channel_id, subchannel_lifecycle::SubSenderStateMachine::new(tx));
         Ok(SubChannelReceiver {
             multi_receiver: Rc::clone(
                 &mr.borrow()
@@ -602,7 +602,10 @@ impl MultiReceiver {
             MultiMessage::Disconnect(scid) => {
                 // FIXME: all senders (the original, its clones, and any transmitted copies) need to disconnect
                 // before the receiver should stop blocking to receive messages.
-                mr.borrow().mutator.borrow_mut().sub_channels.remove(&scid);
+                if let Some(sm) = mr.borrow().mutator.borrow_mut().sub_channels.get(&scid) {
+                    sm.
+                }
+                
                 Ok(())
             },
             m => Err(MultiplexError::InternalError(format!(
