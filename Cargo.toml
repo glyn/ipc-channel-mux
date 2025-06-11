@@ -37,6 +37,7 @@ enable-slow-tests = []
 [dependencies]
 bincode = "1"
 crossbeam-channel = "0.5"
+enclose = "1.2.1"
 fnv = "1.0.3"
 futures-channel = { version = "0.3.31", optional = true }
 futures-core = { version = "0.3.31", optional = true }

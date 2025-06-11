@@ -8,18 +8,47 @@
 // except according to those terms.
 
 //! This module provides lifecycle management for subchannel senders.
-//! It consists of two types:
-//! * Source: a sourceId and a set of IpcSenderIds at the source
-//! * Target: Keeps track of IpcSenderIds at rest and in flight
-//! WIP: flesh this out concretely in multiplex.rs and then generalise
-//!      it here?
-//!
-//! IDEA: Model this on counter.rs.
 
-// TODO: should I pull in all the lifecycle-related code?
+// Each subsender should have a Rc<SubSenderTracker> so that, when
+// the last reference to a SubSenderTracker is dropped, the
+// SubSenderTracker can notify the SubChannelStateMachine.
+pub struct SubSenderTracker<T>
+where
+    T: Fn() + ?Sized,
+{
+    notify_dropped: Box<T>,
+}
 
+impl<T> Drop for SubSenderTracker<T>
+where
+    T: Fn() + ?Sized,
+{
+    fn drop(&mut self) {
+        (self.notify_dropped)();
+    }
+}
+
+impl<T> SubSenderTracker<T>
+where
+    T: Fn() + ?Sized,
+{
+    pub fn new(notify_dropped: Box<T>) -> SubSenderTracker<T> {
+        SubSenderTracker {
+            notify_dropped,
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+
+    #[test]
+    fn sub_sender_tracker_basics() {
+        let dropped = RefCell::new(false);
+        let t = SubSenderTracker::new(Box::new(|| *dropped.borrow_mut() = true));
+        drop(t);
+        assert!(dropped.take());
+    }
 }

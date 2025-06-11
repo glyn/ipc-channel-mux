@@ -9,6 +9,7 @@
 
 use crate::ipc::{self, IpcError, IpcOneShotServer, IpcReceiver, IpcSender};
 use bincode;
+use enclose::enclose;
 use log;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
@@ -19,6 +20,7 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
 use std::sync::mpsc::{self, Receiver, Sender};
+use subchannel_lifecycle::SubSenderTracker;
 use tracing::instrument;
 use uuid::Uuid;
 use weak_table::traits::WeakElement;
@@ -284,7 +286,7 @@ impl From<IpcError> for MultiplexError {
     fn from(err: IpcError) -> MultiplexError {
         match err {
             IpcError::Disconnected => MultiplexError::Disconnected,
-            _ => MultiplexError::IpcError(err)
+            _ => MultiplexError::IpcError(err),
         }
     }
 }
@@ -305,10 +307,17 @@ impl<'a> MultiSender {
     #[instrument(level = "debug", ret)]
     fn new<T>(&self) -> SubChannelSender<T> {
         let scid = SubChannelId::new();
+        let sender_clone = self.ipc_sender.clone();
         SubChannelSender {
             sub_channel_id: scid,
             ipc_sender: self.ipc_sender.clone(),
-            disconnector: Rc::new(SubChannelDisconnector { sub_channel_id: scid, ipc_sender: self.ipc_sender.clone() }),
+            disconnector: Rc::new(SubSenderTracker::new(Box::new(move || {
+                let d = SubChannelDisconnector {
+                    sub_channel_id: scid,
+                    ipc_sender: sender_clone.clone(),
+                };
+                d.dropped();
+            }))),
             ipc_sender_uuid: self.uuid,
             sender_id: Rc::clone(&self.sender_id),
             receiver_id: Rc::clone(&self.receiver_id),
@@ -586,7 +595,7 @@ impl MultiReceiver {
                 // CURRENT_MULTI_RECEIVER.with(|multi_receiver| {
                 //     multi_receiver.borrow_mut().take();
                 // });
-                
+
                 //result // This causes SubReceiver::recv() to fail even if the error was for another subchannel
                 Ok(())
             },
@@ -623,16 +632,18 @@ struct SubChannelDisconnector {
     ipc_sender: Rc<IpcSender<MultiMessage>>,
 }
 
-impl Drop for SubChannelDisconnector {
-    fn drop(&mut self) {
-        self.ipc_sender.send(MultiMessage::Disconnect(self.sub_channel_id)).unwrap();
+impl SubChannelDisconnector {
+    fn dropped(&self) {
+        self.ipc_sender
+            .send(MultiMessage::Disconnect(self.sub_channel_id))
+            .unwrap();
     }
 }
 
 struct SubChannelSender<T> {
     sub_channel_id: SubChannelId,
     ipc_sender: Rc<IpcSender<MultiMessage>>,
-    disconnector: Rc<SubChannelDisconnector>,
+    disconnector: Rc<subchannel_lifecycle::SubSenderTracker<dyn Fn()>>,
     ipc_sender_uuid: Uuid,
     sender_id: Rc<RefCell<Source<Weak<IpcSender<MultiMessage>>>>>,
     receiver_id: Rc<RefCell<Source<Weak<IpcReceiver<MultiMessage>>>>>,
@@ -674,11 +685,14 @@ where
 
         // Notify transmission of any subchannel senders so that they are counted during transmission.
         SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| {
-            subchannel_senders.borrow().iter().for_each(|(subchannel_id, ipc_sender)| {
-                // TODO:
-                // We have subchannel_id and ipc_sender, but not the sender and receiver "sources"
-                // send(scid: SubChannelId, via: IpcChannel, src1: Source, src2: Source) 
-            });
+            subchannel_senders
+                .borrow()
+                .iter()
+                .for_each(|(subchannel_id, ipc_sender)| {
+                    // TODO:
+                    // We have subchannel_id and ipc_sender, but not the sender and receiver "sources"
+                    // send(scid: SubChannelId, via: IpcChannel, src1: Source, src2: Source)
+                });
             Ok::<(), MultiplexError>(())
         })?;
 
@@ -794,7 +808,13 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
         Ok(SubChannelSender {
             sub_channel_id: scsi.sub_channel_id,
             ipc_sender: Rc::clone(&ipc_sender),
-            disconnector: Rc::new(SubChannelDisconnector { sub_channel_id: scsi.sub_channel_id, ipc_sender: ipc_sender }), // FIXME: need to share disconnector with any other SubChannelSenders for this subchannel id
+            disconnector: Rc::new(SubSenderTracker::new(Box::new(move || {
+                let d = SubChannelDisconnector {
+                    sub_channel_id: scsi.sub_channel_id,
+                    ipc_sender: ipc_sender.clone(),
+                };
+                drop(d);
+            }))), // FIXME: need to share disconnector with any other SubChannelSenders for this subchannel id
             ipc_sender_uuid: Uuid::parse_str(&scsi.ipc_sender_uuid).unwrap(), // FIXME: handle this error gracefully
             sender_id: Rc::new(RefCell::new(Source::new())),
             receiver_id: Rc::new(RefCell::new(Source::new())), // FIXME: copy from MultiSender
@@ -836,8 +856,8 @@ impl<T> Serialize for SubChannelSender<T> {
 
         SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| {
             subchannel_senders
-            .borrow_mut()
-            .push((self.sub_channel_id, self.ipc_sender.clone()))
+                .borrow_mut()
+                .push((self.sub_channel_id, self.ipc_sender.clone()))
         });
 
         let scsi = SubChannelSenderIds {
