@@ -400,6 +400,12 @@ thread_local! {
     static IPC_SENDERS_RECEIVED: RefCell<VecDeque<Rc<IpcSender<MultiMessage>>>> = RefCell::new(VecDeque::new());
 }
 
+impl subchannel_lifecycle::Sender<Vec<u8>, mpsc::SendError<Vec<u8>>> for Sender<Vec<u8>> {
+    fn send(&self, msg: Vec<u8>) -> Result<(), mpsc::SendError<Vec<u8>>> {
+        self.send(msg)
+    }
+}
+
 impl MultiReceiver {
     #[instrument(level = "debug", ret)]
     fn attach<T>(
@@ -411,7 +417,7 @@ impl MultiReceiver {
             .mutator
             .borrow_mut()
             .sub_channels
-            .insert(sub_channel_id, subchannel_lifecycle::SubSenderStateMachine::new(tx));
+            .insert(sub_channel_id, subchannel_lifecycle::SubSenderStateMachine::new(tx, mpsc::SendError::<Vec<u8>>::bincode::Error));
         Ok(SubChannelReceiver {
             multi_receiver: Rc::clone(
                 &mr.borrow()
