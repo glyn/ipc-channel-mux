@@ -50,8 +50,8 @@ where
     T: Sender<M, Error>,
 {
     maybe: RefCell<Option<T>>,
-    disconnected: Error,
-    phantom: PhantomData<M>,
+    phantom_m: PhantomData<M>,
+    phantom_e: PhantomData<Error>,
 }
 
 impl<T, M, Error> SubSenderStateMachine<T, M, Error>
@@ -59,16 +59,16 @@ where
     T: Sender<M, Error>,
     Error: Clone,
 {
-    pub fn new(t: T, disconnected: Error) -> SubSenderStateMachine<T, M, Error> {
+    pub fn new(t: T) -> SubSenderStateMachine<T, M, Error> {
         SubSenderStateMachine {
             maybe: RefCell::new(Some(t)),
-            disconnected: disconnected,
-            phantom: PhantomData,
+            phantom_m: PhantomData,
+            phantom_e: PhantomData,
         }
     }
 
-    pub fn send(&self, msg: M) -> Result<(), Error> {
-        self.maybe.borrow().as_ref().map(|t| t.send(msg)).ok_or(self.disconnected.clone())?
+    pub fn send(&self, msg: M) -> Option<Result<(), Error>> {
+        self.maybe.borrow().as_ref().map(|t| t.send(msg))
     }
 
     pub fn disconnect(&self) {
@@ -115,7 +115,7 @@ mod tests {
     }
 
     fn sub_sender_state_machine_send() {
-        let ssm = SubSenderStateMachine::new(TestSender::new(), TestError::Disconnected);
-        assert_eq!(ssm.send('a'), Ok(()));
+        let ssm = SubSenderStateMachine::new(TestSender::new());
+        assert_eq!(ssm.send('a'), Some(Ok(())));
     }
 }

@@ -390,7 +390,7 @@ struct MultiReceiver {
 struct MultiReceiverMutator {
     ipc_senders: HashMap<ClientId, IpcSender<MultiResponse>>,
     next_client_id: ClientId,
-    sub_channels: HashMap<SubChannelId, subchannel_lifecycle::SubSenderStateMachine<SenderWrapper, Vec<u8>, MultiplexError>>,
+    sub_channels: HashMap<SubChannelId, subchannel_lifecycle::SubSenderStateMachine<mpsc::Sender<Vec<u8>>, Vec<u8>, mpsc::SendError<Vec<u8>>>>,
     ipc_senders_by_id: Target<Weak<IpcSender<MultiMessage>>>,
     ipc_receivers_by_id: Target<Weak<RefCell<Option<IpcReceiver<MultiMessage>>>>>,
     multi_receiver_grid: Rc<RefCell<HashMap<Uuid, Rc<RefCell<MultiReceiver>>>>>,
@@ -416,17 +416,6 @@ impl subchannel_lifecycle::Sender<Vec<u8>, mpsc::SendError<Vec<u8>>> for Sender<
     }
 }
 
-#[derive(Debug)]
-struct SenderWrapper {
-    sender: mpsc::Sender<Vec<u8>>,
-}
-
-impl subchannel_lifecycle::Sender<Vec<u8>, MultiplexError> for SenderWrapper {
-    fn send(&self, msg: Vec<u8>) -> Result<(), MultiplexError> {
-        self.sender.send(msg).map_err(|_| MultiplexError::Disconnected)
-    }
-}
-
 impl MultiReceiver {
     #[instrument(level = "debug", ret)]
     fn attach<T>(
@@ -438,7 +427,7 @@ impl MultiReceiver {
             .mutator
             .borrow_mut()
             .sub_channels
-            .insert(sub_channel_id, subchannel_lifecycle::SubSenderStateMachine::new(SenderWrapper{sender: tx}, MultiplexError::Disconnected));
+            .insert(sub_channel_id, subchannel_lifecycle::SubSenderStateMachine::new(tx));
         Ok(SubChannelReceiver {
             multi_receiver: Rc::clone(
                 &mr.borrow()
@@ -606,8 +595,7 @@ impl MultiReceiver {
                         "invalid subchannel id {}",
                         scid
                     )))?
-                    .send(data)
-                    .map_err(|_| MultiplexError::MpmcSendError);
+                    .send(data);
                 // FIXME: where to clear IPC_SENDERS_RECEIVED. If the following is uncommented, IpcSenders go AWOL.
                 // IPC_SENDERS_RECEIVED.with(|senders| {
                 //     senders.lock().unwrap().clear();
@@ -624,7 +612,11 @@ impl MultiReceiver {
                 // });
 
                 //result // This causes SubReceiver::recv() to fail even if the error was for another subchannel
-                Ok(())
+                if let Some(Ok(())) = result {
+                    Ok(())
+                } else {
+                    Err(MultiplexError::Disconnected)
+                }
             },
             MultiMessage::Disconnect(scid) => {
                 // FIXME: all senders (the original, its clones, and any transmitted copies) need to disconnect
@@ -1014,7 +1006,7 @@ impl<'de, T> Deserialize<'de> for SubChannelReceiver<T> {
             .mutator
             .borrow_mut()
             .sub_channels
-            .insert(scri.sub_channel_id, subchannel_lifecycle::SubSenderStateMachine::new(SenderWrapper{sender: tx}, MultiplexError::Disconnected));
+            .insert(scri.sub_channel_id, subchannel_lifecycle::SubSenderStateMachine::new(tx));
 
         Ok(SubChannelReceiver {
             sub_channel_id: scri.sub_channel_id,
