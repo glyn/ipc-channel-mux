@@ -91,32 +91,52 @@ mod tests {
 
     struct TestSender {
         sent: Rc<RefCell<Vec<char>>>,
+        err: Option<TestError>,
     }
 
     impl TestSender {
         fn new(sent: &Rc<RefCell<Vec<char>>>) -> Self {
             Self {
                 sent: Rc::clone(&sent),
+                err: None,
             }
+        }
+
+        fn set_error(&mut self, err: TestError) {
+            self.err = Some(err);
         }
     }
 
-    #[derive(Debug, PartialEq)]
-    struct TestError {}
+    #[derive(Clone, Debug, PartialEq)]
+    enum TestError {
+        AnError
+    }
 
     impl Sender<char, TestError> for TestSender {
         fn send(&self, msg: char) -> Result<(), TestError> {
+            if let Some(err) = self.err.clone() {
+                return Err(err);
+            }
             self.sent.borrow_mut().push(msg);
             Ok(())
         }
     }
 
     #[test]
-    fn sub_sender_state_machine_send() {
+    fn sub_sender_state_machine_send_ok() {
         let sent = Rc::new(RefCell::new(vec![]));
         let ssm = SubSenderStateMachine::new(TestSender::new(&sent));
         assert_eq!(ssm.send('a'), Some(Ok(())));
         assert_eq!(sent.borrow().clone(), vec!['a']);
+    }
+
+    #[test]
+    fn sub_sender_state_machine_send_error() {
+        let sent = Rc::new(RefCell::new(vec![]));
+        let mut test_sender = TestSender::new(&sent);
+        test_sender.set_error(TestError::AnError);
+        let ssm = SubSenderStateMachine::new(test_sender);
+        assert_eq!(ssm.send('a'), Some(Err(TestError::AnError)));
     }
     
     #[test]
