@@ -57,7 +57,6 @@ where
 impl<T, M, Error> SubSenderStateMachine<T, M, Error>
 where
     T: Sender<M, Error>,
-    Error: Clone,
 {
     pub fn new(t: T) -> SubSenderStateMachine<T, M, Error> {
         SubSenderStateMachine {
@@ -80,6 +79,7 @@ where
 mod tests {
     use super::*;
     use std::cell::RefCell;
+    use std::rc::Rc;
 
     #[test]
     fn sub_sender_tracker_basics() {
@@ -90,22 +90,19 @@ mod tests {
     }
 
     struct TestSender {
-        sent: RefCell<Vec<char>>,
+        sent: Rc<RefCell<Vec<char>>>,
     }
 
     impl TestSender {
-        fn new() -> Self {
+        fn new(sent: &Rc<RefCell<Vec<char>>>) -> Self {
             Self {
-                sent: RefCell::new(vec![]),
+                sent: Rc::clone(&sent),
             }
         }
     }
 
-    #[derive(Clone, Debug, PartialEq)]
-    enum TestError {
-        Ok,
-        Disconnected,
-    }
+    #[derive(Debug, PartialEq)]
+    struct TestError {}
 
     impl Sender<char, TestError> for TestSender {
         fn send(&self, msg: char) -> Result<(), TestError> {
@@ -114,8 +111,19 @@ mod tests {
         }
     }
 
+    #[test]
     fn sub_sender_state_machine_send() {
-        let ssm = SubSenderStateMachine::new(TestSender::new());
+        let sent = Rc::new(RefCell::new(vec![]));
+        let ssm = SubSenderStateMachine::new(TestSender::new(&sent));
         assert_eq!(ssm.send('a'), Some(Ok(())));
+        assert_eq!(sent.borrow().clone(), vec!['a']);
+    }
+    
+    #[test]
+    fn sub_sender_state_machine_disconnect() {
+        let sent = Rc::new(RefCell::new(vec![]));
+        let ssm = SubSenderStateMachine::new(TestSender::new(&sent));     
+        ssm.disconnect();
+        assert_eq!(ssm.send('a'), None);
     }
 }
