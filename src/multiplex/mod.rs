@@ -824,7 +824,7 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
                     sub_channel_id: scsi.sub_channel_id,
                     ipc_sender: ipc_sender.clone(),
                 };
-                drop(d);
+                d.dropped();
             }))), // FIXME: need to share disconnector with any other SubChannelSenders for this subchannel id
             ipc_sender_uuid: Uuid::parse_str(&scsi.ipc_sender_uuid).unwrap(), // FIXME: handle this error gracefully
             sender_id: Rc::new(RefCell::new(Source::new())),
