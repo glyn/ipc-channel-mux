@@ -458,7 +458,6 @@ fn drop_transmitted_subsender() {
     let channel = multiplex::Channel::new().unwrap();
     let (sub_tx, sub_rx) = channel.sub_channel::<i32>().unwrap();
     let (super_tx, super_rx) = channel.sub_channel().unwrap();
-    let sub_tx_clone = sub_tx.clone();
     super_tx.send(sub_tx).unwrap();
     let received_sub_tx = super_rx.recv().unwrap();
     drop(received_sub_tx);
@@ -467,6 +466,20 @@ fn drop_transmitted_subsender() {
         multiplex::MultiplexError::Disconnected => (),
         e => panic!("expected Disconnected, got {:?}", e),
     }
+}
+
+#[test]
+fn drop_transmitted_subsender_send_using_clone_of_original() {
+    let channel = multiplex::Channel::new().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel::<i32>().unwrap();
+    let (super_tx, super_rx) = channel.sub_channel().unwrap();
+    let sub_tx_clone = sub_tx.clone();
+    super_tx.send(sub_tx).unwrap();
+    let received_sub_tx = super_rx.recv().unwrap();
+    drop(received_sub_tx);
+
+    sub_tx_clone.send(1).unwrap();
+    assert_eq!(sub_rx.recv().unwrap(), 1);
 }
 
 // The following test fails because tx is not closed.
