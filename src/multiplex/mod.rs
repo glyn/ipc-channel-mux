@@ -85,17 +85,6 @@ where
     }
 }
 
-impl<T> Drop for SubSender<T>
-where
-    T: Serialize,
-{
-    fn drop(&mut self) {
-        // TODO: the following is insufficient because disconnecting
-        // when the first sender is dropped can be premature.
-        //self.sub_channel_sender.disconnect().unwrap();
-    }
-}
-
 impl<T> SubSender<T>
 where
     T: Serialize,
