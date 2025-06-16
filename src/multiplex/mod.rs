@@ -257,7 +257,7 @@ pub enum MultiplexError {
     InternalError(String),
 }
 
-// FIXME: this is a temporary workaround to allow MultiplexError::Disconnected to be used by SubSenderStateMachine. 
+// FIXME: this is a temporary workaround to allow MultiplexError::Disconnected to be used by SubSenderStateMachine.
 impl Clone for MultiplexError {
     fn clone(&self) -> Self {
         match self {
@@ -314,6 +314,7 @@ impl<'a> MultiSender {
                 let d = SubChannelDisconnector {
                     sub_channel_id: scid,
                     ipc_sender: sender_clone.clone(),
+                    source: "".to_string(),
                 };
                 d.dropped();
             }))),
@@ -379,7 +380,16 @@ struct MultiReceiver {
 struct MultiReceiverMutator {
     ipc_senders: HashMap<ClientId, IpcSender<MultiResponse>>,
     next_client_id: ClientId,
-    sub_channels: HashMap<SubChannelId, subchannel_lifecycle::SubSenderStateMachine<mpsc::Sender<Vec<u8>>, Vec<u8>, mpsc::SendError<Vec<u8>>>>,
+    sub_channels: HashMap<
+        SubChannelId,
+        subchannel_lifecycle::SubSenderStateMachine<
+            mpsc::Sender<Vec<u8>>,
+            Vec<u8>,
+            mpsc::SendError<Vec<u8>>,
+            String,
+        >,
+    >,
+    disconnectors: WeakValueHashMap<SubChannelId, Weak<SubSenderTracker<dyn Fn()>>>,
     ipc_senders_by_id: Target<Weak<IpcSender<MultiMessage>>>,
     ipc_receivers_by_id: Target<Weak<RefCell<Option<IpcReceiver<MultiMessage>>>>>,
     multi_receiver_grid: Rc<RefCell<HashMap<Uuid, Rc<RefCell<MultiReceiver>>>>>,
@@ -412,11 +422,10 @@ impl MultiReceiver {
         sub_channel_id: SubChannelId,
     ) -> Result<SubChannelReceiver<T>, MultiplexError> {
         let (tx, rx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = mpsc::channel();
-        mr.borrow()
-            .mutator
-            .borrow_mut()
-            .sub_channels
-            .insert(sub_channel_id, subchannel_lifecycle::SubSenderStateMachine::new(tx));
+        mr.borrow().mutator.borrow_mut().sub_channels.insert(
+            sub_channel_id,
+            subchannel_lifecycle::SubSenderStateMachine::new(tx, "".to_string()),
+        );
         Ok(SubChannelReceiver {
             multi_receiver: Rc::clone(
                 &mr.borrow()
@@ -522,6 +531,7 @@ impl MultiReceiver {
                                             ipc_senders: HashMap::new(),
                                             next_client_id: 0,
                                             sub_channels: HashMap::new(),
+                                            disconnectors: WeakValueHashMap::new(),
                                             ipc_senders_by_id: Target::new(),
                                             ipc_receivers_by_id: Target::new(),
                                             multi_receiver_grid: Rc::clone(
@@ -607,13 +617,20 @@ impl MultiReceiver {
                     Err(MultiplexError::Disconnected)
                 }
             },
-            MultiMessage::Disconnect(scid) => {
+            MultiMessage::Disconnect(scid, source) => {
                 // FIXME: all senders (the original, its clones, and any transmitted copies) need to disconnect
                 // before the receiver should stop blocking to receive messages.
                 if let Some(sm) = mr.borrow().mutator.borrow_mut().sub_channels.get(&scid) {
-                    sm.disconnect();
+                    sm.disconnect(source);
                 }
-                
+
+                Ok(())
+            },
+            MultiMessage::Received(scid, source) => {
+                if let Some(sm) = mr.borrow().mutator.borrow_mut().sub_channels.get(&scid) {
+                    sm.received(source);
+                }
+
                 Ok(())
             },
             m => Err(MultiplexError::InternalError(format!(
@@ -641,12 +658,16 @@ impl MultiReceiver {
 struct SubChannelDisconnector {
     sub_channel_id: SubChannelId,
     ipc_sender: Rc<IpcSender<MultiMessage>>,
+    source: String,
 }
 
 impl SubChannelDisconnector {
     fn dropped(&self) {
         self.ipc_sender
-            .send(MultiMessage::Disconnect(self.sub_channel_id))
+            .send(MultiMessage::Disconnect(
+                self.sub_channel_id,
+                self.source.clone(),
+            ))
             .unwrap();
     }
 }
@@ -789,9 +810,10 @@ where
     }
 
     fn disconnect(&self) -> Result<(), MultiplexError> {
-        Ok(self
-            .ipc_sender
-            .send(MultiMessage::Disconnect(self.sub_channel_id))?)
+        Ok(self.ipc_sender.send(MultiMessage::Disconnect(
+            self.sub_channel_id,
+            "".to_string(),
+        ))?)
     }
 }
 
@@ -816,16 +838,49 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
             })
             .map_err(serde::de::Error::custom::<MultiplexError>)?;
 
+        let source = CURRENT_MULTI_RECEIVER.with(|maybe_mr| {
+            maybe_mr
+                .borrow()
+                .as_ref()
+                .expect("CURRENT_MULTI_RECEIVER not set")
+                .borrow()
+                .ipc_receiver_uuid
+                .to_string()
+        });
+        ipc_sender
+            .send(MultiMessage::Received(scsi.sub_channel_id, source.clone()))
+            .unwrap();
+
+        let ipc_sender_clone = ipc_sender.clone();
+
+        let disc = CURRENT_MULTI_RECEIVER.with(|maybe_mr| {
+            let maybe_mr = maybe_mr.borrow();
+            let mr = maybe_mr
+                .as_ref()
+                .expect("CURRENT_MULTI_RECEIVER not set")
+                .borrow();
+            let mut mutator = mr.mutator.borrow_mut();
+            if let Some(disc) = mutator.disconnectors.get(&scsi.sub_channel_id) {
+                disc
+            } else {
+                let disconnector: Rc<SubSenderTracker<dyn Fn()>> =
+                    Rc::new(SubSenderTracker::new(Box::new(move || {
+                        let d = SubChannelDisconnector {
+                            sub_channel_id: scsi.sub_channel_id,
+                            ipc_sender: ipc_sender_clone.clone(),
+                            source: source.clone(),
+                        };
+                        d.dropped();
+                    })));
+                mutator.disconnectors.insert(scsi.sub_channel_id, Rc::clone(&disconnector));
+                disconnector
+            }
+        });
+
         Ok(SubChannelSender {
             sub_channel_id: scsi.sub_channel_id,
             ipc_sender: Rc::clone(&ipc_sender),
-            disconnector: Rc::new(SubSenderTracker::new(Box::new(move || {
-                let d = SubChannelDisconnector {
-                    sub_channel_id: scsi.sub_channel_id,
-                    ipc_sender: ipc_sender.clone(),
-                };
-                d.dropped();
-            }))), // FIXME: need to share disconnector with any other SubChannelSenders for this subchannel id
+            disconnector: disc,
             ipc_sender_uuid: Uuid::parse_str(&scsi.ipc_sender_uuid).unwrap(), // FIXME: handle this error gracefully
             sender_id: Rc::new(RefCell::new(Source::new())),
             receiver_id: Rc::new(RefCell::new(Source::new())), // FIXME: copy from MultiSender
@@ -990,12 +1045,10 @@ impl<'de, T> Deserialize<'de> for SubChannelReceiver<T> {
             binding.pop_front().unwrap() // FIXME: handle this error gracefully
         });
 
-        mr_rc
-            .borrow()
-            .mutator
-            .borrow_mut()
-            .sub_channels
-            .insert(scri.sub_channel_id, subchannel_lifecycle::SubSenderStateMachine::new(tx));
+        mr_rc.borrow().mutator.borrow_mut().sub_channels.insert(
+            scri.sub_channel_id,
+            subchannel_lifecycle::SubSenderStateMachine::new(tx, ipc_receiver_uuid.to_string()),
+        );
 
         Ok(SubChannelReceiver {
             sub_channel_id: scri.sub_channel_id,
@@ -1024,7 +1077,8 @@ enum MultiMessage {
         Vec<IpcReceiverAndOrId>,
     ),
     SubChannelId(SubChannelId, String),
-    Disconnect(SubChannelId),
+    Received(SubChannelId, String),
+    Disconnect(SubChannelId, String),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -1069,6 +1123,7 @@ fn multi_channel() -> Result<(MultiSender, Rc<RefCell<MultiReceiver>>), io::Erro
             ipc_senders: senders,
             next_client_id: client_id + 1,
             sub_channels: HashMap::new(),
+            disconnectors: WeakValueHashMap::new(),
             ipc_senders_by_id: Target::new(),
             ipc_receivers_by_id: Target::new(),
             multi_receiver_grid: Rc::new(RefCell::new(HashMap::new())),
@@ -1120,6 +1175,7 @@ impl OneShotMultiServer {
                 ipc_senders: HashMap::new(),
                 next_client_id: 0,
                 sub_channels: HashMap::new(),
+                disconnectors: WeakValueHashMap::new(),
                 ipc_senders_by_id: Target::new(),
                 ipc_receivers_by_id: Target::new(),
                 multi_receiver_grid: Rc::new(RefCell::new(HashMap::new())),

@@ -482,6 +482,43 @@ fn drop_transmitted_subsender_send_using_clone_of_original() {
     assert_eq!(sub_rx.recv().unwrap(), 1);
 }
 
+#[test]
+fn drop_transmitted_subsender_send_using_another_transmitted_subsender() {
+    let channel = multiplex::Channel::new().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel::<i32>().unwrap();
+    let (super_tx1, super_rx1) = channel.sub_channel().unwrap();
+    super_tx1.send(sub_tx.clone()).unwrap();
+    let received_sub_tx1 = super_rx1.recv().unwrap();
+  
+    let (super_tx2, super_rx2) = channel.sub_channel().unwrap();
+    super_tx2.send(sub_tx).unwrap();
+    let received_sub_tx2 = super_rx2.recv().unwrap();
+  
+    drop(received_sub_tx1);
+
+    received_sub_tx2.send(1).unwrap();
+    assert_eq!(sub_rx.recv().unwrap(), 1);
+}
+
+#[test]
+fn drop_transmitted_subsender_send_using_another_subsender_transmitted_over_another_ipc_channel() {
+    let channel = multiplex::Channel::new().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel::<i32>().unwrap();
+    let (super_tx1, super_rx1) = channel.sub_channel().unwrap();
+    super_tx1.send(sub_tx.clone()).unwrap();
+    let received_sub_tx1 = super_rx1.recv().unwrap();
+    
+    let channel2 = multiplex::Channel::new().unwrap();
+    let (super_tx2, super_rx2) = channel2.sub_channel().unwrap();
+    super_tx2.send(sub_tx).unwrap();
+    let received_sub_tx2 = super_rx2.recv().unwrap();
+  
+    drop(received_sub_tx1);
+
+    received_sub_tx2.send(1).unwrap();
+    assert_eq!(sub_rx.recv().unwrap(), 1);
+}
+
 // The following test fails because tx is not closed.
 #[ignore]
 #[test]

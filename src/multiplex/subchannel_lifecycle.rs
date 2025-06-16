@@ -10,11 +10,15 @@
 //! This module provides lifecycle management for subchannel senders.
 
 use std::cell::RefCell;
+use std::collections::HashSet;
+use std::fmt::Debug;
+use std::hash::Hash;
 use std::marker::PhantomData;
+use tracing::instrument;
 
 // Each subsender should have a Rc<SubSenderTracker> so that, when
-// the last reference to a SubSenderTracker is dropped, the
-// SubSenderTracker can notify the SubSenderStateMachine.
+// the last reference to a SubSenderTracker is dropped, SubSenderStateMachine
+// disconnect can be called (via a callback).
 pub struct SubSenderTracker<T>
 where
     T: Fn() + ?Sized,
@@ -45,22 +49,27 @@ pub trait Sender<M, Error> {
 }
 
 #[derive(Debug)]
-pub struct SubSenderStateMachine<T, M, Error>
+pub struct SubSenderStateMachine<T, M, Error, Source>
 where
     T: Sender<M, Error>,
 {
     maybe: RefCell<Option<T>>,
+    sources: RefCell<HashSet<Source>>,
     phantom_m: PhantomData<M>,
     phantom_e: PhantomData<Error>,
 }
 
-impl<T, M, Error> SubSenderStateMachine<T, M, Error>
+impl<T, M, Error, Source> SubSenderStateMachine<T, M, Error, Source>
 where
     T: Sender<M, Error>,
+    Source: Debug + Eq + Hash,
 {
-    pub fn new(t: T) -> SubSenderStateMachine<T, M, Error> {
+    pub fn new(t: T, initial_source: Source) -> SubSenderStateMachine<T, M, Error, Source> {
+        let mut s = HashSet::new();
+        s.insert(initial_source);
         SubSenderStateMachine {
             maybe: RefCell::new(Some(t)),
+            sources: RefCell::new(s),
             phantom_m: PhantomData,
             phantom_e: PhantomData,
         }
@@ -70,8 +79,21 @@ where
         self.maybe.borrow().as_ref().map(|t| t.send(msg))
     }
 
-    pub fn disconnect(&self) {
-        self.maybe.replace(None);
+    #[instrument(level = "debug", skip(self))]
+    pub fn received(&self, received_at_source: Source) {
+        self.sources.borrow_mut().insert(received_at_source);
+    }
+    
+    // Disconnect from the given source. Once the subsender has been disconnected
+    // from all its sources, sending is disabled and receiving should return
+    // Disconnected.
+    #[instrument(level = "debug", skip(self))]
+    pub fn disconnect(&self, source: Source) {
+        let mut sources = self.sources.borrow_mut();
+        sources.remove(&source);
+        if sources.is_empty() {
+            self.maybe.replace(None);
+        }
     }
 }
 
@@ -125,7 +147,7 @@ mod tests {
     #[test]
     fn sub_sender_state_machine_send_ok() {
         let sent = Rc::new(RefCell::new(vec![]));
-        let ssm = SubSenderStateMachine::new(TestSender::new(&sent));
+        let ssm = SubSenderStateMachine::new(TestSender::new(&sent), "");
         assert_eq!(ssm.send('a'), Some(Ok(())));
         assert_eq!(sent.borrow().clone(), vec!['a']);
     }
@@ -135,15 +157,49 @@ mod tests {
         let sent = Rc::new(RefCell::new(vec![]));
         let mut test_sender = TestSender::new(&sent);
         test_sender.set_error(TestError::AnError);
-        let ssm = SubSenderStateMachine::new(test_sender);
+        let ssm = SubSenderStateMachine::new(test_sender, "");
         assert_eq!(ssm.send('a'), Some(Err(TestError::AnError)));
     }
     
     #[test]
     fn sub_sender_state_machine_disconnect() {
         let sent = Rc::new(RefCell::new(vec![]));
-        let ssm = SubSenderStateMachine::new(TestSender::new(&sent));     
-        ssm.disconnect();
+        let ssm = SubSenderStateMachine::new(TestSender::new(&sent), "x");
+
+        // Disconnecting an unknown source should have no effect.
+        ssm.disconnect("y");
+        assert_eq!(ssm.send('a'), Some(Ok(())));
+        
+        ssm.disconnect("x");
+        assert_eq!(ssm.send('a'), None);
+    }
+
+    #[test]
+    fn sub_sender_state_machine_disconnect_received_first() {
+        let sent = Rc::new(RefCell::new(vec![]));
+        let ssm = SubSenderStateMachine::new(TestSender::new(&sent), "x");
+
+        // Disconnecting another source should have no effect.
+        ssm.received("y");
+        ssm.disconnect("y");
+        assert_eq!(ssm.send('a'), Some(Ok(())));
+        
+        ssm.disconnect("x");
+        assert_eq!(ssm.send('a'), None);
+    }
+
+    #[test]
+    fn sub_sender_state_machine_disconnect_original_first() {
+        let sent = Rc::new(RefCell::new(vec![]));
+        let ssm = SubSenderStateMachine::new(TestSender::new(&sent), "x");
+
+        ssm.received("y");
+
+        // Disconnecting the original source should have no effect.
+        ssm.disconnect("x");
+        assert_eq!(ssm.send('a'), Some(Ok(())));
+        
+        ssm.disconnect("y");
         assert_eq!(ssm.send('a'), None);
     }
 }
