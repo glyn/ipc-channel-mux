@@ -315,7 +315,6 @@ fn embedded_multiplexed_receivers_used_before_and_after_transmission() {
 // used, then this test would fail on Unix variants since the spawned process
 // would run out of file descriptors. Using multiplexed channels, the spawned
 // process does not run out of file descriptors.
-#[ignore]
 #[test]
 fn receiving_many_subchannels() {
     let channel = multiplex::Channel::new().unwrap();
@@ -331,7 +330,7 @@ fn receiving_many_subchannels() {
         let channel = multiplex::Channel::new().unwrap();
         let (send1, recv1) = channel.sub_channel().unwrap();
 
-        bootstrap_sub_sender.send(send1).unwrap(); // FIXME: this disconnects recv1. Sending a clone works around the bug.
+        bootstrap_sub_sender.send(send1).unwrap();
 
         let mut senders = vec![];
         while let send2 = recv1.recv().unwrap() {
