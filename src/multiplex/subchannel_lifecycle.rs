@@ -49,23 +49,24 @@ pub trait Sender<M, Error> {
 }
 
 #[derive(Debug)]
-pub struct SubSenderStateMachine<T, M, Error, Source>
+pub struct SubSenderStateMachine<T, M, Error, Source, Via>
 where
     T: Sender<M, Error>,
 {
     maybe: RefCell<Option<T>>,
     sources: RefCell<HashSet<Source>>,
-    in_flight: RefCell<HashSet<Source>>,
+    in_flight: RefCell<HashSet<(Source, Via)>>,
     phantom_m: PhantomData<M>,
     phantom_e: PhantomData<Error>,
 }
 
-impl<T, M, Error, Source> SubSenderStateMachine<T, M, Error, Source>
+impl<T, M, Error, Source, Via> SubSenderStateMachine<T, M, Error, Source, Via>
 where
     T: Sender<M, Error>,
     Source: Debug + Eq + Hash,
+    Via: Debug + Eq + Hash,
 {
-    pub fn new(t: T, initial_source: Source) -> SubSenderStateMachine<T, M, Error, Source> {
+    pub fn new(t: T, initial_source: Source) -> SubSenderStateMachine<T, M, Error, Source, Via> {
         let mut s = HashSet::new();
         s.insert(initial_source);
         SubSenderStateMachine {
@@ -82,15 +83,16 @@ where
     }
 
     #[instrument(level = "debug", skip(self))]
-    pub fn to_be_sent(&self, from: Source) {
-        self.in_flight.borrow_mut().insert(from);
+    pub fn to_be_sent(&self, from: Source, via: Via) {
+        self.in_flight.borrow_mut().insert((from, via));
     }
 
     #[instrument(level = "debug", skip(self))]
-    pub fn received(&self, received_at_source: Source) {
-        self.sources.borrow_mut().insert(received_at_source); // FIXME: undo in flight
+    pub fn received(&self, from: Source, via: Via, received_at_source: Source) {
+        self.in_flight.borrow_mut().remove(&(from, via));
+        self.sources.borrow_mut().insert(received_at_source);
     }
-    
+
     // Disconnect from the given source. Once the subsender has been disconnected
     // from all its sources, sending is disabled and receiving should return
     // Disconnected.
@@ -98,7 +100,8 @@ where
     pub fn disconnect(&self, source: Source) {
         let mut sources = self.sources.borrow_mut();
         sources.remove(&source);
-        if sources.is_empty() && self.in_flight.borrow().is_empty() { // TEMP HACK - in flight cannot be undone
+        if sources.is_empty() && self.in_flight.borrow().is_empty() {
+            // TEMP HACK - in flight cannot be undone
             self.maybe.replace(None);
         }
     }
@@ -138,7 +141,7 @@ mod tests {
 
     #[derive(Clone, Debug, PartialEq)]
     enum TestError {
-        AnError
+        AnError,
     }
 
     impl Sender<char, TestError> for TestSender {
@@ -154,7 +157,8 @@ mod tests {
     #[test]
     fn sub_sender_state_machine_send_ok() {
         let sent = Rc::new(RefCell::new(vec![]));
-        let ssm = SubSenderStateMachine::new(TestSender::new(&sent), "");
+        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str> =
+            SubSenderStateMachine::new(TestSender::new(&sent), "");
         assert_eq!(ssm.send('a'), Some(Ok(())));
         assert_eq!(sent.borrow().clone(), vec!['a']);
     }
@@ -164,19 +168,21 @@ mod tests {
         let sent = Rc::new(RefCell::new(vec![]));
         let mut test_sender = TestSender::new(&sent);
         test_sender.set_error(TestError::AnError);
-        let ssm = SubSenderStateMachine::new(test_sender, "");
+        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str> =
+            SubSenderStateMachine::new(test_sender, "");
         assert_eq!(ssm.send('a'), Some(Err(TestError::AnError)));
     }
-    
+
     #[test]
     fn sub_sender_state_machine_disconnect() {
         let sent = Rc::new(RefCell::new(vec![]));
-        let ssm = SubSenderStateMachine::new(TestSender::new(&sent), "x");
+        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str> =
+            SubSenderStateMachine::new(TestSender::new(&sent), "x");
 
         // Disconnecting an unknown source should have no effect.
         ssm.disconnect("y");
         assert_eq!(ssm.send('a'), Some(Ok(())));
-        
+
         ssm.disconnect("x");
         assert_eq!(ssm.send('a'), None);
     }
@@ -184,13 +190,14 @@ mod tests {
     #[test]
     fn sub_sender_state_machine_disconnect_received_first() {
         let sent = Rc::new(RefCell::new(vec![]));
-        let ssm = SubSenderStateMachine::new(TestSender::new(&sent), "x");
+        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str> =
+            SubSenderStateMachine::new(TestSender::new(&sent), "x");
 
-        // Disconnecting another source should have no effect.
-        ssm.received("y");
+        ssm.to_be_sent("x", "scid");
+        ssm.received("x", "scid", "y");
         ssm.disconnect("y");
         assert_eq!(ssm.send('a'), Some(Ok(())));
-        
+
         ssm.disconnect("x");
         assert_eq!(ssm.send('a'), None);
     }
@@ -198,23 +205,26 @@ mod tests {
     #[test]
     fn sub_sender_state_machine_disconnect_original_first() {
         let sent = Rc::new(RefCell::new(vec![]));
-        let ssm = SubSenderStateMachine::new(TestSender::new(&sent), "x");
+        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str> =
+            SubSenderStateMachine::new(TestSender::new(&sent), "x");
 
-        ssm.received("y");
+        ssm.to_be_sent("x", "scid");
+        ssm.received("x", "scid", "y");
 
         // Disconnecting the original source should have no effect.
         ssm.disconnect("x");
         assert_eq!(ssm.send('a'), Some(Ok(())));
-        
+
         ssm.disconnect("y");
         assert_eq!(ssm.send('a'), None);
     }
 
-        #[test]
+    #[test]
     fn sub_sender_state_machine_in_flight() {
         let sent = Rc::new(RefCell::new(vec![]));
-        let ssm = SubSenderStateMachine::new(TestSender::new(&sent), "x");
-        ssm.to_be_sent("x");
+        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str> =
+            SubSenderStateMachine::new(TestSender::new(&sent), "x");
+        ssm.to_be_sent("x", "scid");
         ssm.disconnect("x");
         assert_eq!(ssm.send('a'), Some(Ok(())));
         assert_eq!(sent.borrow().clone(), vec!['a']);

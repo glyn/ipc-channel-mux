@@ -449,7 +449,6 @@ fn multiplex_drop_only_subsender_for_subchannel() {
     assert_eq!(rx2.recv().unwrap(), 1);
 }
 
-#[ignore]
 #[test]
 fn drop_transmitted_subsender() {
     let channel = multiplex::Channel::new().unwrap();

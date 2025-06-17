@@ -387,6 +387,7 @@ struct MultiReceiverMutator {
             Vec<u8>,
             mpsc::SendError<Vec<u8>>,
             String,
+            String,
         >,
     >,
     disconnectors: WeakValueHashMap<SubChannelId, Weak<SubSenderTracker<dyn Fn()>>>,
@@ -407,6 +408,7 @@ impl std::fmt::Debug for MultiReceiverMutator {
 
 thread_local! {
     static IPC_SENDERS_RECEIVED: RefCell<VecDeque<Rc<IpcSender<MultiMessage>>>> = RefCell::new(VecDeque::new());
+    static FROM_VIA: RefCell<(String, String)> = RefCell::new(("".to_string(), "".to_string()));
 }
 
 impl subchannel_lifecycle::Sender<Vec<u8>, mpsc::SendError<Vec<u8>>> for Sender<Vec<u8>> {
@@ -477,7 +479,7 @@ impl MultiReceiver {
                     .insert(client_id, sender);
                 Ok(())
             },
-            MultiMessage::Data(scid, data, ipc_senders, mut ipc_receivers) => {
+            MultiMessage::Data(scid, data, ipc_senders, mut ipc_receivers, from) => {
                 IPC_SENDERS_RECEIVED.with(|senders| {
                     let mut srs: VecDeque<Rc<IpcSender<MultiMessage>>> = ipc_senders
                         .iter()
@@ -584,6 +586,7 @@ impl MultiReceiver {
                 CURRENT_MULTI_RECEIVER.with(|multi_receiver| {
                     multi_receiver.borrow_mut().replace(Rc::clone(&mr));
                 });
+                FROM_VIA.with(|from_via|from_via.replace((from, scid.to_string())));
                 let result = mr
                     .borrow()
                     .mutator
@@ -626,16 +629,25 @@ impl MultiReceiver {
 
                 Ok(())
             },
-            MultiMessage::Sending(scid, from) => {
+            MultiMessage::Sending {
+                scid: scid,
+                from: from,
+                via: via,
+            } => {
                 if let Some(sm) = mr.borrow().mutator.borrow_mut().sub_channels.get(&scid) {
-                    sm.to_be_sent(from);
+                    sm.to_be_sent(from, via);
                 }
 
                 Ok(())
             },
-            MultiMessage::Received(scid, source) => {
+            MultiMessage::Received {
+                scid: scid,
+                from: from,
+                via: via,
+                new_src: new_source,
+            } => {
                 if let Some(sm) = mr.borrow().mutator.borrow_mut().sub_channels.get(&scid) {
-                    sm.received(source);
+                    sm.received(from, via, new_source);
                 }
 
                 Ok(())
@@ -729,8 +741,11 @@ where
                 .iter()
                 .for_each(|(subchannel_id, ipc_sender)| {
                     // TODO: need to send the actual sender source
-                    let _ = ipc_sender
-                        .send(MultiMessage::Sending(subchannel_id.clone(), "".to_string()));
+                    let _ = ipc_sender.send(MultiMessage::Sending {
+                        scid: subchannel_id.clone(),
+                        from: "".to_string(),
+                        via: self.sub_channel_id.to_string(),
+                    });
                 });
             Ok::<(), MultiplexError>(())
         })?;
@@ -803,8 +818,7 @@ where
                     .collect();
                 let result =
                     self.ipc_sender
-                        .send(MultiMessage::Data(self.sub_channel_id, data, srs, rrs));
-                // TODO: wait for acknowledgement (esp. if we sent any subchannel senders or receivers)
+                        .send(MultiMessage::Data(self.sub_channel_id, data, srs, rrs, "".to_string()));
                 log::debug!("<SubChannelSender::send -> {:#?}", result.as_ref());
                 result.map_err(From::from)
             })
@@ -854,8 +868,16 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
                 .ipc_receiver_uuid
                 .to_string()
         });
+
+        let (from, via) = FROM_VIA.with(|from_via|from_via.borrow().clone());
+
         ipc_sender
-            .send(MultiMessage::Received(scsi.sub_channel_id, source.clone()))
+            .send(MultiMessage::Received {
+                scid: scsi.sub_channel_id,
+                from: from,
+                via: via,
+                new_src: source.clone(),
+            })
             .unwrap();
 
         let ipc_sender_clone = ipc_sender.clone();
@@ -1084,10 +1106,20 @@ enum MultiMessage {
         Vec<u8>,
         Vec<IpcSenderAndOrId>,
         Vec<IpcReceiverAndOrId>,
+        String, // from source
     ),
     SubChannelId(SubChannelId, String),
-    Sending(SubChannelId, String),
-    Received(SubChannelId, String),
+    Sending {
+        scid: SubChannelId,
+        from: String,
+        via: String,
+    },
+    Received {
+        scid: SubChannelId,
+        from: String,
+        via: String,
+        new_src: String,
+    },
     Disconnect(SubChannelId, String),
 }
 
