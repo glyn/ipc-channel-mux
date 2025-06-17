@@ -626,6 +626,13 @@ impl MultiReceiver {
 
                 Ok(())
             },
+            MultiMessage::Sending(scid, from) => {
+                if let Some(sm) = mr.borrow().mutator.borrow_mut().sub_channels.get(&scid) {
+                    sm.to_be_sent(from);
+                }
+
+                Ok(())
+            },
             MultiMessage::Received(scid, source) => {
                 if let Some(sm) = mr.borrow().mutator.borrow_mut().sub_channels.get(&scid) {
                     sm.received(source);
@@ -721,9 +728,9 @@ where
                 .borrow()
                 .iter()
                 .for_each(|(subchannel_id, ipc_sender)| {
-                    // TODO:
-                    // We have subchannel_id and ipc_sender, but not the sender and receiver "sources"
-                    // send(scid: SubChannelId, via: IpcChannel, src1: Source, src2: Source)
+                    // TODO: need to send the actual sender source
+                    let _ = ipc_sender
+                        .send(MultiMessage::Sending(subchannel_id.clone(), "".to_string()));
                 });
             Ok::<(), MultiplexError>(())
         })?;
@@ -872,7 +879,9 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
                         };
                         d.dropped();
                     })));
-                mutator.disconnectors.insert(scsi.sub_channel_id, Rc::clone(&disconnector));
+                mutator
+                    .disconnectors
+                    .insert(scsi.sub_channel_id, Rc::clone(&disconnector));
                 disconnector
             }
         });
@@ -1077,6 +1086,7 @@ enum MultiMessage {
         Vec<IpcReceiverAndOrId>,
     ),
     SubChannelId(SubChannelId, String),
+    Sending(SubChannelId, String),
     Received(SubChannelId, String),
     Disconnect(SubChannelId, String),
 }

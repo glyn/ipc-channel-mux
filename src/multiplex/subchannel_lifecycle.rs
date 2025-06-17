@@ -55,6 +55,7 @@ where
 {
     maybe: RefCell<Option<T>>,
     sources: RefCell<HashSet<Source>>,
+    in_flight: RefCell<HashSet<Source>>,
     phantom_m: PhantomData<M>,
     phantom_e: PhantomData<Error>,
 }
@@ -70,6 +71,7 @@ where
         SubSenderStateMachine {
             maybe: RefCell::new(Some(t)),
             sources: RefCell::new(s),
+            in_flight: RefCell::new(HashSet::new()),
             phantom_m: PhantomData,
             phantom_e: PhantomData,
         }
@@ -80,8 +82,13 @@ where
     }
 
     #[instrument(level = "debug", skip(self))]
+    pub fn to_be_sent(&self, from: Source) {
+        self.in_flight.borrow_mut().insert(from);
+    }
+
+    #[instrument(level = "debug", skip(self))]
     pub fn received(&self, received_at_source: Source) {
-        self.sources.borrow_mut().insert(received_at_source);
+        self.sources.borrow_mut().insert(received_at_source); // FIXME: undo in flight
     }
     
     // Disconnect from the given source. Once the subsender has been disconnected
@@ -91,7 +98,7 @@ where
     pub fn disconnect(&self, source: Source) {
         let mut sources = self.sources.borrow_mut();
         sources.remove(&source);
-        if sources.is_empty() {
+        if sources.is_empty() && self.in_flight.borrow().is_empty() { // TEMP HACK - in flight cannot be undone
             self.maybe.replace(None);
         }
     }
@@ -201,5 +208,15 @@ mod tests {
         
         ssm.disconnect("y");
         assert_eq!(ssm.send('a'), None);
+    }
+
+        #[test]
+    fn sub_sender_state_machine_in_flight() {
+        let sent = Rc::new(RefCell::new(vec![]));
+        let ssm = SubSenderStateMachine::new(TestSender::new(&sent), "x");
+        ssm.to_be_sent("x");
+        ssm.disconnect("x");
+        assert_eq!(ssm.send('a'), Some(Ok(())));
+        assert_eq!(sent.borrow().clone(), vec!['a']);
     }
 }
