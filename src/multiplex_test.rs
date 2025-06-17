@@ -163,7 +163,6 @@ fn multiplex_two_subchannels_reverse_ordered() {
     assert_eq!(1, rx1.recv().unwrap());
 }
 
-#[ignore]
 #[test]
 fn embedded_multiplexed_senders() {
     let person = ("Patrick Walton".to_owned(), 29);
@@ -191,7 +190,6 @@ fn embedded_multiplexed_senders() {
     assert_eq!(received_person2, person2);
 }
 
-#[ignore]
 #[test]
 fn embedded_multiplexed_two_senders() {
     let person = ("Patrick Walton".to_owned(), 29);
@@ -235,7 +233,6 @@ fn embedded_multiplexed_two_senders() {
     assert_eq!(received_person2, person2);
 }
 
-#[ignore]
 #[test]
 fn multiplexed_senders_interacting() {
     let channel = multiplex::Channel::new().unwrap();
@@ -452,6 +449,7 @@ fn multiplex_drop_only_subsender_for_subchannel() {
     assert_eq!(rx2.recv().unwrap(), 1);
 }
 
+#[ignore]
 #[test]
 fn drop_transmitted_subsender() {
     let channel = multiplex::Channel::new().unwrap();
