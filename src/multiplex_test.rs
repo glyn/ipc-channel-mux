@@ -330,7 +330,8 @@ fn receiving_many_subchannels() {
         bootstrap_sub_sender.send(send1).unwrap();
 
         let mut senders = vec![];
-        while let send2 = recv1.recv().unwrap() {
+        loop {
+            let send2 = recv1.recv().unwrap();
             send2.send(true).unwrap();
             // The fd is private, but this transmute lets us get at it
             let fd: &std::sync::Arc<u32> = unsafe { std::mem::transmute(&send2) };
@@ -360,9 +361,10 @@ fn sender_transmission_dropped_in_flight() {
     let (super_tx, super_rx) = channel.sub_channel().unwrap();
     super_tx.send(sub_tx).unwrap();
 
-    match sub_rx.recv().unwrap_err() {
-        multiplex::MultiplexError::Disconnected => panic!("sub_tx dropped prematurely"),
-        e => panic!("expected disconnected error, got {:?}", e),
+    match sub_rx.recv() {
+        Err(multiplex::MultiplexError::Disconnected) => panic!("sub_tx dropped prematurely"),
+        Err(e) => panic!("expected disconnected error, got {:?}", e),
+        _ => {},
     }
 
     // match sub_rx.try_recv().unwrap_err() { // try_recv not yet implemented

@@ -9,7 +9,6 @@
 
 use crate::ipc::{self, IpcError, IpcOneShotServer, IpcReceiver, IpcSender};
 use bincode;
-use enclose::enclose;
 use log;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
@@ -19,8 +18,8 @@ use std::io;
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
-use std::sync::LazyLock;
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::LazyLock;
 use std::time::Duration;
 use subchannel_lifecycle::SubSenderTracker;
 use tracing::instrument;
@@ -642,11 +641,7 @@ impl MultiReceiver {
 
                 Ok(())
             },
-            MultiMessage::Sending {
-                scid: scid,
-                from: from,
-                via: via,
-            } => {
+            MultiMessage::Sending { scid, from, via } => {
                 if let Some(sm) = mr.borrow().mutator.borrow_mut().sub_channels.get(&scid) {
                     sm.to_be_sent(from, via);
                 }
@@ -654,10 +649,10 @@ impl MultiReceiver {
                 Ok(())
             },
             MultiMessage::Received {
-                scid: scid,
-                from: from,
-                via: via,
-                new_src: new_source,
+                scid,
+                from,
+                via,
+                new_source,
             } => {
                 if let Some(sm) = mr.borrow().mutator.borrow_mut().sub_channels.get(&scid) {
                     // Each subsender is serialised twice and results in to_be_sent() being called twice. Balance this out by
@@ -706,10 +701,7 @@ struct SubChannelDisconnector {
 impl SubChannelDisconnector {
     fn dropped(&self) {
         self.ipc_sender
-            .send(MultiMessage::Disconnect(
-                self.sub_channel_id,
-                self.source,
-            ))
+            .send(MultiMessage::Disconnect(self.sub_channel_id, self.source))
             .unwrap();
     }
 }
@@ -857,11 +849,11 @@ where
         self.sub_channel_id
     }
 
+    #[allow(dead_code)]
     fn disconnect(&self) -> Result<(), MultiplexError> {
-        Ok(self.ipc_sender.send(MultiMessage::Disconnect(
-            self.sub_channel_id,
-            *ORIGIN,
-        ))?)
+        Ok(self
+            .ipc_sender
+            .send(MultiMessage::Disconnect(self.sub_channel_id, *ORIGIN))?)
     }
 }
 
@@ -886,7 +878,7 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
             })
             .map_err(serde::de::Error::custom::<MultiplexError>)?;
 
-        let source = CURRENT_MULTI_RECEIVER.with(|maybe_mr| {
+        let new_source = CURRENT_MULTI_RECEIVER.with(|maybe_mr| {
             maybe_mr
                 .borrow()
                 .as_ref()
@@ -902,7 +894,7 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
                 scid: scsi.sub_channel_id,
                 from: from,
                 via: via,
-                new_src: source,
+                new_source,
             })
             .unwrap();
 
@@ -923,7 +915,7 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
                         let d = SubChannelDisconnector {
                             sub_channel_id: scsi.sub_channel_id,
                             ipc_sender: ipc_sender_clone.clone(),
-                            source: source.clone(),
+                            source: new_source,
                         };
                         d.dropped();
                     })));
@@ -1144,7 +1136,7 @@ enum MultiMessage {
         scid: SubChannelId,
         from: Uuid,
         via: SubChannelId,
-        new_src: Uuid,
+        new_source: Uuid,
     },
     Disconnect(SubChannelId, Uuid),
 }

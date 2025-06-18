@@ -236,14 +236,14 @@ mod tests {
         let sent = Rc::new(RefCell::new(vec![]));
         let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str> =
             SubSenderStateMachine::new(TestSender::new(&sent), "x");
-        
+
         ssm.to_be_sent("x", "scid");
         ssm.to_be_sent("x", "scid");
         ssm.disconnect("x");
-        
+
         ssm.received("x", "scid", "y");
         ssm.disconnect("y");
-        
+
         ssm.received("x", "scid", "y");
         assert_eq!(ssm.send('a'), Some(Ok(())));
         assert_eq!(sent.borrow().clone(), vec!['a']);
