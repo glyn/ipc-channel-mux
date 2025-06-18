@@ -563,35 +563,17 @@ fn multiplex_drop_only_subreceiver_for_subchannel() {
     assert!(tx1.send(1).is_err());
 }
 
-// The following test deadlocks because sub_rx is not closed
-#[ignore]
 #[test]
 fn compare_base_transmission_dropped() {
-    let channel = multiplex::Channel::new().unwrap();
-    let (sub_tx, sub_rx) = channel.sub_channel::<i32>().unwrap();
-    let (super_tx, super_rx) = channel.sub_channel().unwrap();
-    super_tx.send(sub_tx).unwrap();
-    drop(super_rx); // commenting this out makes sub_rx.recv() deadlock
-
-    match sub_rx.recv().unwrap_err() {
-        multiplex::MultiplexError::MpmcSendError => (),
-        e => panic!("expected send error, got {:?}", e),
-    }
-}
-
-// The following test deadlocks because sub_rx is not closed
-#[ignore]
-#[test]
-fn compare_base_transmission_dropped_distinct() {
-    let sub_channel = multiplex::Channel::new().unwrap();
-    let (sub_tx, sub_rx) = sub_channel.sub_channel::<i32>().unwrap();
+    let channel1 = multiplex::Channel::new().unwrap();
+    let (tx, rx) = channel1.sub_channel::<i32>().unwrap();
     
-    let channel = multiplex::Channel::new().unwrap();
-    let (super_tx, super_rx) = channel.sub_channel().unwrap();
-    super_tx.send(sub_tx).unwrap();
-    drop(super_rx);
+    let channel2 = multiplex::Channel::new().unwrap();
+    let (via_tx, via_rx) = channel2.sub_channel().unwrap();
+    via_tx.send(tx).unwrap();
+    drop(via_rx);
 
-    match sub_rx.recv().unwrap_err() {
+    match rx.recv().unwrap_err() {
         multiplex::MultiplexError::MpmcSendError => (),
         e => panic!("expected send error, got {:?}", e),
     }
