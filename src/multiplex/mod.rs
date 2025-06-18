@@ -20,6 +20,7 @@ use std::marker::PhantomData;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::Duration;
 use subchannel_lifecycle::SubSenderTracker;
 use tracing::instrument;
 use uuid::Uuid;
@@ -447,8 +448,16 @@ impl MultiReceiver {
 
     #[instrument(level = "debug", err(level = "debug"))]
     fn receive(&self) -> Result<(), MultiplexError> {
+        // TODO: build polling around the following recv() by using recv_timeout
         let msg = if let Some(ipc_receiver) = self.ipc_receiver.borrow().as_ref() {
-            ipc_receiver.recv()?
+            loop {
+                let polling_interval = Duration::new(1, 0);
+                match ipc_receiver.try_recv_timeout(polling_interval) {
+                    Ok(msg) => break Ok(msg),
+                    Err(crate::ipc::TryRecvError::Empty) => self.poll(),
+                    Err(crate::ipc::TryRecvError::IpcError(e)) => break Err(e),
+                }
+            }?
         } else {
             panic!("Attempted to use IpcReceiver after it was sent"); // FIXME: convert this to an error
         };
@@ -586,7 +595,7 @@ impl MultiReceiver {
                 CURRENT_MULTI_RECEIVER.with(|multi_receiver| {
                     multi_receiver.borrow_mut().replace(Rc::clone(&mr));
                 });
-                FROM_VIA.with(|from_via|from_via.replace((from, scid.to_string())));
+                FROM_VIA.with(|from_via| from_via.replace((from, scid.to_string())));
                 let result = mr
                     .borrow()
                     .mutator
@@ -674,6 +683,13 @@ impl MultiReceiver {
                 m
             ))),
         }
+    }
+
+    //#[instrument(level = "trace", err(level = "trace"))]
+    #[instrument(level = "trace")]
+    fn poll(&self) /*-> Result<(), MultiplexError>*/
+    {
+        //Ok(())
     }
 }
 
@@ -819,9 +835,13 @@ where
                         }
                     })
                     .collect();
-                let result =
-                    self.ipc_sender
-                        .send(MultiMessage::Data(self.sub_channel_id, data, srs, rrs, "".to_string()));
+                let result = self.ipc_sender.send(MultiMessage::Data(
+                    self.sub_channel_id,
+                    data,
+                    srs,
+                    rrs,
+                    "".to_string(),
+                ));
                 log::debug!("<SubChannelSender::send -> {:#?}", result.as_ref());
                 result.map_err(From::from)
             })
@@ -872,7 +892,7 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
                 .to_string()
         });
 
-        let (from, via) = FROM_VIA.with(|from_via|from_via.borrow().clone());
+        let (from, via) = FROM_VIA.with(|from_via| from_via.borrow().clone());
 
         ipc_sender
             .send(MultiMessage::Received {

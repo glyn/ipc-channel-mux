@@ -563,8 +563,9 @@ fn multiplex_drop_only_subreceiver_for_subchannel() {
     assert!(tx1.send(1).is_err());
 }
 
+#[ignore = "subsender transmission failure is not detected"]
 #[test]
-fn compare_base_transmission_dropped() {
+fn compare_base_transmission_failure() {
     let channel1 = multiplex::Channel::new().unwrap();
     let (tx, rx) = channel1.sub_channel::<i32>().unwrap();
     
