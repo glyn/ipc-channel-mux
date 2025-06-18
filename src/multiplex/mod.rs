@@ -19,6 +19,7 @@ use std::io;
 use std::marker::PhantomData;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
+use std::sync::LazyLock;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 use subchannel_lifecycle::SubSenderTracker;
@@ -28,6 +29,9 @@ use weak_table::traits::WeakElement;
 use weak_table::{PtrWeakHashSet, WeakValueHashMap};
 
 mod subchannel_lifecycle;
+
+static EMPTY_SUBCHANNEL_ID: LazyLock<SubChannelId> = LazyLock::new(|| SubChannelId(Uuid::new_v4()));
+static ORIGIN: LazyLock<Uuid> = LazyLock::new(|| Uuid::new_v4());
 
 pub struct Channel {
     multi_sender: MultiSender,
@@ -315,7 +319,7 @@ impl<'a> MultiSender {
                 let d = SubChannelDisconnector {
                     sub_channel_id: scid,
                     ipc_sender: sender_clone.clone(),
-                    source: "".to_string(),
+                    source: *ORIGIN,
                 };
                 d.dropped();
             }))),
@@ -387,8 +391,8 @@ struct MultiReceiverMutator {
             mpsc::Sender<Vec<u8>>,
             Vec<u8>,
             mpsc::SendError<Vec<u8>>,
-            String,
-            String,
+            Uuid,
+            SubChannelId,
         >,
     >,
     disconnectors: WeakValueHashMap<SubChannelId, Weak<SubSenderTracker<dyn Fn()>>>,
@@ -409,7 +413,7 @@ impl std::fmt::Debug for MultiReceiverMutator {
 
 thread_local! {
     static IPC_SENDERS_RECEIVED: RefCell<VecDeque<Rc<IpcSender<MultiMessage>>>> = RefCell::new(VecDeque::new());
-    static FROM_VIA: RefCell<(String, String)> = RefCell::new(("".to_string(), "".to_string()));
+    static FROM_VIA: RefCell<(Uuid, SubChannelId)> = RefCell::new((*ORIGIN, *EMPTY_SUBCHANNEL_ID));
 }
 
 impl subchannel_lifecycle::Sender<Vec<u8>, mpsc::SendError<Vec<u8>>> for Sender<Vec<u8>> {
@@ -427,7 +431,7 @@ impl MultiReceiver {
         let (tx, rx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = mpsc::channel();
         mr.borrow().mutator.borrow_mut().sub_channels.insert(
             sub_channel_id,
-            subchannel_lifecycle::SubSenderStateMachine::new(tx, "".to_string()),
+            subchannel_lifecycle::SubSenderStateMachine::new(tx, *ORIGIN),
         );
         Ok(SubChannelReceiver {
             multi_receiver: Rc::clone(
@@ -595,7 +599,7 @@ impl MultiReceiver {
                 CURRENT_MULTI_RECEIVER.with(|multi_receiver| {
                     multi_receiver.borrow_mut().replace(Rc::clone(&mr));
                 });
-                FROM_VIA.with(|from_via| from_via.replace((from, scid.to_string())));
+                FROM_VIA.with(|from_via| from_via.replace((from, scid)));
                 let result = mr
                     .borrow()
                     .mutator
@@ -696,7 +700,7 @@ impl MultiReceiver {
 struct SubChannelDisconnector {
     sub_channel_id: SubChannelId,
     ipc_sender: Rc<IpcSender<MultiMessage>>,
-    source: String,
+    source: Uuid,
 }
 
 impl SubChannelDisconnector {
@@ -704,7 +708,7 @@ impl SubChannelDisconnector {
         self.ipc_sender
             .send(MultiMessage::Disconnect(
                 self.sub_channel_id,
-                self.source.clone(),
+                self.source,
             ))
             .unwrap();
     }
@@ -762,8 +766,8 @@ where
                     // Note: each subsender is serialised twice and so Sending will be sent twice for each subsender.
                     let _ = ipc_sender.send(MultiMessage::Sending {
                         scid: subchannel_id.clone(),
-                        from: "".to_string(), // TODO: do we need to send the actual sender source?
-                        via: self.sub_channel_id.to_string(),
+                        from: *ORIGIN, // TODO: do we need to send the actual sender source?
+                        via: self.sub_channel_id,
                     });
                 });
             Ok::<(), MultiplexError>(())
@@ -840,7 +844,7 @@ where
                     data,
                     srs,
                     rrs,
-                    "".to_string(),
+                    *ORIGIN,
                 ));
                 log::debug!("<SubChannelSender::send -> {:#?}", result.as_ref());
                 result.map_err(From::from)
@@ -856,7 +860,7 @@ where
     fn disconnect(&self) -> Result<(), MultiplexError> {
         Ok(self.ipc_sender.send(MultiMessage::Disconnect(
             self.sub_channel_id,
-            "".to_string(),
+            *ORIGIN,
         ))?)
     }
 }
@@ -889,7 +893,6 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
                 .expect("CURRENT_MULTI_RECEIVER not set")
                 .borrow()
                 .ipc_receiver_uuid
-                .to_string()
         });
 
         let (from, via) = FROM_VIA.with(|from_via| from_via.borrow().clone());
@@ -899,7 +902,7 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
                 scid: scsi.sub_channel_id,
                 from: from,
                 via: via,
-                new_src: source.clone(),
+                new_src: source,
             })
             .unwrap();
 
@@ -1101,7 +1104,7 @@ impl<'de, T> Deserialize<'de> for SubChannelReceiver<T> {
 
         mr_rc.borrow().mutator.borrow_mut().sub_channels.insert(
             scri.sub_channel_id,
-            subchannel_lifecycle::SubSenderStateMachine::new(tx, ipc_receiver_uuid.to_string()),
+            subchannel_lifecycle::SubSenderStateMachine::new(tx, ipc_receiver_uuid),
         );
 
         Ok(SubChannelReceiver {
@@ -1129,21 +1132,21 @@ enum MultiMessage {
         Vec<u8>,
         Vec<IpcSenderAndOrId>,
         Vec<IpcReceiverAndOrId>,
-        String, // from source
+        Uuid,
     ),
     SubChannelId(SubChannelId, String),
     Sending {
         scid: SubChannelId,
-        from: String,
-        via: String,
+        from: Uuid,
+        via: SubChannelId,
     },
     Received {
         scid: SubChannelId,
-        from: String,
-        via: String,
-        new_src: String,
+        from: Uuid,
+        via: SubChannelId,
+        new_src: Uuid,
     },
-    Disconnect(SubChannelId, String),
+    Disconnect(SubChannelId, Uuid),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
