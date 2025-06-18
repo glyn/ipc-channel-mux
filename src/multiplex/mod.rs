@@ -647,6 +647,9 @@ impl MultiReceiver {
                 new_src: new_source,
             } => {
                 if let Some(sm) = mr.borrow().mutator.borrow_mut().sub_channels.get(&scid) {
+                    // Each subsender is serialised twice and results in to_be_sent() being called twice. Balance this out by
+                    // calling received() twice.
+                    sm.received(from.clone(), via.clone(), new_source.clone());
                     sm.received(from, via, new_source);
                 }
 
@@ -740,10 +743,10 @@ where
                 .borrow()
                 .iter()
                 .for_each(|(subchannel_id, ipc_sender)| {
-                    // TODO: need to send the actual sender source
+                    // Note: each subsender is serialised twice and so Sending will be sent twice for each subsender.
                     let _ = ipc_sender.send(MultiMessage::Sending {
                         scid: subchannel_id.clone(),
-                        from: "".to_string(),
+                        from: "".to_string(), // TODO: do we need to send the actual sender source?
                         via: self.sub_channel_id.to_string(),
                     });
                 });

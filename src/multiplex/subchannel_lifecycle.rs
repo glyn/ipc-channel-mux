@@ -9,6 +9,7 @@
 
 //! This module provides lifecycle management for subchannel senders.
 
+use hashbag::HashBag;
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fmt::Debug;
@@ -55,7 +56,7 @@ where
 {
     maybe: RefCell<Option<T>>,
     sources: RefCell<HashSet<Source>>,
-    in_flight: RefCell<HashSet<(Source, Via)>>,
+    in_flight: RefCell<HashBag<(Source, Via)>>,
     phantom_m: PhantomData<M>,
     phantom_e: PhantomData<Error>,
 }
@@ -72,7 +73,7 @@ where
         SubSenderStateMachine {
             maybe: RefCell::new(Some(t)),
             sources: RefCell::new(s),
-            in_flight: RefCell::new(HashSet::new()),
+            in_flight: RefCell::new(HashBag::new()),
             phantom_m: PhantomData,
             phantom_e: PhantomData,
         }
@@ -226,6 +227,24 @@ mod tests {
             SubSenderStateMachine::new(TestSender::new(&sent), "x");
         ssm.to_be_sent("x", "scid");
         ssm.disconnect("x");
+        assert_eq!(ssm.send('a'), Some(Ok(())));
+        assert_eq!(sent.borrow().clone(), vec!['a']);
+    }
+
+    #[test]
+    fn sub_sender_state_machine_multiple_transmission() {
+        let sent = Rc::new(RefCell::new(vec![]));
+        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str> =
+            SubSenderStateMachine::new(TestSender::new(&sent), "x");
+        
+        ssm.to_be_sent("x", "scid");
+        ssm.to_be_sent("x", "scid");
+        ssm.disconnect("x");
+        
+        ssm.received("x", "scid", "y");
+        ssm.disconnect("y");
+        
+        ssm.received("x", "scid", "y");
         assert_eq!(ssm.send('a'), Some(Ok(())));
         assert_eq!(sent.borrow().clone(), vec!['a']);
     }
