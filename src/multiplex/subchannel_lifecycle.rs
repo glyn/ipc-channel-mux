@@ -79,7 +79,7 @@ where
 impl<T, M, Error, Source, Via, Probe> SubSenderStateMachine<T, M, Error, Source, Via, Probe>
 where
     T: Sender<M, Error>,
-    Source: Debug + Eq + Hash,
+    Source: Clone + Debug + Eq + Hash,
     Via: Clone + Debug + Eq + Hash,
     Probe: Fn() -> bool + ?Sized,
 {
@@ -123,7 +123,6 @@ where
         let mut sources = self.sources.borrow_mut();
         sources.remove(&source);
         if sources.is_empty() && self.in_flight.borrow().is_empty() {
-            // TEMP HACK - in flight cannot be undone
             self.maybe.replace(None);
         }
     }
@@ -139,11 +138,14 @@ where
             .collect();
 
         // Find all in-flight entries for disconnected Vias.
-        let binding = self.in_flight.borrow();
-        let disconnected_in_flight: Vec<_> = binding
+        let mut disconnected_in_flight = HashSet::new();
+        self.in_flight
+            .borrow()
             .iter()
             .filter(|(_, via)| disconnected.contains(via))
-            .collect();
+            .for_each(|(source, via)| {
+                disconnected_in_flight.insert(((*source).clone(), via.clone()));
+            });
 
         // Remove all in-flight entries for disconnected Vias.
         let mut in_flight = self.in_flight.borrow_mut();
@@ -156,6 +158,10 @@ where
         disconnected_in_flight.iter().for_each(|(_, via)| {
             probes.remove(via);
         });
+
+        if self.sources.borrow().is_empty() && in_flight.is_empty() {
+            self.maybe.replace(None);
+        }
     }
 }
 
@@ -340,5 +346,64 @@ mod tests {
         ssm.received("x", "scid", "y");
         assert_eq!(ssm.send('a'), Some(Ok(())));
         assert_eq!(sent.borrow().clone(), vec!['a']);
+    }
+
+    #[test]
+    fn sub_sender_state_machine_in_flight_crash() {
+        let sent = Rc::new(RefCell::new(vec![]));
+        let ssm: SubSenderStateMachine<
+            TestSender,
+            char,
+            TestError,
+            &'static str,
+            &'static str,
+            dyn Fn() -> bool,
+        > = SubSenderStateMachine::new(TestSender::new(&sent), "x");
+
+        ssm.to_be_sent("x", "scid", Box::new(|| false));
+        ssm.disconnect("x");
+
+        assert_eq!(ssm.send('a'), Some(Ok(())));
+        assert_eq!(sent.borrow().clone(), vec!['a']);
+
+        ssm.poll();
+        assert_eq!(ssm.send('a'), None);
+    }
+
+    #[test]
+    fn sub_sender_state_machine_in_flight_crash_eventually() {
+        let sent = Rc::new(RefCell::new(vec![]));
+        let ssm: SubSenderStateMachine<
+            TestSender,
+            char,
+            TestError,
+            &'static str,
+            &'static str,
+            dyn Fn() -> bool,
+        > = SubSenderStateMachine::new(TestSender::new(&sent), "x");
+
+        let count: Rc<RefCell<u8>> = Rc::new(RefCell::new(0));
+        let count_clone = Rc::clone(&count);
+        ssm.to_be_sent(
+            "x",
+            "scid",
+            Box::new(move || {
+                let mut c = count_clone.borrow().clone();
+                c += 1;
+                count_clone.replace(c);
+                c < 2
+            }),
+        );
+        ssm.disconnect("x");
+
+        assert_eq!(ssm.send('a'), Some(Ok(())));
+        assert_eq!(sent.borrow().clone(), vec!['a']);
+        
+        ssm.poll();
+        assert_eq!(ssm.send('b'), Some(Ok(())));
+        assert_eq!(sent.borrow().clone(), vec!['a', 'b']);
+        
+        ssm.poll();
+        assert_eq!(ssm.send('c'), None);
     }
 }
