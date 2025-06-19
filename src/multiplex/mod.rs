@@ -628,7 +628,7 @@ impl MultiReceiver {
                 via_chan,
             } => {
                 let ipc_sender = Self::ipcsender_from_sender_and_or_id(&mr, &via_chan);
-                
+
                 if let Some(sm) = mr.borrow().mutator.borrow_mut().sub_channels.get(&scid) {
                     sm.to_be_sent(from, via, Box::new(move || probe(ipc_sender.clone())));
                 }
@@ -650,7 +650,7 @@ impl MultiReceiver {
 
                 Ok(())
             },
-            MultiMessage::Probe() => {Ok(())}, // ignore probe messages
+            MultiMessage::Probe() => Ok(()), // ignore probe messages
             m => Err(MultiplexError::InternalError(format!(
                 "unexpected multi message {:?}",
                 m
@@ -701,9 +701,12 @@ impl MultiReceiver {
 
     //#[instrument(level = "trace", err(level = "trace"))]
     #[instrument(level = "trace")]
-    fn poll(&self) /*-> Result<(), MultiplexError>*/
-    {
-        //Ok(())
+    fn poll(&self) {
+        self.mutator
+            .borrow()
+            .sub_channels
+            .iter()
+            .for_each(|(_, subsender_state_machine)| subsender_state_machine.poll());
     }
 }
 
