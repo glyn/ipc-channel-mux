@@ -52,8 +52,6 @@ pub trait Sender<M, Error> {
 pub struct SubSenderStateMachine<T, M, Error, Source, Via, Probe>
 where
     Probe: ?Sized
-    //T: Sender<M, Error>,
-    //Probe: Fn() -> bool + ?Sized,
 {
     maybe: RefCell<Option<T>>,
     sources: RefCell<HashSet<Source>>,
@@ -66,7 +64,6 @@ where
 impl<T, M, Error, Source, Via, Probe> std::fmt::Debug
     for SubSenderStateMachine<T, M, Error, Source, Via, Probe>
 where
-    //T: Sender<M, Error>,
     Source: Debug,
     Via: Debug,
     Probe: Fn() -> bool + ?Sized,

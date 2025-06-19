@@ -650,6 +650,7 @@ impl MultiReceiver {
 
                 Ok(())
             },
+            MultiMessage::Probe() => {Ok(())}, // ignore probe messages
             m => Err(MultiplexError::InternalError(format!(
                 "unexpected multi message {:?}",
                 m
@@ -707,7 +708,7 @@ impl MultiReceiver {
 }
 
 fn probe(ipc_sender: Rc<IpcSender<MultiMessage>>) -> bool {
-    true
+    ipc_sender.send(MultiMessage::Probe()).is_ok()
 }
 
 struct SubChannelDisconnector {
@@ -1175,6 +1176,7 @@ enum MultiMessage {
         new_source: Uuid,
     },
     Disconnect(SubChannelId, Uuid),
+    Probe(),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
