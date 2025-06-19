@@ -11,7 +11,7 @@
 
 use hashbag::HashBag;
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Debug;
 use std::hash::Hash;
 use std::marker::PhantomData;
@@ -49,31 +49,54 @@ pub trait Sender<M, Error> {
     fn send(&self, msg: M) -> Result<(), Error>;
 }
 
-#[derive(Debug)]
-pub struct SubSenderStateMachine<T, M, Error, Source, Via>
+pub struct SubSenderStateMachine<T, M, Error, Source, Via, Probe>
 where
-    T: Sender<M, Error>,
+    Probe: ?Sized
+    //T: Sender<M, Error>,
+    //Probe: Fn() -> bool + ?Sized,
 {
     maybe: RefCell<Option<T>>,
     sources: RefCell<HashSet<Source>>,
     in_flight: RefCell<HashBag<(Source, Via)>>,
+    probes: RefCell<HashMap<Via, Box<Probe>>>,
     phantom_m: PhantomData<M>,
     phantom_e: PhantomData<Error>,
 }
 
-impl<T, M, Error, Source, Via> SubSenderStateMachine<T, M, Error, Source, Via>
+impl<T, M, Error, Source, Via, Probe> std::fmt::Debug
+    for SubSenderStateMachine<T, M, Error, Source, Via, Probe>
+where
+    //T: Sender<M, Error>,
+    Source: Debug,
+    Via: Debug,
+    Probe: Fn() -> bool + ?Sized,
+{
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> Result<(), std::fmt::Error> {
+        f.debug_struct("SubSenderStateMachine")
+            .field("sources", &self.sources)
+            .field("in_flight", &self.in_flight)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<T, M, Error, Source, Via, Probe> SubSenderStateMachine<T, M, Error, Source, Via, Probe>
 where
     T: Sender<M, Error>,
     Source: Debug + Eq + Hash,
-    Via: Debug + Eq + Hash,
+    Via: Clone + Debug + Eq + Hash,
+    Probe: Fn() -> bool + ?Sized,
 {
-    pub fn new(t: T, initial_source: Source) -> SubSenderStateMachine<T, M, Error, Source, Via> {
+    pub fn new(
+        t: T,
+        initial_source: Source,
+    ) -> SubSenderStateMachine<T, M, Error, Source, Via, Probe> {
         let mut s = HashSet::new();
         s.insert(initial_source);
         SubSenderStateMachine {
             maybe: RefCell::new(Some(t)),
             sources: RefCell::new(s),
             in_flight: RefCell::new(HashBag::new()),
+            probes: RefCell::new(HashMap::new()),
             phantom_m: PhantomData,
             phantom_e: PhantomData,
         }
@@ -83,9 +106,10 @@ where
         self.maybe.borrow().as_ref().map(|t| t.send(msg))
     }
 
-    #[instrument(level = "debug", skip(self))]
-    pub fn to_be_sent(&self, from: Source, via: Via) {
-        self.in_flight.borrow_mut().insert((from, via));
+    #[instrument(level = "debug", skip(self, probe))]
+    pub fn to_be_sent(&self, from: Source, via: Via, probe: Box<Probe>) {
+        self.in_flight.borrow_mut().insert((from, via.clone()));
+        self.probes.borrow_mut().insert(via, probe);
     }
 
     #[instrument(level = "debug", skip(self))]
@@ -158,8 +182,14 @@ mod tests {
     #[test]
     fn sub_sender_state_machine_send_ok() {
         let sent = Rc::new(RefCell::new(vec![]));
-        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str> =
-            SubSenderStateMachine::new(TestSender::new(&sent), "");
+        let ssm: SubSenderStateMachine<
+            TestSender,
+            char,
+            TestError,
+            &'static str,
+            &'static str,
+            dyn Fn() -> bool,
+        > = SubSenderStateMachine::new(TestSender::new(&sent), "");
         assert_eq!(ssm.send('a'), Some(Ok(())));
         assert_eq!(sent.borrow().clone(), vec!['a']);
     }
@@ -169,7 +199,7 @@ mod tests {
         let sent = Rc::new(RefCell::new(vec![]));
         let mut test_sender = TestSender::new(&sent);
         test_sender.set_error(TestError::AnError);
-        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str> =
+        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str, dyn Fn() -> bool> =
             SubSenderStateMachine::new(test_sender, "");
         assert_eq!(ssm.send('a'), Some(Err(TestError::AnError)));
     }
@@ -177,7 +207,7 @@ mod tests {
     #[test]
     fn sub_sender_state_machine_disconnect() {
         let sent = Rc::new(RefCell::new(vec![]));
-        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str> =
+        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str, dyn Fn() -> bool> =
             SubSenderStateMachine::new(TestSender::new(&sent), "x");
 
         // Disconnecting an unknown source should have no effect.
@@ -191,10 +221,10 @@ mod tests {
     #[test]
     fn sub_sender_state_machine_disconnect_received_first() {
         let sent = Rc::new(RefCell::new(vec![]));
-        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str> =
+        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str, dyn Fn() -> bool> =
             SubSenderStateMachine::new(TestSender::new(&sent), "x");
 
-        ssm.to_be_sent("x", "scid");
+        ssm.to_be_sent("x", "scid", Box::new(|| true));
         ssm.received("x", "scid", "y");
         ssm.disconnect("y");
         assert_eq!(ssm.send('a'), Some(Ok(())));
@@ -206,10 +236,10 @@ mod tests {
     #[test]
     fn sub_sender_state_machine_disconnect_original_first() {
         let sent = Rc::new(RefCell::new(vec![]));
-        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str> =
+        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str, dyn Fn() -> bool> =
             SubSenderStateMachine::new(TestSender::new(&sent), "x");
 
-        ssm.to_be_sent("x", "scid");
+        ssm.to_be_sent("x", "scid", Box::new(|| true));
         ssm.received("x", "scid", "y");
 
         // Disconnecting the original source should have no effect.
@@ -223,9 +253,9 @@ mod tests {
     #[test]
     fn sub_sender_state_machine_in_flight() {
         let sent = Rc::new(RefCell::new(vec![]));
-        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str> =
+        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str, dyn Fn() -> bool> =
             SubSenderStateMachine::new(TestSender::new(&sent), "x");
-        ssm.to_be_sent("x", "scid");
+        ssm.to_be_sent("x", "scid", Box::new(|| true));
         ssm.disconnect("x");
         assert_eq!(ssm.send('a'), Some(Ok(())));
         assert_eq!(sent.borrow().clone(), vec!['a']);
@@ -234,11 +264,11 @@ mod tests {
     #[test]
     fn sub_sender_state_machine_multiple_transmission() {
         let sent = Rc::new(RefCell::new(vec![]));
-        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str> =
+        let ssm: SubSenderStateMachine<TestSender, char, TestError, &'static str, &'static str, dyn Fn() -> bool> =
             SubSenderStateMachine::new(TestSender::new(&sent), "x");
 
-        ssm.to_be_sent("x", "scid");
-        ssm.to_be_sent("x", "scid");
+        ssm.to_be_sent("x", "scid", Box::new(|| true));
+        ssm.to_be_sent("x", "scid", Box::new(|| true));
         ssm.disconnect("x");
 
         ssm.received("x", "scid", "y");
