@@ -569,16 +569,15 @@ fn multiplex_drop_only_subreceiver_for_subchannel() {
 fn compare_base_transmission_failure() {
     let channel1 = multiplex::Channel::new().unwrap();
     let (tx, rx) = channel1.sub_channel::<i32>().unwrap();
-    let tx_clone = tx.clone();
     
     let channel2 = multiplex::Channel::new().unwrap();
     let (via_tx, via_rx) = channel2.sub_channel().unwrap();
-    println!("via_tx = {:?}", via_tx);
+
     via_tx.send(tx).unwrap();
-    //drop(via_tx); // temporary until subreceiver drop is implemented
+
     drop(via_rx);
-    drop(channel2); // temporary until subreceiver drop is implemented
-    via_tx.send(tx_clone).unwrap();
+    drop(channel2); // temporary until subreceiver drop is implemented - this drops the underlying IpcReceiver
+    //via_tx.send(tx_clone).unwrap(); // This fails with a broken pipe error, proving that probes will return false
 
     match rx.recv().unwrap_err() {
         multiplex::MultiplexError::MpmcSendError => (),

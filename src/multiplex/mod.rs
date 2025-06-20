@@ -418,6 +418,12 @@ impl subchannel_lifecycle::Sender<Vec<u8>, mpsc::SendError<Vec<u8>>> for Sender<
     }
 }
 
+impl Drop for Channel {
+    fn drop(&mut self) {
+        self.multi_receiver.borrow().drop_ipc_receiver();
+    }
+}
+
 impl MultiReceiver {
     #[instrument(level = "debug", ret)]
     fn attach<T>(
@@ -454,7 +460,7 @@ impl MultiReceiver {
                 let polling_interval = Duration::new(1, 0);
                 match ipc_receiver.try_recv_timeout(polling_interval) {
                     Ok(msg) => break Ok(msg),
-                    Err(crate::ipc::TryRecvError::Empty) => self.poll(),
+                    Err(crate::ipc::TryRecvError::Empty) => self.poll()?, // break out of the loop if polling finds a failing probe
                     Err(crate::ipc::TryRecvError::IpcError(e)) => break Err(e),
                 }
             }?
@@ -697,12 +703,19 @@ impl MultiReceiver {
 
     //#[instrument(level = "trace", err(level = "trace"))]
     #[instrument(level = "trace")]
-    fn poll(&self) {
+    fn poll(&self) -> Result<(), MultiplexError> {
+        // TODO: need to return a soft error if polling fails
         self.mutator
             .borrow()
             .sub_channels
             .iter()
             .for_each(|(_, subsender_state_machine)| subsender_state_machine.poll());
+        Ok(())
+    }
+
+    // Temporary measure for testing subsender transmission failure.
+    fn drop_ipc_receiver(&self) {
+        let _ = self.ipc_receiver.replace(None);
     }
 }
 
@@ -1068,7 +1081,7 @@ where
                         "SubChannelReceiver::recv multi_receiver_result = {:#?}",
                         multi_receiver_result.as_ref()
                     );
-                    multi_receiver_result?;
+                    multi_receiver_result?; // TODO: ignore soft errors and percolate others
                 },
                 Err(_) => {
                     return Err(MultiplexError::Disconnected);

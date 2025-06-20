@@ -371,6 +371,29 @@ mod tests {
     }
 
     #[test]
+    fn sub_sender_state_machine_two_in_flight_crash() {
+        let sent = Rc::new(RefCell::new(vec![]));
+        let ssm: SubSenderStateMachine<
+            TestSender,
+            char,
+            TestError,
+            &'static str,
+            &'static str,
+            dyn Fn() -> bool,
+        > = SubSenderStateMachine::new(TestSender::new(&sent), "x");
+
+        ssm.to_be_sent("x", "scid", Box::new(|| false));
+        ssm.to_be_sent("x", "scid", Box::new(|| false));
+        ssm.disconnect("x");
+
+        assert_eq!(ssm.send('a'), Some(Ok(())));
+        assert_eq!(sent.borrow().clone(), vec!['a']);
+
+        ssm.poll();
+        assert_eq!(ssm.send('a'), None);
+    }
+
+    #[test]
     fn sub_sender_state_machine_in_flight_crash_eventually() {
         let sent = Rc::new(RefCell::new(vec![]));
         let ssm: SubSenderStateMachine<
