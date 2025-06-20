@@ -68,7 +68,7 @@ impl Channel {
     }
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct SubSender<T>
 where
     T: Serialize,
@@ -118,10 +118,6 @@ pub struct SubReceiver<T> {
     sub_channel_receiver: SubChannelReceiver<T>,
     phantom: PhantomData<T>,
 }
-
-// impl<T> fmt::debug for SubReceiver<T> {
-
-// }
 
 impl<T> SubReceiver<T>
 where
@@ -710,6 +706,7 @@ impl MultiReceiver {
     }
 }
 
+#[instrument(level = "trace", ret)]
 fn probe(ipc_sender: Rc<IpcSender<MultiMessage>>) -> bool {
     ipc_sender.send(MultiMessage::Probe()).is_ok()
 }
@@ -782,8 +779,9 @@ where
                         via: self.sub_channel_id,
                         via_chan: Self::ipc_sender_and_or_uuid(
                             sender_id.clone(),
-                            ipc_sender.clone(),
-                            ipc_sender_uuid.clone(),
+                            // FIXME: the following should refer to self (the via channel) rather than the subsender being sent
+                            self.ipc_sender.clone(), // was: ipc_sender.clone(),
+                            self.ipc_sender_uuid.clone(), // was: ipc_sender_uuid.clone()
                         ),
                     });
                 },
