@@ -127,7 +127,8 @@ where
         }
     }
 
-    pub fn poll(&self) {
+    // poll returns false if the state machine is disconnected
+    pub fn poll(&self) -> bool {
         // Determine Vias (which correspond to channels) which are disconnected.
         let disconnected: Vec<Via> = self
             .probes
@@ -161,6 +162,9 @@ where
 
         if self.sources.borrow().is_empty() && in_flight.is_empty() {
             self.maybe.replace(None);
+            false
+        } else {
+            true
         }
     }
 }

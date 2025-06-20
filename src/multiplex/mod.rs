@@ -255,6 +255,7 @@ pub enum MultiplexError {
     MpmcSendError, // FIXME: add error details once std::sync::mpmc::SendError is stable
     Disconnected,
     InternalError(String),
+    SoftError, // This is a temporary measure and should not appear in the public interface
 }
 
 // FIXME: this is a temporary workaround to allow MultiplexError::Disconnected to be used by SubSenderStateMachine.
@@ -277,6 +278,10 @@ impl fmt::Display for MultiplexError {
             ),
             MultiplexError::Disconnected => write!(fmt, "disconnected"),
             MultiplexError::InternalError(s) => write!(fmt, "internal logic error: {s}"),
+            MultiplexError::SoftError => write!(
+                fmt,
+                "soft error - temporary measure, should not be returned by public API"
+            ),
         }
     }
 }
@@ -465,7 +470,7 @@ impl MultiReceiver {
                 }
             }?
         } else {
-            panic!("Attempted to use IpcReceiver after it was sent"); // FIXME: convert this to an error
+            return Err(MultiplexError::Disconnected);
         };
         //let msg = self.ipc_receiver.borrow().as_ref().unwrap().recv()?;
         let mr_rc = Rc::clone(
@@ -705,12 +710,21 @@ impl MultiReceiver {
     #[instrument(level = "trace")]
     fn poll(&self) -> Result<(), MultiplexError> {
         // TODO: need to return a soft error if polling fails
+        let probe_failed = RefCell::new(false);
         self.mutator
             .borrow()
             .sub_channels
             .iter()
-            .for_each(|(_, subsender_state_machine)| subsender_state_machine.poll());
-        Ok(())
+            .for_each(|(_, subsender_state_machine)| {
+                if !subsender_state_machine.poll() {
+                    probe_failed.replace(true);
+                }
+            });
+        if probe_failed.borrow().clone() {
+            Err(MultiplexError::SoftError)
+        } else {
+            Ok(())
+        }
     }
 
     // Temporary measure for testing subsender transmission failure.
@@ -732,9 +746,10 @@ struct SubChannelDisconnector {
 
 impl SubChannelDisconnector {
     fn dropped(&self) {
-        self.ipc_sender
-            .send(MultiMessage::Disconnect(self.sub_channel_id, self.source))
-            .unwrap();
+        // Ignore any error sending disconnect message as it is not needed if the other end has hung up.
+        let _ = self
+            .ipc_sender
+            .send(MultiMessage::Disconnect(self.sub_channel_id, self.source));
     }
 }
 
@@ -1081,7 +1096,11 @@ where
                         "SubChannelReceiver::recv multi_receiver_result = {:#?}",
                         multi_receiver_result.as_ref()
                     );
-                    multi_receiver_result?; // TODO: ignore soft errors and percolate others
+                    match multi_receiver_result {
+                        Ok(()) => {},                         // continue to process messages
+                        Err(MultiplexError::SoftError) => {}, // soft error, so continue to process messages
+                        e => e?,                              // percolate other errors
+                    }
                 },
                 Err(_) => {
                     return Err(MultiplexError::Disconnected);
