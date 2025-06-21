@@ -525,8 +525,6 @@ fn drop_transmitted_subsender_send_using_another_subsender_transmitted_over_anot
     assert_eq!(sub_rx.recv().unwrap(), 1);
 }
 
-// The following test fails because tx is not closed.
-#[ignore]
 #[test]
 fn multiplex_drop_only_subreceiver_for_dropped_channel() {
     let channel = multiplex::Channel::new().unwrap();
@@ -548,8 +546,6 @@ fn multiplex_drop_only_subreceiver_for_channel() {
     assert!(tx.send(1).is_err());
 }
 
-// The following test fails because tx is not closed.
-#[ignore]
 #[test]
 fn multiplex_drop_only_subreceiver_for_subchannel_of_dropped_channel() {
     let channel = multiplex::Channel::new().unwrap();
