@@ -596,7 +596,7 @@ impl MultiReceiver {
                         "invalid subchannel id {}",
                         scid
                     )))?
-                    .send(data);
+                    .send(data); // TODO: if the subreceiver has been dropped, still need to deserialise the message so that subsenders can be received, BUT they also need to be dropped
                 // FIXME: where to clear IPC_SENDERS_RECEIVED. If the following is uncommented, IpcSenders go AWOL.
                 // IPC_SENDERS_RECEIVED.with(|senders| {
                 //     senders.lock().unwrap().clear();
