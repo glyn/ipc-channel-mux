@@ -799,7 +799,7 @@ where
         // Notify transmission of any subchannel senders so that they are counted during transmission.
         SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| {
             subchannel_senders.borrow().iter().for_each(
-                |(subchannel_id, ipc_sender, ipc_sender_uuid, sender_id)| {
+                |(subchannel_id, ipc_sender, sender_id)| {
                     // Note: each subsender is serialised twice and so Sending will be sent twice for each subsender.
                     let _ = ipc_sender.send(MultiMessage::Sending {
                         scid: subchannel_id.clone(),
@@ -1012,7 +1012,7 @@ impl<'a, T> fmt::Debug for SubChannelSender<T> {
 // FIXME: ensure this is cleared after use
 thread_local! {
     static IPC_SENDERS_TO_SEND: RefCell<Vec<(Uuid, Rc<IpcSender<MultiMessage>>)>> = RefCell::new(vec!());
-    static SERIALIZED_SUBCHANNEL_SENDERS: RefCell<Vec<(SubChannelId, Rc<IpcSender<MultiMessage>>, Uuid, Rc<RefCell<Source<Weak<IpcSender<MultiMessage>>>>>)>> = RefCell::new(vec!());
+    static SERIALIZED_SUBCHANNEL_SENDERS: RefCell<Vec<(SubChannelId, Rc<IpcSender<MultiMessage>>, Rc<RefCell<Source<Weak<IpcSender<MultiMessage>>>>>)>> = RefCell::new(vec!());
 }
 
 impl<T> Serialize for SubChannelSender<T> {
@@ -1035,7 +1035,6 @@ impl<T> Serialize for SubChannelSender<T> {
             subchannel_senders.borrow_mut().push((
                 self.sub_channel_id,
                 self.ipc_sender.clone(),
-                self.ipc_sender_uuid,
                 self.sender_id.clone(),
             ))
         });
