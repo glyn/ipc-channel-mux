@@ -580,7 +580,6 @@ fn compare_base_transmission_failure() {
     via_tx.send(tx).unwrap();
 
     drop(via_rx);
-    drop(channel2); // temporary until subreceiver drop is implemented - this drops the underlying IpcReceiver
 
     match rx.recv().unwrap_err() {
         multiplex::MultiplexError::Disconnected => (),

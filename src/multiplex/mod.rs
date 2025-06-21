@@ -113,10 +113,41 @@ where
     // }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct SubReceiver<T> {
+// FIXME: manually implement Deserialize and Serialize
+#[derive(Debug)]
+pub struct SubReceiver<T>
+where
+    T: for<'x> Deserialize<'x> + Serialize,
+{
     sub_channel_receiver: SubChannelReceiver<T>,
     phantom: PhantomData<T>,
+}
+
+impl<T> Serialize for SubReceiver<T>
+where
+    T: for<'de> Deserialize<'de> + Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        self.sub_channel_receiver.serialize(serializer)
+    }
+}
+
+impl<'de, T> Deserialize<'de> for SubReceiver<T>
+where
+    T: for<'x> Deserialize<'x> + Serialize,
+{
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Ok(SubReceiver {
+            sub_channel_receiver: SubChannelReceiver::deserialize(deserializer)?,
+            phantom: PhantomData,
+        })
+    }
 }
 
 impl<T> SubReceiver<T>
@@ -426,7 +457,7 @@ impl Drop for Channel {
 
 impl MultiReceiver {
     #[instrument(level = "debug", ret)]
-    fn attach<T>(
+    fn attach<T: for<'de> Deserialize<'de> + Serialize>(
         mr: &Rc<RefCell<MultiReceiver>>,
         sub_channel_id: SubChannelId,
     ) -> Result<SubChannelReceiver<T>, MultiplexError> {
@@ -466,7 +497,9 @@ impl MultiReceiver {
                             return Ok(());
                         }
                     },
-                    Err(crate::ipc::TryRecvError::IpcError(e)) => break Err(MultiplexError::IpcError(e)),
+                    Err(crate::ipc::TryRecvError::IpcError(e)) => {
+                        break Err(MultiplexError::IpcError(e))
+                    },
                 }
             }?
         } else {
@@ -483,6 +516,31 @@ impl MultiReceiver {
                 .unwrap(),
         );
         Self::handle(mr_rc, msg)
+    }
+
+    #[instrument(level = "debug")]
+    fn drain(&self) {
+        if let Some(ipc_receiver) = self.ipc_receiver.borrow().as_ref() {
+            loop {
+                match ipc_receiver.try_recv() {
+                    Ok(msg) => {
+                        let mr_rc = Rc::clone(
+                            &self
+                                .mutator
+                                .borrow()
+                                .multi_receiver_grid
+                                .borrow()
+                                .get(&self.ipc_receiver_uuid)
+                                .unwrap(),
+                        );
+                        let _ = Self::handle(mr_rc, msg);
+                    },
+                    _ => {
+                        break;
+                    },
+                }
+            }
+        }
     }
 
     #[instrument(level = "debug", ret, err(level = "debug"))]
@@ -597,10 +655,10 @@ impl MultiReceiver {
                         scid
                     )))?
                     .send(data); // TODO: if the subreceiver has been dropped, still need to deserialise the message so that subsenders can be received, BUT they also need to be dropped
-                // FIXME: where to clear IPC_SENDERS_RECEIVED. If the following is uncommented, IpcSenders go AWOL.
-                // IPC_SENDERS_RECEIVED.with(|senders| {
-                //     senders.lock().unwrap().clear();
-                // });
+                                 // FIXME: where to clear IPC_SENDERS_RECEIVED. If the following is uncommented, IpcSenders go AWOL.
+                                 // IPC_SENDERS_RECEIVED.with(|senders| {
+                                 //     senders.lock().unwrap().clear();
+                                 // });
 
                 // FIXME: similar concern for the following.
                 // IPC_RECEIVERS_RECEIVED.with(|receivers| {
@@ -1051,7 +1109,10 @@ struct SubChannelSenderIds {
     ipc_sender_uuid: String,
 }
 
-struct SubChannelReceiver<T> {
+struct SubChannelReceiver<T>
+where
+    T: for<'de> Deserialize<'de> + Serialize,
+{
     multi_receiver: Rc<RefCell<MultiReceiver>>,
     sub_channel_id: SubChannelId,
     ipc_receiver_uuid: Uuid,
@@ -1059,7 +1120,39 @@ struct SubChannelReceiver<T> {
     phantom: PhantomData<T>,
 }
 
-impl<T> fmt::Debug for SubChannelReceiver<T> {
+impl<T> Drop for SubChannelReceiver<T>
+where
+    T: for<'de> Deserialize<'de> + Serialize,
+{
+    fn drop(&mut self) {
+        // TODO: broadcast disconnection to all SubChannelSenders
+
+        // Drain the multireceiver.
+        self.multi_receiver.borrow().drain();
+
+        // Drain the SubChannelReceiver. This ensures that any in-flight subsenders in messages
+        // in the subchannel are received then dropped.
+        loop {
+            match self.channel.try_recv() {
+                Ok(payload) => {
+                    log::trace!("SubChannelReceiver::drop draining = {:#?}", payload);
+                    let _ = bincode::deserialize::<T>(payload.as_slice());
+                    IPC_SENDERS_RECEIVED.with(|senders| {
+                        senders.borrow_mut().clear();
+                    });
+                },
+                Err(_) => {
+                    break;
+                },
+            }
+        }
+    }
+}
+
+impl<T> fmt::Debug for SubChannelReceiver<T>
+where
+    T: for<'de> Deserialize<'de> + Serialize,
+{
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SubChannelReceiver")
             .field("sub_channel_id", &self.sub_channel_id)
@@ -1107,7 +1200,10 @@ thread_local! {
     static IPC_RECEIVERS_TO_SEND: RefCell<Vec<(Uuid, RefCell<Option<IpcReceiver<MultiMessage>>>)>> = RefCell::new(vec!());
 }
 
-impl<T> Serialize for SubChannelReceiver<T> {
+impl<T> Serialize for SubChannelReceiver<T>
+where
+    T: for<'de> Deserialize<'de> + Serialize,
+{
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -1138,7 +1234,10 @@ thread_local! {
     static CURRENT_MULTI_RECEIVER: RefCell<Option<Rc<RefCell<MultiReceiver>>>> = RefCell::new(None);
 }
 
-impl<'de, T> Deserialize<'de> for SubChannelReceiver<T> {
+impl<'de, T> Deserialize<'de> for SubChannelReceiver<T>
+where
+    T: for<'x> Deserialize<'x> + Serialize,
+{
     #[instrument(level = "trace", ret, skip(deserializer))]
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
