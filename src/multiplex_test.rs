@@ -581,11 +581,9 @@ fn compare_base_transmission_failure() {
 
     drop(via_rx);
     drop(channel2); // temporary until subreceiver drop is implemented - this drops the underlying IpcReceiver
-    //via_tx.send(tx_clone).unwrap(); // This fails with a broken pipe error, proving that probes will return false
 
     match rx.recv().unwrap_err() {
-        multiplex::MultiplexError::MpmcSendError => (),
         multiplex::MultiplexError::Disconnected => (),
-        e => panic!("expected send error, got {:?}", e),
+        e => panic!("expected Disconnected, got {:?}", e),
     }
 }
