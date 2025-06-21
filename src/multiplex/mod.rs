@@ -255,7 +255,6 @@ pub enum MultiplexError {
     MpmcSendError, // FIXME: add error details once std::sync::mpmc::SendError is stable
     Disconnected,
     InternalError(String),
-    SoftError, // This is a temporary measure and should not appear in the public interface
 }
 
 // FIXME: this is a temporary workaround to allow MultiplexError::Disconnected to be used by SubSenderStateMachine.
@@ -278,10 +277,6 @@ impl fmt::Display for MultiplexError {
             ),
             MultiplexError::Disconnected => write!(fmt, "disconnected"),
             MultiplexError::InternalError(s) => write!(fmt, "internal logic error: {s}"),
-            MultiplexError::SoftError => write!(
-                fmt,
-                "soft error - temporary measure, should not be returned by public API"
-            ),
         }
     }
 }
@@ -465,8 +460,13 @@ impl MultiReceiver {
                 let polling_interval = Duration::new(1, 0);
                 match ipc_receiver.try_recv_timeout(polling_interval) {
                     Ok(msg) => break Ok(msg),
-                    Err(crate::ipc::TryRecvError::Empty) => self.poll()?, // break out of the loop if polling finds a failing probe
-                    Err(crate::ipc::TryRecvError::IpcError(e)) => break Err(e),
+                    Err(crate::ipc::TryRecvError::Empty) => {
+                        if self.poll() {
+                            // At least one probe failed, so return to caller.
+                            return Ok(());
+                        }
+                    },
+                    Err(crate::ipc::TryRecvError::IpcError(e)) => break Err(MultiplexError::IpcError(e)),
                 }
             }?
         } else {
@@ -706,9 +706,9 @@ impl MultiReceiver {
         }
     }
 
-    //#[instrument(level = "trace", err(level = "trace"))]
+    // poll returns true if and only if a probe failed.
     #[instrument(level = "trace")]
-    fn poll(&self) -> Result<(), MultiplexError> {
+    fn poll(&self) -> bool {
         // TODO: need to return a soft error if polling fails
         let probe_failed = RefCell::new(false);
         self.mutator
@@ -720,11 +720,8 @@ impl MultiReceiver {
                     probe_failed.replace(true);
                 }
             });
-        if probe_failed.borrow().clone() {
-            Err(MultiplexError::SoftError)
-        } else {
-            Ok(())
-        }
+        let result = probe_failed.borrow().clone();
+        result
     }
 
     // Temporary measure for testing subsender transmission failure.
@@ -1095,11 +1092,7 @@ where
                         "SubChannelReceiver::recv multi_receiver_result = {:#?}",
                         multi_receiver_result.as_ref()
                     );
-                    match multi_receiver_result {
-                        Ok(()) => {},                         // continue to process messages
-                        Err(MultiplexError::SoftError) => {}, // soft error, so continue to process messages
-                        e => e?,                              // percolate other errors
-                    }
+                    multi_receiver_result?;
                 },
                 Err(_) => {
                     return Err(MultiplexError::Disconnected);
