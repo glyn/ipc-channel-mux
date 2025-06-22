@@ -425,11 +425,11 @@ mod tests {
 
         assert_eq!(ssm.send('a'), Some(Ok(())));
         assert_eq!(sent.borrow().clone(), vec!['a']);
-        
+
         ssm.poll();
         assert_eq!(ssm.send('b'), Some(Ok(())));
         assert_eq!(sent.borrow().clone(), vec!['a', 'b']);
-        
+
         ssm.poll();
         assert_eq!(ssm.send('c'), None);
     }

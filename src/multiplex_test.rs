@@ -144,7 +144,7 @@ fn multiplex_two_subchannels() {
     let (tx1, rx1) = channel.sub_channel().unwrap();
     tx1.send(1).unwrap();
     assert_eq!(1, rx1.recv().unwrap());
-    
+
     let (tx2, rx2) = channel.sub_channel().unwrap();
     tx2.send(2).unwrap();
     assert_eq!(2, rx2.recv().unwrap());
@@ -155,7 +155,7 @@ fn multiplex_two_subchannels_reverse_ordered() {
     let channel = multiplex::Channel::new().unwrap();
     let (tx1, rx1) = channel.sub_channel().unwrap();
     tx1.send(1).unwrap();
-    
+
     let (tx2, rx2) = channel.sub_channel().unwrap();
     tx2.send(2).unwrap();
 
@@ -415,10 +415,10 @@ fn multiplex_drop_only_subsender_for_subchannel_of_dropped_channel() {
 
     /* Note
 
-       Once we make this test pass without dropping the channel, we should be able to get rid of
-       the brutal channel drop code.
-    
-     */
+      Once we make this test pass without dropping the channel, we should be able to get rid of
+      the brutal channel drop code.
+
+    */
 
     drop(tx1);
     match rx1.recv().unwrap_err() {
@@ -495,11 +495,11 @@ fn drop_transmitted_subsender_send_using_another_transmitted_subsender() {
     let (super_tx1, super_rx1) = channel.sub_channel().unwrap();
     super_tx1.send(sub_tx.clone()).unwrap();
     let received_sub_tx1 = super_rx1.recv().unwrap();
-  
+
     let (super_tx2, super_rx2) = channel.sub_channel().unwrap();
     super_tx2.send(sub_tx).unwrap();
     let received_sub_tx2 = super_rx2.recv().unwrap();
-  
+
     drop(received_sub_tx1);
 
     received_sub_tx2.send(1).unwrap();
@@ -513,12 +513,12 @@ fn drop_transmitted_subsender_send_using_another_subsender_transmitted_over_anot
     let (super_tx1, super_rx1) = channel.sub_channel().unwrap();
     super_tx1.send(sub_tx.clone()).unwrap();
     let received_sub_tx1 = super_rx1.recv().unwrap();
-    
+
     let channel2 = multiplex::Channel::new().unwrap();
     let (super_tx2, super_rx2) = channel2.sub_channel().unwrap();
     super_tx2.send(sub_tx).unwrap();
     let received_sub_tx2 = super_rx2.recv().unwrap();
-  
+
     drop(received_sub_tx1);
 
     received_sub_tx2.send(1).unwrap();
@@ -573,7 +573,7 @@ fn multiplex_drop_only_subreceiver_for_subchannel() {
 fn compare_base_transmission_failure() {
     let channel1 = multiplex::Channel::new().unwrap();
     let (tx, rx) = channel1.sub_channel::<i32>().unwrap();
-    
+
     let channel2 = multiplex::Channel::new().unwrap();
     let (via_tx, via_rx) = channel2.sub_channel().unwrap();
 
