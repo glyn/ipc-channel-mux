@@ -449,12 +449,6 @@ impl subchannel_lifecycle::Sender<Vec<u8>, mpsc::SendError<Vec<u8>>> for Sender<
     }
 }
 
-impl Drop for Channel {
-    fn drop(&mut self) {
-        self.multi_receiver.borrow().drop_ipc_receiver();
-    }
-}
-
 impl MultiReceiver {
     #[instrument(level = "debug", ret)]
     fn attach<T: for<'de> Deserialize<'de> + Serialize>(
@@ -780,11 +774,6 @@ impl MultiReceiver {
             });
         let result = probe_failed.borrow().clone();
         result
-    }
-
-    // Temporary measure for testing subsender transmission failure.
-    fn drop_ipc_receiver(&self) {
-        let _ = self.ipc_receiver.replace(None);
     }
 }
 
