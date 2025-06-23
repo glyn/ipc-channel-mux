@@ -45,6 +45,25 @@ where
     }
 }
 
+// A SubReceiverProxy tracks whether or not a SubReceiver has disconnected.
+pub struct SubReceiverProxy {
+    disconnected: RefCell<bool>,
+}
+
+impl SubReceiverProxy {
+    pub fn new() -> SubReceiverProxy {
+        SubReceiverProxy { disconnected: RefCell::new(false) }
+    }
+
+    pub fn disconnect(&self) {
+        self.disconnected.replace(true);
+    }
+
+    pub fn disconnected(&self) -> bool {
+        self.disconnected.borrow().clone()
+    }
+}
+
 pub trait Sender<M, Error> {
     fn send(&self, msg: M) -> Result<(), Error>;
 }
@@ -181,6 +200,16 @@ mod tests {
         let t = SubSenderTracker::new(Box::new(|| *dropped.borrow_mut() = true));
         drop(t);
         assert!(dropped.take());
+    }
+
+    #[test]
+    fn sub_receiver_proxy_basics() {
+        let p = SubReceiverProxy::new();
+        assert!(!p.disconnected());
+        p.disconnect();
+        assert!(p.disconnected());
+        p.disconnect();
+        assert!(p.disconnected());
     }
 
     struct TestSender {
