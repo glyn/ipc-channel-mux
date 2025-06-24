@@ -455,7 +455,6 @@ struct MultiReceiverMutator {
     disconnectors: WeakValueHashMap<SubChannelId, Weak<SubSenderTracker<dyn Fn()>>>,
     ipc_senders_by_id: Target<Weak<MultiSender>>,
     ipc_receivers_by_id: Target<Weak<RefCell<Option<IpcReceiver<MultiMessage>>>>>,
-    multi_receiver_grid: Rc<RefCell<HashMap<Uuid, Rc<RefCell<MultiReceiver>>>>>,
 }
 
 impl std::fmt::Debug for MultiReceiverMutator {
@@ -490,15 +489,7 @@ impl MultiReceiver {
             subchannel_lifecycle::SubSenderStateMachine::new(tx, *ORIGIN),
         );
         Ok(SubChannelReceiver {
-            multi_receiver: Rc::clone(
-                &mr.borrow()
-                    .mutator
-                    .borrow()
-                    .multi_receiver_grid
-                    .borrow()
-                    .get(&mr.borrow().ipc_receiver_uuid)
-                    .unwrap(), // TODO: if this potential panic could be avoided, attach would never return an error
-            ),
+            multi_receiver: Rc::clone(mr),
             sub_channel_id: sub_channel_id,
             ipc_receiver_uuid: mr.borrow().ipc_receiver_uuid,
             channel: rx,
@@ -507,15 +498,14 @@ impl MultiReceiver {
     }
 
     #[instrument(level = "debug", err(level = "debug"))]
-    fn receive(&self) -> Result<(), MultiplexError> {
-        // TODO: build polling around the following recv() by using recv_timeout
-        let msg = if let Some(ipc_receiver) = self.ipc_receiver.borrow().as_ref() {
+    fn receive(mr: &Rc<RefCell<MultiReceiver>>) -> Result<(), MultiplexError> {
+        let msg = if let Some(ipc_receiver) = mr.borrow().ipc_receiver.borrow().as_ref() {
             loop {
                 let polling_interval = Duration::new(1, 0);
                 match ipc_receiver.try_recv_timeout(polling_interval) {
                     Ok(msg) => break Ok(msg),
                     Err(crate::ipc::TryRecvError::Empty) => {
-                        if self.poll() {
+                        if mr.borrow().poll() {
                             // At least one probe failed, so return to caller.
                             return Ok(());
                         }
@@ -528,35 +518,16 @@ impl MultiReceiver {
         } else {
             return Err(MultiplexError::Disconnected);
         };
-        //let msg = self.ipc_receiver.borrow().as_ref().unwrap().recv()?;
-        let mr_rc = Rc::clone(
-            &self
-                .mutator
-                .borrow()
-                .multi_receiver_grid
-                .borrow()
-                .get(&self.ipc_receiver_uuid)
-                .unwrap(),
-        );
-        Self::handle(mr_rc, msg)
+        Self::handle(Rc::clone(&mr), msg)
     }
 
     #[instrument(level = "debug")]
-    fn drain(&self) {
-        if let Some(ipc_receiver) = self.ipc_receiver.borrow().as_ref() {
+    fn drain(mr: &Rc<RefCell<MultiReceiver>>) {
+        if let Some(ipc_receiver) = mr.borrow().ipc_receiver.borrow().as_ref() {
             loop {
                 match ipc_receiver.try_recv() {
                     Ok(msg) => {
-                        let mr_rc = Rc::clone(
-                            &self
-                                .mutator
-                                .borrow()
-                                .multi_receiver_grid
-                                .borrow()
-                                .get(&self.ipc_receiver_uuid)
-                                .unwrap(),
-                        );
-                        let _ = Self::handle(mr_rc, msg);
+                        let _ = Self::handle(Rc::clone(mr), msg);
                     },
                     _ => {
                         break;
@@ -612,20 +583,10 @@ impl MultiReceiver {
                                             disconnectors: WeakValueHashMap::new(),
                                             ipc_senders_by_id: Target::new(),
                                             ipc_receivers_by_id: Target::new(),
-                                            multi_receiver_grid: Rc::clone(
-                                                &mr.borrow().mutator.borrow().multi_receiver_grid,
-                                            ),
                                         }),
                                     };
 
                                     let result = Rc::new(RefCell::new(new_mr));
-
-                                    mr.borrow()
-                                        .mutator
-                                        .borrow_mut()
-                                        .multi_receiver_grid
-                                        .borrow_mut()
-                                        .insert(uuid, Rc::clone(&result));
 
                                     // Add new MultiReceiver to *current* MultiReceiver's ipc_receivers_by_id.
                                     mr.borrow()
@@ -638,19 +599,7 @@ impl MultiReceiver {
                                     result
                                 },
                                 IpcReceiverAndOrId::IpcReceiverId(id) => {
-                                    let uuid = Uuid::parse_str(&id).unwrap();
-                                    log::trace!(
-                                        "looking up MultiReceiver associated with {}",
-                                        uuid
-                                    );
-
-                                    let borrow = mr.borrow();
-                                    let borrow2 = borrow.mutator.borrow();
-                                    let borrow3 = borrow2.multi_receiver_grid.borrow();
-                                    let found_mr = borrow3.get(&uuid).unwrap();
-
-                                    log::trace!("result of looking up IpcSender is {:?}", found_mr);
-                                    Rc::clone(found_mr)
+                                    Rc::clone(&mr)
                                 },
                             }
                         })
@@ -1190,7 +1139,7 @@ where
         }
 
         // Drain the multireceiver.
-        self.multi_receiver.borrow().drain();
+        MultiReceiver::drain(&self.multi_receiver);
 
         // Drain the SubChannelReceiver. This ensures that any in-flight subsenders in messages
         // in the subchannel are received then dropped.
@@ -1242,7 +1191,7 @@ where
                 },
                 Err(mpsc::TryRecvError::Empty) => {
                     // receive another message, possibly for another subchannel
-                    let multi_receiver_result = self.multi_receiver.borrow().receive();
+                    let multi_receiver_result = MultiReceiver::receive(&self.multi_receiver);
                     log::trace!(
                         "SubChannelReceiver::recv multi_receiver_result = {:#?}",
                         multi_receiver_result.as_ref()
@@ -1410,20 +1359,9 @@ fn multi_channel() -> Result<(Rc<MultiSender>, Rc<RefCell<MultiReceiver>>), io::
             disconnectors: WeakValueHashMap::new(),
             ipc_senders_by_id: Target::new(),
             ipc_receivers_by_id: Target::new(),
-            multi_receiver_grid: Rc::new(RefCell::new(HashMap::new())),
         }),
     };
     let multi_receiver_rc = Rc::new(RefCell::new(multi_receiver));
-    multi_receiver_rc
-        .borrow()
-        .mutator
-        .borrow()
-        .multi_receiver_grid
-        .borrow_mut()
-        .insert(
-            multi_receiver_rc.borrow().ipc_receiver_uuid,
-            Rc::clone(&multi_receiver_rc),
-        );
     let multi_sender = MultiSender {
         client_id: client_id,
         ipc_sender: Rc::new(ipc_sender),
@@ -1463,17 +1401,9 @@ impl OneShotMultiServer {
                 disconnectors: WeakValueHashMap::new(),
                 ipc_senders_by_id: Target::new(),
                 ipc_receivers_by_id: Target::new(),
-                multi_receiver_grid: Rc::new(RefCell::new(HashMap::new())),
             }),
         };
         let mr_rc = Rc::new(RefCell::new(mr));
-        mr_rc
-            .borrow()
-            .mutator
-            .borrow()
-            .multi_receiver_grid
-            .borrow_mut()
-            .insert(mr_rc.borrow().ipc_receiver_uuid, Rc::clone(&mr_rc));
         MultiReceiver::handle(Rc::clone(&mr_rc), multi_message)?;
         Ok(mr_rc)
     }
