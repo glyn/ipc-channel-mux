@@ -54,7 +54,10 @@ impl Channel {
     {
         let scs = MultiSender::new(Rc::clone(&self.multi_sender));
         let scid = scs.sub_channel_id();
-        self.multi_sender.sub_receiver_proxies.borrow_mut().insert(scid, subchannel_lifecycle::SubReceiverProxy::new());
+        self.multi_sender
+            .sub_receiver_proxies
+            .borrow_mut()
+            .insert(scid, subchannel_lifecycle::SubReceiverProxy::new());
         let scr = MultiReceiver::attach(&self.multi_receiver, scid)?; // TODO: if attach could be made error-free, then so could this function
         Ok((
             SubSender {
@@ -403,14 +406,15 @@ impl<'a> MultiSender {
         Ok(self
             .ipc_sender
             .send(MultiMessage::SubChannelId(sub_channel_id, name))?)
-        }
-        
+    }
+
     #[instrument(level = "trace", ret)]
     fn is_receiver_connected(&self, scid: SubChannelId) -> bool {
         loop {
             match self.response_receiver.try_recv() {
                 Ok(MultiResponse::SubReceiverDisconnected(disconnected_scid)) => {
-                    if let Some(proxy) = self.sub_receiver_proxies.borrow().get(&disconnected_scid) {
+                    if let Some(proxy) = self.sub_receiver_proxies.borrow().get(&disconnected_scid)
+                    {
                         proxy.disconnect();
                     };
                 },
@@ -1168,7 +1172,14 @@ where
 {
     fn drop(&mut self) {
         // Broadcast disconnection to all SubChannelSenders
-        for (client_id, sender) in self.multi_receiver.borrow().mutator.borrow().ipc_senders.iter() {
+        for (client_id, sender) in self
+            .multi_receiver
+            .borrow()
+            .mutator
+            .borrow()
+            .ipc_senders
+            .iter()
+        {
             log::trace!(
                         "SubChannelReceiver::drop sending SubReceiverDisconnected for subchannel {:?} to client {:?}",
                         self.sub_channel_id,

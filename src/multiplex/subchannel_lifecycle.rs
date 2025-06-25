@@ -52,7 +52,9 @@ pub struct SubReceiverProxy {
 
 impl SubReceiverProxy {
     pub fn new() -> SubReceiverProxy {
-        SubReceiverProxy { disconnected: RefCell::new(false) }
+        SubReceiverProxy {
+            disconnected: RefCell::new(false),
+        }
     }
 
     pub fn disconnect(&self) {
