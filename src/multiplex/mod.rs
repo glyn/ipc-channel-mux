@@ -26,8 +26,8 @@ use tracing::instrument;
 use uuid::Uuid;
 use weak_table::WeakValueHashMap;
 
-mod subchannel_lifecycle;
 mod channel_identification;
+mod subchannel_lifecycle;
 
 static EMPTY_SUBCHANNEL_ID: LazyLock<SubChannelId> = LazyLock::new(|| SubChannelId(Uuid::new_v4()));
 static ORIGIN: LazyLock<Uuid> = LazyLock::new(|| Uuid::new_v4());
@@ -403,7 +403,7 @@ impl<'a> MultiSender {
 /// [MultiReceiver]: struct.MultiReceiver.html
 #[derive(Debug)]
 struct MultiReceiver {
-    ipc_receiver: Rc<RefCell<Option<IpcReceiver<MultiMessage>>>>, // sending this MultiReceiver removes its IpcReceiver
+    ipc_receiver: Rc<IpcReceiver<MultiMessage>>,
     ipc_receiver_uuid: Uuid,
     mutator: RefCell<MultiReceiverMutator>,
 }
@@ -467,40 +467,34 @@ impl MultiReceiver {
 
     #[instrument(level = "debug", err(level = "debug"))]
     fn receive(mr: &Rc<RefCell<MultiReceiver>>) -> Result<(), MultiplexError> {
-        let msg = if let Some(ipc_receiver) = mr.borrow().ipc_receiver.borrow().as_ref() {
-            loop {
-                let polling_interval = Duration::new(1, 0);
-                match ipc_receiver.try_recv_timeout(polling_interval) {
-                    Ok(msg) => break Ok(msg),
-                    Err(crate::ipc::TryRecvError::Empty) => {
-                        if mr.borrow().poll() {
-                            // At least one probe failed, so return to caller.
-                            return Ok(());
-                        }
-                    },
-                    Err(crate::ipc::TryRecvError::IpcError(e)) => {
-                        break Err(MultiplexError::IpcError(e))
-                    },
-                }
-            }?
-        } else {
-            return Err(MultiplexError::Disconnected);
-        };
+        let msg = loop {
+            let polling_interval = Duration::new(1, 0);
+            match mr.borrow().ipc_receiver.try_recv_timeout(polling_interval) {
+                Ok(msg) => break Ok(msg),
+                Err(crate::ipc::TryRecvError::Empty) => {
+                    if mr.borrow().poll() {
+                        // At least one probe failed, so return to caller.
+                        return Ok(());
+                    }
+                },
+                Err(crate::ipc::TryRecvError::IpcError(e)) => {
+                    break Err(MultiplexError::IpcError(e))
+                },
+            }
+        }?;
         Self::handle(Rc::clone(&mr), msg)
     }
 
     #[instrument(level = "debug")]
     fn drain(mr: &Rc<RefCell<MultiReceiver>>) {
-        if let Some(ipc_receiver) = mr.borrow().ipc_receiver.borrow().as_ref() {
-            loop {
-                match ipc_receiver.try_recv() {
-                    Ok(msg) => {
-                        let _ = Self::handle(Rc::clone(mr), msg);
-                    },
-                    _ => {
-                        break;
-                    },
-                }
+        loop {
+            match mr.borrow().ipc_receiver.try_recv() {
+                Ok(msg) => {
+                    let _ = Self::handle(Rc::clone(mr), msg);
+                },
+                _ => {
+                    break;
+                },
             }
         }
     }
@@ -639,7 +633,7 @@ impl MultiReceiver {
     fn receive_sub_channel(
         mr: &Rc<RefCell<MultiReceiver>>,
     ) -> Result<(SubChannelId, String), MultiplexError> {
-        let msg = mr.borrow().ipc_receiver.borrow().as_ref().unwrap().recv()?;
+        let msg = mr.borrow().ipc_receiver.recv()?;
         match msg {
             MultiMessage::SubChannelId(sub_channel_id, name) => Ok((sub_channel_id, name)),
             m => Err(MultiplexError::InternalError(format!(
@@ -1119,7 +1113,7 @@ fn multi_channel() -> Result<(Rc<MultiSender>, Rc<RefCell<MultiReceiver>>), io::
     let mut senders = HashMap::new();
     senders.insert(client_id, ipc_response_sender);
     let multi_receiver = MultiReceiver {
-        ipc_receiver: Rc::new(RefCell::new(Some(ipc_receiver))),
+        ipc_receiver: Rc::new(ipc_receiver),
         ipc_receiver_uuid: Uuid::new_v4(),
         mutator: RefCell::new(MultiReceiverMutator {
             ipc_senders: senders,
@@ -1159,7 +1153,7 @@ impl OneShotMultiServer {
             self.multi_server.accept()?;
 
         let mr = MultiReceiver {
-            ipc_receiver: Rc::new(RefCell::new(Some(multi_receiver))),
+            ipc_receiver: Rc::new(multi_receiver),
             ipc_receiver_uuid: Uuid::new_v4(),
             mutator: RefCell::new(MultiReceiverMutator {
                 ipc_senders: HashMap::new(),
