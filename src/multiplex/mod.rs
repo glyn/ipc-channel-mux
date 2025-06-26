@@ -7,6 +7,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Multiplex _subchannels_ over IPC channels.
+//! 
+//! A subchannel is similar to an IPC channel except that:
+//! 1. Subchannel senders may be sent and received without consuming
+//!    scarce operating system resources, such as file descriptors on Unix variants.
+//! 2. Subchannel receivers may not be sent or received.
+
+#![warn(missing_docs)]
+
 use crate::ipc::{self, IpcError, IpcOneShotServer, IpcReceiver, IpcSender};
 use bincode;
 use channel_identification::{Source, Target};
@@ -28,16 +37,18 @@ use weak_table::WeakValueHashMap;
 
 mod channel_identification;
 mod subchannel_lifecycle;
-
+ 
 static EMPTY_SUBCHANNEL_ID: LazyLock<SubChannelId> = LazyLock::new(|| SubChannelId(Uuid::new_v4()));
 static ORIGIN: LazyLock<Uuid> = LazyLock::new(|| Uuid::new_v4());
 
+/// Channel wraps an IPC channel and is used to construct subchannels.
 pub struct Channel {
     multi_sender: Rc<MultiSender>,
     multi_receiver: Rc<RefCell<MultiReceiver>>,
 }
 
 impl Channel {
+    /// Construct a new [Channel].
     #[instrument(level = "debug", err(level = "debug"))]
     pub fn new() -> Result<Channel, MultiplexError> {
         let (ms, mr) = multi_channel()?;
@@ -47,6 +58,8 @@ impl Channel {
         })
     }
 
+    /// Construct a new subchannel of a [Channel]. The subchannel has
+    /// a [SubSender] and a [SubReceiver].
     #[instrument(level = "debug", skip(self))]
     pub fn sub_channel<T>(&self) -> (SubSender<T>, SubReceiver<T>)
     where
@@ -72,6 +85,7 @@ impl Channel {
     }
 }
 
+/// SubSender is the sending end of a subchannel, used to serialize and send messages of a given type.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SubSender<T>
 where
@@ -97,6 +111,11 @@ impl<T> SubSender<T>
 where
     T: Serialize,
 {
+    /// Create a [SubSender] connected to a previously constructed [SubOneShotServer].
+    ///
+    /// This function should not be called more than once per [SubOneShotServer],
+    /// otherwise the behaviour is unpredictable.
+    /// For more information, see [issue 378](https://github.com/servo/ipc-channel/issues/378).
     #[instrument(level = "debug", err(level = "debug"))]
     pub fn connect(name: String) -> Result<SubSender<T>, MultiplexError> {
         let multi_sender: Rc<MultiSender> = MultiSender::connect(name.to_string())?;
@@ -108,6 +127,7 @@ where
         })
     }
 
+    /// Send data across the subchannel to the [SubReceiver].
     #[instrument(level = "debug", skip(self, data), err(level = "debug"))]
     pub fn send(&self, data: T) -> Result<(), MultiplexError> {
         self.sub_channel_sender.send(data)
@@ -117,6 +137,7 @@ where
     // }
 }
 
+/// SubReceiver is the receiving end of a subchannel, used to receive and deserialize messages of a given type.
 #[derive(Debug)]
 pub struct SubReceiver<T>
 where
@@ -324,14 +345,6 @@ impl<'a> MultiSender {
         }
     }
 
-    /// Create a [MultiSender] connected to a previously defined [IpcOneShotMultiServer].
-    ///
-    /// This function should not be called more than once per [IpcOneShotMultiServer],
-    /// otherwise the behaviour is unpredictable.
-    /// Compare [issue 378](https://github.com/servo/ipc-channel/issues/378).
-    ///
-    /// [MultiSender]: struct.MultiSender.html
-    /// [OneShotMultiServer]: struct.OneShotMultiServer.html
     #[instrument(level = "debug", ret, err(level = "debug"))]
     fn connect(name: String) -> Result<Rc<MultiSender>, MultiplexError> {
         let sender = Rc::new(IpcSender::connect(name)?);
@@ -525,7 +538,7 @@ impl MultiReceiver {
                         scid
                     )))?
                     .send(data);
-                
+
                 // FIXME: where to clear IPC_SENDERS_RECEIVED. If the following is uncommented, tests fail.
                 // IPC_SENDERS_RECEIVED.with(|senders| {
                 //     senders.borrow_mut().clear();
