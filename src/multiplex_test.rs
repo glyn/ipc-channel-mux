@@ -255,54 +255,6 @@ fn multiplexed_senders_interacting() {
     assert_eq!(sub_rx1.recv().unwrap(), 1);
 }
 
-#[ignore = "subreceiver drop on transmission"]
-#[test]
-fn embedded_multiplexed_receivers() {
-    let person = ("Patrick Walton".to_owned(), 29);
-
-    let channel = multiplex::Channel::new().unwrap();
-    let (sub_tx, sub_rx) = channel.sub_channel().unwrap();
-
-    let person_and_receiver = (person.clone(), sub_rx);
-
-    // Need a separate channel so that it has an IpcReceiver which will not be taken when sub_rx is sent.
-    let super_channel = multiplex::Channel::new().unwrap();
-    let (super_tx, super_rx) = super_channel.sub_channel().unwrap();
-
-    super_tx.send(person_and_receiver).unwrap();
-    let received_person_and_receiver = super_rx.recv().unwrap();
-    assert_eq!(received_person_and_receiver.0, person);
-    sub_tx.send(person.clone()).unwrap();
-    let received_person = received_person_and_receiver.1.recv().unwrap();
-    assert_eq!(received_person, person);
-}
-
-#[test]
-fn embedded_multiplexed_receivers_used_before_and_after_transmission() {
-    let person = ("Patrick Walton".to_owned(), 29);
-
-    let channel = multiplex::Channel::new().unwrap();
-    let (sub_tx, sub_rx) = channel.sub_channel().unwrap();
-
-    sub_tx.send(person.clone()).unwrap();
-    sub_tx.send(person.clone()).unwrap();
-    let received_person1 = sub_rx.recv().unwrap();
-    assert_eq!(received_person1, person);
-
-    let person_and_receiver = (person.clone(), sub_rx);
-
-    // Need a separate channel so that it has an IpcReceiver which will not be taken when sub_rx is sent.
-    let super_channel = multiplex::Channel::new().unwrap();
-    let (super_tx, super_rx) = super_channel.sub_channel().unwrap();
-
-    super_tx.send(person_and_receiver).unwrap();
-    let received_person_and_receiver = super_rx.recv().unwrap();
-    assert_eq!(received_person_and_receiver.0, person);
-    // sub_tx.send(person.clone()).unwrap();
-    let received_person2 = received_person_and_receiver.1.recv().unwrap();
-    assert_eq!(received_person2, person);
-}
-
 #[cfg(not(any(
     feature = "force-inprocess",
     target_os = "windows",
