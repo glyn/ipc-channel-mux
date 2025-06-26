@@ -234,7 +234,7 @@ fn embedded_multiplexed_two_senders() {
 }
 
 #[test]
-fn multiplexed_senders_interacting() {
+fn embedded_multiplexed_senders_interacting() {
     let channel = multiplex::Channel::new().unwrap();
     let (super_tx1, super_rx1) = channel.sub_channel();
     let (sub_tx1, sub_rx1) = channel.sub_channel();
@@ -253,6 +253,33 @@ fn multiplexed_senders_interacting() {
 
     assert_eq!(sub_rx2.recv().unwrap(), 2);
     assert_eq!(sub_rx1.recv().unwrap(), 1);
+}
+
+#[test]
+fn embedded_multiplexed_senders_with_middleman() {
+    // TODO: this test aimed to break the code that always sets MultiMessage:Sending.from to ORIGIN, but it passes.
+    let channel = multiplex::Channel::new().unwrap();
+    let (super_tx, super_rx) = channel.sub_channel();
+    let (sub_tx, sub_rx) = channel.sub_channel::<i32>();
+
+    let middleman = multiplex::Channel::new().unwrap();
+    let (middleman_super_tx, middleman_super_rx) = middleman.sub_channel();
+    let (middleman_sub_tx, middleman_sub_rx) = middleman.sub_channel();
+
+    // Send super and sub subsenders to the middleman
+    middleman_super_tx.send(super_tx).unwrap();
+    let super_tx_at_middleman = middleman_super_rx.recv().unwrap();
+    middleman_sub_tx.send(sub_tx).unwrap();
+    let sub_tx_at_middleman = middleman_sub_rx.recv().unwrap();
+
+    // Now send the sub subsender from the middleman
+    super_tx_at_middleman.send(sub_tx_at_middleman).unwrap();
+
+    // Cause transmission of the sub subsender to fail.
+    drop(super_rx);
+
+    // Check the subreceiver knows about the failure
+    assert!(sub_rx.recv().is_err());
 }
 
 #[cfg(not(any(
