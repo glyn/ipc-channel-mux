@@ -266,16 +266,6 @@ pub enum MultiplexError {
     InternalError(String),
 }
 
-// FIXME: this is a temporary workaround to allow MultiplexError::Disconnected to be used by SubSenderStateMachine.
-impl Clone for MultiplexError {
-    fn clone(&self) -> Self {
-        match self {
-            Self::Disconnected => Self::Disconnected,
-            _ => panic!(""),
-        }
-    }
-}
-
 impl fmt::Display for MultiplexError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
@@ -534,18 +524,18 @@ impl MultiReceiver {
                         "invalid subchannel id {}",
                         scid
                     )))?
-                    .send(data); // TODO: if the subreceiver has been dropped, still need to deserialise the message so that subsenders can be received, BUT they also need to be dropped
-                                 // FIXME: where to clear IPC_SENDERS_RECEIVED. If the following is uncommented, IpcSenders go AWOL.
-                                 // IPC_SENDERS_RECEIVED.with(|senders| {
-                                 //     senders.lock().unwrap().clear();
-                                 // });
+                    .send(data);
+                
+                // FIXME: where to clear IPC_SENDERS_RECEIVED. If the following is uncommented, tests fail.
+                // IPC_SENDERS_RECEIVED.with(|senders| {
+                //     senders.borrow_mut().clear();
+                // });
 
-                // FIXME: similar concern for the following.
+                // FIXME: where to clear CURRENT_MULTI_RECEIVER. If the following is uncommented, tests fail.
                 // CURRENT_MULTI_RECEIVER.with(|multi_receiver| {
                 //     multi_receiver.borrow_mut().take();
                 // });
 
-                //result // This causes SubReceiver::recv() to fail even if the error was for another subchannel
                 if let Some(Ok(())) = result {
                     Ok(())
                 } else {
@@ -738,9 +728,8 @@ where
                         via: self.sub_channel_id,
                         via_chan: Self::ipc_sender_and_or_uuid(
                             sender_id.clone(),
-                            // FIXME: the following should refer to self (the via channel) rather than the subsender being sent
-                            self.ipc_sender.clone(), // was: ipc_sender.clone(),
-                            self.ipc_sender_uuid.clone(), // was: ipc_sender_uuid.clone()
+                            self.ipc_sender.clone(),
+                            self.ipc_sender_uuid.clone(),
                         ),
                     });
                 },
@@ -781,9 +770,9 @@ where
         /* If this SubChannelSender has sent the given IpcSender
         before, send just the UUID associated with the IpcSender.
         Otherwise this is the first time this SubChannelSender
-        has sent the given IpcSender, so associate it with a UUID
-        and send both the IpcSender and the UUID. */
-        let already_sent = sender_id.borrow_mut().insert(ipc_sender.clone()); // FIXME: change identify to not generate and return UUIDs
+        has sent the given IpcSender, so send both the IpcSender
+        and the UUID. */
+        let already_sent = sender_id.borrow_mut().insert(ipc_sender.clone());
         if already_sent {
             log::trace!(
                 "sending UUID {} associated with previously sent IpcSender",
