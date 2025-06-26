@@ -126,7 +126,7 @@ pub fn spawn_server(test_name: &str, server_args: &[(&str, &str)]) -> process::C
 fn multiplex_simple() {
     let person = ("Patrick Walton".to_owned(), 29);
     let channel = multiplex::Channel::new().unwrap();
-    let (tx, rx) = channel.sub_channel().unwrap();
+    let (tx, rx) = channel.sub_channel();
     tx.send(person.clone()).unwrap();
     let received_person = rx.recv().unwrap();
     assert_eq!(person, received_person);
@@ -141,11 +141,11 @@ fn multiplex_simple() {
 #[test]
 fn multiplex_two_subchannels() {
     let channel = multiplex::Channel::new().unwrap();
-    let (tx1, rx1) = channel.sub_channel().unwrap();
+    let (tx1, rx1) = channel.sub_channel();
     tx1.send(1).unwrap();
     assert_eq!(1, rx1.recv().unwrap());
 
-    let (tx2, rx2) = channel.sub_channel().unwrap();
+    let (tx2, rx2) = channel.sub_channel();
     tx2.send(2).unwrap();
     assert_eq!(2, rx2.recv().unwrap());
 }
@@ -153,10 +153,10 @@ fn multiplex_two_subchannels() {
 #[test]
 fn multiplex_two_subchannels_reverse_ordered() {
     let channel = multiplex::Channel::new().unwrap();
-    let (tx1, rx1) = channel.sub_channel().unwrap();
+    let (tx1, rx1) = channel.sub_channel();
     tx1.send(1).unwrap();
 
-    let (tx2, rx2) = channel.sub_channel().unwrap();
+    let (tx2, rx2) = channel.sub_channel();
     tx2.send(2).unwrap();
 
     assert_eq!(2, rx2.recv().unwrap());
@@ -168,10 +168,10 @@ fn embedded_multiplexed_senders() {
     let person = ("Patrick Walton".to_owned(), 29);
 
     let channel = multiplex::Channel::new().unwrap();
-    let (sub_tx, sub_rx) = channel.sub_channel().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel();
 
     let person_and_sender = (person.clone(), sub_tx);
-    let (super_tx, super_rx) = channel.sub_channel().unwrap();
+    let (super_tx, super_rx) = channel.sub_channel();
 
     super_tx.send(person_and_sender).unwrap();
     let received_person_and_sender: ((String, i32), SubSender<(String, i32)>) =
@@ -195,11 +195,11 @@ fn embedded_multiplexed_two_senders() {
     let person = ("Patrick Walton".to_owned(), 29);
 
     let channel = multiplex::Channel::new().unwrap();
-    let (sub_tx, sub_rx) = channel.sub_channel().unwrap();
-    let (sub_tx2, sub_rx2) = channel.sub_channel().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel();
+    let (sub_tx2, sub_rx2) = channel.sub_channel();
 
     let person_and_two_senders = (person.clone(), sub_tx, sub_tx2);
-    let (super_tx, super_rx) = channel.sub_channel().unwrap();
+    let (super_tx, super_rx) = channel.sub_channel();
 
     super_tx.send(person_and_two_senders).unwrap();
     let received_person_and_two_senders: (
@@ -236,12 +236,12 @@ fn embedded_multiplexed_two_senders() {
 #[test]
 fn multiplexed_senders_interacting() {
     let channel = multiplex::Channel::new().unwrap();
-    let (super_tx1, super_rx1) = channel.sub_channel().unwrap();
-    let (sub_tx1, sub_rx1) = channel.sub_channel().unwrap();
+    let (super_tx1, super_rx1) = channel.sub_channel();
+    let (sub_tx1, sub_rx1) = channel.sub_channel();
 
     let channel2 = multiplex::Channel::new().unwrap();
-    let (super_tx2, super_rx2) = channel2.sub_channel().unwrap();
-    let (sub_tx2, sub_rx2) = channel2.sub_channel().unwrap();
+    let (super_tx2, super_rx2) = channel2.sub_channel();
+    let (sub_tx2, sub_rx2) = channel2.sub_channel();
 
     super_tx1.send(sub_tx2).unwrap();
     super_tx2.send(sub_tx1).unwrap();
@@ -268,7 +268,7 @@ fn multiplexed_senders_interacting() {
 #[test]
 fn receiving_many_subchannels() {
     let channel = multiplex::Channel::new().unwrap();
-    let (send2, recv2) = channel.sub_channel().unwrap();
+    let (send2, recv2) = channel.sub_channel();
 
     // this will be used to receive from the spawned thread
     let (bootstrap_server, bootstrap_token) = SubOneShotServer::new().unwrap();
@@ -278,7 +278,7 @@ fn receiving_many_subchannels() {
             SubSender::connect(bootstrap_token).unwrap();
 
         let channel = multiplex::Channel::new().unwrap();
-        let (send1, recv1) = channel.sub_channel().unwrap();
+        let (send1, recv1) = channel.sub_channel();
 
         bootstrap_sub_sender.send(send1).unwrap();
 
@@ -308,9 +308,9 @@ fn receiving_many_subchannels() {
 #[test]
 fn sender_transmission_dropped_in_flight() {
     let channel = multiplex::Channel::new().unwrap();
-    let (sub_tx, sub_rx) = channel.sub_channel::<i32>().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel::<i32>();
 
-    let (super_tx, super_rx) = channel.sub_channel().unwrap();
+    let (super_tx, super_rx) = channel.sub_channel();
     super_tx.send(sub_tx).unwrap();
 
     // match sub_rx.try_recv().unwrap_err() { // try_recv not yet implemented
@@ -329,7 +329,7 @@ fn sender_transmission_dropped_in_flight() {
 #[test]
 fn multiplex_drop_only_subsender_for_dropped_channel() {
     let channel = multiplex::Channel::new().unwrap();
-    let (tx, rx) = channel.sub_channel::<i32>().unwrap();
+    let (tx, rx) = channel.sub_channel::<i32>();
     drop(channel);
 
     drop(tx);
@@ -342,7 +342,7 @@ fn multiplex_drop_only_subsender_for_dropped_channel() {
 #[test]
 fn multiplex_drop_only_subsender_for_channel() {
     let channel = multiplex::Channel::new().unwrap();
-    let (tx, rx) = channel.sub_channel::<i32>().unwrap();
+    let (tx, rx) = channel.sub_channel::<i32>();
 
     drop(tx);
     match rx.recv().unwrap_err() {
@@ -354,8 +354,8 @@ fn multiplex_drop_only_subsender_for_channel() {
 #[test]
 fn multiplex_drop_only_subsender_for_subchannel_of_dropped_channel() {
     let channel = multiplex::Channel::new().unwrap();
-    let (tx1, rx1) = channel.sub_channel::<i32>().unwrap();
-    let (tx2, rx2) = channel.sub_channel::<i32>().unwrap();
+    let (tx1, rx1) = channel.sub_channel::<i32>();
+    let (tx2, rx2) = channel.sub_channel::<i32>();
 
     drop(tx1);
     match rx1.recv().unwrap_err() {
@@ -371,7 +371,7 @@ fn multiplex_drop_only_subsender_for_subchannel_of_dropped_channel() {
 #[test]
 fn multiplex_drop_cloned_subsender() {
     let channel = multiplex::Channel::new().unwrap();
-    let (tx, rx) = channel.sub_channel::<i32>().unwrap();
+    let (tx, rx) = channel.sub_channel::<i32>();
 
     drop(tx.clone());
 
@@ -382,8 +382,8 @@ fn multiplex_drop_cloned_subsender() {
 #[test]
 fn multiplex_drop_only_subsender_for_subchannel() {
     let channel = multiplex::Channel::new().unwrap();
-    let (tx1, rx1) = channel.sub_channel::<i32>().unwrap();
-    let (tx2, rx2) = channel.sub_channel::<i32>().unwrap();
+    let (tx1, rx1) = channel.sub_channel::<i32>();
+    let (tx2, rx2) = channel.sub_channel::<i32>();
 
     drop(tx1);
     match rx1.recv().unwrap_err() {
@@ -399,8 +399,8 @@ fn multiplex_drop_only_subsender_for_subchannel() {
 #[test]
 fn drop_transmitted_subsender() {
     let channel = multiplex::Channel::new().unwrap();
-    let (sub_tx, sub_rx) = channel.sub_channel::<i32>().unwrap();
-    let (super_tx, super_rx) = channel.sub_channel().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel::<i32>();
+    let (super_tx, super_rx) = channel.sub_channel();
     super_tx.send(sub_tx).unwrap();
     let received_sub_tx = super_rx.recv().unwrap();
     drop(received_sub_tx);
@@ -414,8 +414,8 @@ fn drop_transmitted_subsender() {
 #[test]
 fn drop_transmitted_subsender_send_using_clone_of_original() {
     let channel = multiplex::Channel::new().unwrap();
-    let (sub_tx, sub_rx) = channel.sub_channel::<i32>().unwrap();
-    let (super_tx, super_rx) = channel.sub_channel().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel::<i32>();
+    let (super_tx, super_rx) = channel.sub_channel();
     let sub_tx_clone = sub_tx.clone();
     super_tx.send(sub_tx).unwrap();
     let received_sub_tx = super_rx.recv().unwrap();
@@ -428,12 +428,12 @@ fn drop_transmitted_subsender_send_using_clone_of_original() {
 #[test]
 fn drop_transmitted_subsender_send_using_another_transmitted_subsender() {
     let channel = multiplex::Channel::new().unwrap();
-    let (sub_tx, sub_rx) = channel.sub_channel::<i32>().unwrap();
-    let (super_tx1, super_rx1) = channel.sub_channel().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel::<i32>();
+    let (super_tx1, super_rx1) = channel.sub_channel();
     super_tx1.send(sub_tx.clone()).unwrap();
     let received_sub_tx1 = super_rx1.recv().unwrap();
 
-    let (super_tx2, super_rx2) = channel.sub_channel().unwrap();
+    let (super_tx2, super_rx2) = channel.sub_channel();
     super_tx2.send(sub_tx).unwrap();
     let received_sub_tx2 = super_rx2.recv().unwrap();
 
@@ -446,13 +446,13 @@ fn drop_transmitted_subsender_send_using_another_transmitted_subsender() {
 #[test]
 fn drop_transmitted_subsender_send_using_another_subsender_transmitted_over_another_ipc_channel() {
     let channel = multiplex::Channel::new().unwrap();
-    let (sub_tx, sub_rx) = channel.sub_channel::<i32>().unwrap();
-    let (super_tx1, super_rx1) = channel.sub_channel().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel::<i32>();
+    let (super_tx1, super_rx1) = channel.sub_channel();
     super_tx1.send(sub_tx.clone()).unwrap();
     let received_sub_tx1 = super_rx1.recv().unwrap();
 
     let channel2 = multiplex::Channel::new().unwrap();
-    let (super_tx2, super_rx2) = channel2.sub_channel().unwrap();
+    let (super_tx2, super_rx2) = channel2.sub_channel();
     super_tx2.send(sub_tx).unwrap();
     let received_sub_tx2 = super_rx2.recv().unwrap();
 
@@ -465,7 +465,7 @@ fn drop_transmitted_subsender_send_using_another_subsender_transmitted_over_anot
 #[test]
 fn multiplex_drop_only_subreceiver_for_dropped_channel() {
     let channel = multiplex::Channel::new().unwrap();
-    let (tx, rx) = channel.sub_channel::<i32>().unwrap();
+    let (tx, rx) = channel.sub_channel::<i32>();
     drop(channel);
 
     drop(rx);
@@ -475,7 +475,7 @@ fn multiplex_drop_only_subreceiver_for_dropped_channel() {
 #[test]
 fn multiplex_drop_only_subreceiver_for_channel() {
     let channel = multiplex::Channel::new().unwrap();
-    let (tx, rx) = channel.sub_channel::<i32>().unwrap();
+    let (tx, rx) = channel.sub_channel::<i32>();
 
     drop(rx);
     assert!(tx.send(1).is_err());
@@ -485,7 +485,7 @@ fn multiplex_drop_only_subreceiver_for_channel() {
 #[test]
 fn multiplex_drop_only_subreceiver_for_subchannel_of_dropped_channel() {
     let channel = multiplex::Channel::new().unwrap();
-    let (tx1, rx1) = channel.sub_channel::<i32>().unwrap();
+    let (tx1, rx1) = channel.sub_channel::<i32>();
     drop(channel);
 
     drop(rx1);
@@ -496,10 +496,10 @@ fn multiplex_drop_only_subreceiver_for_subchannel_of_dropped_channel() {
 #[test]
 fn compare_base_transmission_failure() {
     let channel1 = multiplex::Channel::new().unwrap();
-    let (tx, rx) = channel1.sub_channel::<i32>().unwrap();
+    let (tx, rx) = channel1.sub_channel::<i32>();
 
     let channel2 = multiplex::Channel::new().unwrap();
-    let (via_tx, via_rx) = channel2.sub_channel().unwrap();
+    let (via_tx, via_rx) = channel2.sub_channel();
 
     via_tx.send(tx).unwrap();
 

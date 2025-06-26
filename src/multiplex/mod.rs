@@ -47,8 +47,8 @@ impl Channel {
         })
     }
 
-    #[instrument(level = "debug", skip(self), err(level = "debug"))]
-    pub fn sub_channel<T>(&self) -> Result<(SubSender<T>, SubReceiver<T>), MultiplexError>
+    #[instrument(level = "debug", skip(self))]
+    pub fn sub_channel<T>(&self) -> (SubSender<T>, SubReceiver<T>)
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {
@@ -58,8 +58,8 @@ impl Channel {
             .sub_receiver_proxies
             .borrow_mut()
             .insert(scid, subchannel_lifecycle::SubReceiverProxy::new());
-        let scr = MultiReceiver::attach(&self.multi_receiver, scid)?; // TODO: if attach could be made error-free, then so could this function
-        Ok((
+        let scr = MultiReceiver::attach(&self.multi_receiver, scid);
+        (
             SubSender {
                 sub_channel_sender: scs,
                 phantom: PhantomData,
@@ -68,7 +68,7 @@ impl Channel {
                 sub_channel_receiver: scr,
                 phantom: PhantomData,
             },
-        ))
+        )
     }
 }
 
@@ -187,7 +187,7 @@ where
                 name
             )));
         }
-        let sub_receiver = MultiReceiver::attach(&multi_receiver, subchannel_id).unwrap();
+        let sub_receiver = MultiReceiver::attach(&multi_receiver, subchannel_id);
         let msg: T = sub_receiver.recv()?;
         Ok((
             SubReceiver {
@@ -453,19 +453,19 @@ impl MultiReceiver {
     fn attach<T: for<'de> Deserialize<'de> + Serialize>(
         mr: &Rc<RefCell<MultiReceiver>>,
         sub_channel_id: SubChannelId,
-    ) -> Result<SubChannelReceiver<T>, MultiplexError> {
+    ) -> SubChannelReceiver<T> {
         let (tx, rx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = mpsc::channel();
         mr.borrow().mutator.borrow_mut().sub_channels.insert(
             sub_channel_id,
             subchannel_lifecycle::SubSenderStateMachine::new(tx, *ORIGIN),
         );
-        Ok(SubChannelReceiver {
+        SubChannelReceiver {
             multi_receiver: Rc::clone(mr),
             sub_channel_id: sub_channel_id,
             ipc_receiver_uuid: mr.borrow().ipc_receiver_uuid,
             channel: rx,
             phantom: PhantomData,
-        })
+        }
     }
 
     #[instrument(level = "debug", err(level = "debug"))]

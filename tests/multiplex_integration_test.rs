@@ -24,13 +24,13 @@ fn multiplexing() {
 
     use ipc_channel::multiplex;
     let channel = multiplex::Channel::new().unwrap();
-    let (sub_sender, sub_receiver) = channel.sub_channel().unwrap();
+    let (sub_sender, sub_receiver) = channel.sub_channel();
     sub_sender.send(45 as u8).unwrap();
 
     let data: u8 = sub_receiver.recv().unwrap();
     assert_eq!(data, 45);
 
-    let (sub_sender2, sub_receiver2) = channel.sub_channel().unwrap();
+    let (sub_sender2, sub_receiver2) = channel.sub_channel();
     sub_sender2.send("bananas".to_string()).unwrap();
 
     let data2: String = sub_receiver2.recv().unwrap();
