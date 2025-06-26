@@ -245,7 +245,6 @@ struct MultiSender {
     ipc_sender: Rc<IpcSender<MultiMessage>>,
     uuid: Uuid,
     sender_id: Rc<RefCell<Source<Weak<IpcSender<MultiMessage>>>>>,
-    receiver_id: Rc<RefCell<Source<Weak<IpcReceiver<MultiMessage>>>>>,
     response_receiver: Rc<IpcReceiver<MultiResponse>>,
     sub_receiver_proxies: RefCell<HashMap<SubChannelId, subchannel_lifecycle::SubReceiverProxy>>,
 }
@@ -330,7 +329,6 @@ impl<'a> MultiSender {
             }))),
             ipc_sender_uuid: self.uuid,
             sender_id: Rc::clone(&self.sender_id),
-            receiver_id: Rc::clone(&self.receiver_id),
             multi_sender: self,
             phantom: PhantomData,
         }
@@ -363,7 +361,6 @@ impl<'a> MultiSender {
             ipc_sender: sender,
             uuid: ipc_sender_uuid,
             sender_id: Rc::new(RefCell::new(Source::new())),
-            receiver_id: Rc::new(RefCell::new(Source::new())),
             response_receiver: Rc::new(response_receiver),
             sub_receiver_proxies: RefCell::new(HashMap::new()),
         }))
@@ -696,7 +693,6 @@ struct SubChannelSender<T> {
     disconnector: Rc<subchannel_lifecycle::SubSenderTracker<dyn Fn()>>,
     ipc_sender_uuid: Uuid,
     sender_id: Rc<RefCell<Source<Weak<IpcSender<MultiMessage>>>>>,
-    receiver_id: Rc<RefCell<Source<Weak<IpcReceiver<MultiMessage>>>>>,
     multi_sender: Rc<MultiSender>,
     phantom: PhantomData<T>,
 }
@@ -709,7 +705,6 @@ impl<T> Clone for SubChannelSender<T> {
             disconnector: Rc::clone(&self.disconnector),
             ipc_sender_uuid: self.ipc_sender_uuid,
             sender_id: Rc::clone(&self.sender_id),
-            receiver_id: Rc::clone(&self.receiver_id),
             multi_sender: Rc::clone(&self.multi_sender),
             phantom: self.phantom,
         }
@@ -899,7 +894,6 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
             disconnector: disc,
             ipc_sender_uuid: multi_sender.uuid,
             sender_id: Rc::new(RefCell::new(Source::new())),
-            receiver_id: Rc::new(RefCell::new(Source::new())), // FIXME: copy from MultiSender
             multi_sender: multi_sender,
             phantom: PhantomData,
         })
@@ -1140,7 +1134,6 @@ fn multi_channel() -> Result<(Rc<MultiSender>, Rc<RefCell<MultiReceiver>>), io::
         ipc_sender: Rc::new(ipc_sender),
         uuid: Uuid::new_v4(),
         sender_id: Rc::new(RefCell::new(Source::new())),
-        receiver_id: Rc::new(RefCell::new(Source::new())),
         response_receiver: Rc::new(ipc_response_receiver),
         sub_receiver_proxies: RefCell::new(HashMap::new()),
     };
