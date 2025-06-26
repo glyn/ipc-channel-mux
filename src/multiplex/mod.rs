@@ -655,7 +655,6 @@ impl MultiReceiver {
     // poll returns true if and only if a probe failed.
     #[instrument(level = "trace")]
     fn poll(&self) -> bool {
-        // TODO: need to return a soft error if polling fails
         let probe_failed = RefCell::new(false);
         self.mutator
             .borrow()
@@ -893,27 +892,6 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
                 disconnector
             }
         });
-
-        // let ipc_sender_uuid = Uuid::parse_str(&scsi.ipc_sender_uuid).unwrap(); // FIXME: handle this error gracefully
-
-        // let maybe_multi_sender = CURRENT_MULTI_RECEIVER.with(|maybe_mr| {
-        //     maybe_mr
-        //         .borrow()
-        //         .as_ref()
-        //         .expect("CURRENT_MULTI_RECEIVER not set")
-        //         .borrow()
-        //         .mutator
-        //         .borrow()
-        //         .ipc_senders_by_id
-        //         .look_up(ipc_sender_uuid)
-        // });
-
-        // let multi_sender = if let Some(multi_sender) = maybe_multi_sender {
-        //     multi_sender
-        // } else {
-        //     MultiSender::connect_sender(Rc::clone(&multi_sender.ipc_sender), ipc_sender_uuid).unwrap()
-        //     // FIXME: convert this to an error
-        // };
 
         Ok(SubChannelSender {
             sub_channel_id: scsi.sub_channel_id,
