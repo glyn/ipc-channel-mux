@@ -13,6 +13,10 @@
 //! 1. Subchannel senders may be sent and received without consuming
 //!    scarce operating system resources, such as file descriptors on Unix variants.
 //! 2. Subchannel receivers may not be sent or received.
+//! 
+//! In the current multiplexing prototype, subchannels do not support:
+//! * Opaque messages.
+//! * Non-blocking receives and timeouts.
 
 #![warn(missing_docs)]
 
@@ -86,6 +90,8 @@ impl Channel {
 }
 
 /// SubSender is the sending end of a subchannel, used to serialize and send messages of a given type.
+/// 
+/// SubSenders can be sent in messages on other subchannels and can be cloned.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SubSender<T>
 where
@@ -111,11 +117,13 @@ impl<T> SubSender<T>
 where
     T: Serialize,
 {
-    /// Create a [SubSender] connected to a previously constructed [SubOneShotServer].
+    /// Connect to a server, passing the server name returned from [new], to construct a [SubSender].
     ///
-    /// This function should not be called more than once per [SubOneShotServer],
+    /// This function must not be called more than once per [SubOneShotServer],
     /// otherwise the behaviour is unpredictable.
     /// For more information, see [issue 378](https://github.com/servo/ipc-channel/issues/378).
+    /// 
+    /// [new]: crate::multiplex::SubOneShotServer::new
     #[instrument(level = "debug", err(level = "debug"))]
     pub fn connect(name: String) -> Result<SubSender<T>, MultiplexError> {
         let multi_sender: Rc<MultiSender> = MultiSender::connect(name.to_string())?;
@@ -127,7 +135,19 @@ where
         })
     }
 
-    /// Send data across the subchannel to the [SubReceiver].
+    /// Send a message across the subchannel to the [SubReceiver].
+    ///
+    /// A successful send occurs when the corresponding [SubReceiver] has not already been deallocated and the process
+    /// containing the [SubReceiver] has not already terminated. Ok is returned, but the message will not necessarily be
+    /// received: [recv] might not to be called to receive the message or the corresponding [SubReceiver] might be
+    /// deallocated, or the [SubReceiver]'s process might terminate, before [recv] is called to receive the message.
+    ///
+    /// An unsuccessful send occurs when the corresponding [SubReceiver] has already been deallocated or the
+    /// [SubReceiver]'s process has already terminated. Err is returned and the message will never be received.
+    /// 
+    /// This method will never block the current thread.
+    /// 
+    /// [recv]: crate::multiplex::SubReceiver::recv
     #[instrument(level = "debug", skip(self, data), err(level = "debug"))]
     pub fn send(&self, data: T) -> Result<(), MultiplexError> {
         self.sub_channel_sender.send(data)
@@ -151,6 +171,16 @@ impl<T> SubReceiver<T>
 where
     T: for<'de> Deserialize<'de> + Serialize,
 {
+    /// Waits for, and returns, a message from the channel or returns an error if all corresponding [SubSender]s have
+    /// disconnected (have been deallocated or their processes have terminated).
+    /// 
+    /// This method will always block the current thread if no messages are available and it’s possible for more messages
+    /// to be sent (at least one [SubSender] still exists). Once a message is sent to a corresponding [SubSender],
+    /// this method will wake up and return a message.
+    ///
+    /// If all the corresponding [SubSender]s have disconnected while this method is blocking, this method will wake up
+    /// and return Err to indicate that no more messages can ever be received on this subchannel. However, since
+    /// subchannels are buffered, messages sent before the [SubSender]s disconnect can still be properly received.
     #[instrument(level = "debug", skip(self), err(level = "debug"))]
     pub fn recv(&self) -> Result<T, MultiplexError> {
         self.sub_channel_receiver.recv()
@@ -166,6 +196,17 @@ where
     // }
 }
 
+/// A server with a generated name which can be used to establish a subchannel
+/// between processes.
+/// 
+/// On the server side, call [accept] against the server to obtain the subchannel receiver
+/// and receive the first message.
+/// 
+/// On the client side, call [connect], passing the server name, to obtain the subchannel
+/// sender. The server is “one-shot” because it accepts only one connect request from a client.
+/// 
+/// [accept]: crate::multiplex::SubOneShotServer::accept
+/// [connect]: crate::multiplex::SubSender::connect
 pub struct SubOneShotServer<T> {
     one_shot_multi_server: OneShotMultiServer,
     name: String,
@@ -184,6 +225,12 @@ impl<T> SubOneShotServer<T>
 where
     T: for<'de> Deserialize<'de> + Serialize,
 {
+    /// Construct a new server with a generated name in order to establish a subchannel
+    /// between processes.
+    /// 
+    /// Call accept on the server to obtain a subchannel receiver and receive the first message.
+    /// 
+    /// Call connect passing the server name to obtain the subchannel sender.
     #[instrument(level = "debug", ret, err(level = "debug"))]
     pub fn new() -> Result<(SubOneShotServer<T>, String), MultiplexError> {
         let (one_shot_multi_server, name) = OneShotMultiServer::new()?;
@@ -197,6 +244,7 @@ where
         ))
     }
 
+    /// Obtain a [SubReceiver] from a server and receive the first message.
     #[instrument(level = "debug", err(level = "debug"))]
     pub fn accept(self) -> Result<(SubReceiver<T>, T), MultiplexError> {
         let multi_receiver = self.one_shot_multi_server.accept()?;
@@ -279,11 +327,27 @@ impl fmt::Debug for MultiSender {
     }
 }
 
+/// This enumeration lists the possible reasons for failure of functions and methods in the [multiplex]
+/// module.
+/// 
+/// [multiplex]: crate::multiplex
 #[derive(Debug)]
 pub enum MultiplexError {
+    /// An error has occurred while receiving a message from the IPC channel underlying a subchannel.
     IpcError(IpcError),
-    MpmcSendError, // FIXME: add error details once std::sync::mpmc::SendError is stable
+    /// No more messages may be received.
+    /// 
+    /// Returned from [send] when the subchannel's [SubReceiver] has disconnected (has been
+    /// deallocated or its process has terminated) and no more messages can be received.
+    /// 
+    /// Returned from [recv] or [accept] when all the subchannel’s [SubSender]s have disconnected (have been
+    /// deallocated or their processes have terminated) and no more messages are available to be received.
+    ///
+    /// [send]: crate::multiplex::SubSender::send
+    /// [recv]: crate::multiplex::SubReceiver::recv
+    /// [accept]: crate::multiplex::SubOneShotServer::accept
     Disconnected,
+    /// An internal logic error has occurred.
     InternalError(String),
 }
 
@@ -291,10 +355,6 @@ impl fmt::Display for MultiplexError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
             MultiplexError::IpcError(ref err) => write!(fmt, "IPC error: {}", err),
-            MultiplexError::MpmcSendError => write!(
-                fmt,
-                "std::sync::mpmc::SenderError: receiver may have hung up or been dropped"
-            ),
             MultiplexError::Disconnected => write!(fmt, "disconnected"),
             MultiplexError::InternalError(s) => write!(fmt, "internal logic error: {s}"),
         }
@@ -1136,8 +1196,6 @@ fn multi_channel() -> Result<(Rc<MultiSender>, Rc<RefCell<MultiReceiver>>), io::
     Ok((Rc::new(multi_sender), multi_receiver_rc))
 }
 
-/// A multiplexing server associated with a given name. The server is "one-shot" because
-/// it accepts only one connect request from a client.
 struct OneShotMultiServer {
     multi_server: IpcOneShotServer<MultiMessage>,
 }
