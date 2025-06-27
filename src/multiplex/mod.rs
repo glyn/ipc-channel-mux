@@ -54,6 +54,83 @@
 //!
 //! Once half of a channel has been dropped, most operations can no longer
 //! continue to make progress, so Err will be returned.
+//! 
+//! ## Examples
+//! 
+//! Simple usage:
+//! ```
+//! # use ipc_channel::multiplex;
+//! # fn main() -> Result<(), multiplex::MultiplexError> {
+//!    let channel = multiplex::Channel::new().unwrap();
+//! 
+//!    let (tx, rx) = channel.sub_channel();
+//!    tx.send(1729).unwrap();
+//!    assert_eq!(rx.recv().unwrap(), 1729);
+//! 
+//!    let (tx2, rx2) = channel.sub_channel();
+//!    let taxi = "taxi".to_string();
+//!    tx2.send(taxi.clone()).unwrap();
+//!    assert_eq!(rx2.recv().unwrap(), taxi);
+//! #  Ok(())
+//! # }
+//! ```
+//! 
+//! Inter-process bootstrapping:
+//! ```
+//! # use ipc_channel::multiplex;
+//! # use std::thread;
+//! # fn main() -> Result<(), multiplex::MultiplexError> {
+//!    let (server, name) = multiplex::SubOneShotServer::<i32>::new().unwrap();
+//!
+//!    thread::spawn(move || {
+//!        let tx = multiplex::SubSender::connect(name).unwrap();
+//!        tx.send(1729).unwrap();
+//!        tx.send(1730).unwrap();
+//!    });
+//! 
+//!    let (rx, val) = server.accept().unwrap(); 
+//!    assert_eq!(val, 1729);
+//!    assert_eq!(rx.recv().unwrap(), 1730);
+//! #  Ok(())
+//! # }
+//! ```
+//! 
+//! Subchannel sender transmission:
+//! ```
+//! # use ipc_channel::multiplex;
+//! # fn main() -> Result<(), multiplex::MultiplexError> {
+//!    let channel = multiplex::Channel::new().unwrap();
+//!    let (tx, rx) = channel.sub_channel();
+//!
+//!    let (sender, receiver) = channel.sub_channel();
+//!    sender.send(tx).unwrap();
+//! 
+//!    let received_tx = receiver.recv().unwrap();
+//!    received_tx.send(1729);
+//!    assert_eq!(rx.recv().unwrap(), 1729);
+//! #  Ok(())
+//! # }
+//! ```
+//! 
+//! Subchannel sender transmission failure:
+//! ```
+//! # use ipc_channel::multiplex;
+//! # fn main() -> Result<(), multiplex::MultiplexError> {
+//!    let channel = multiplex::Channel::new().unwrap();
+//!    let (tx, rx) = channel.sub_channel::<i32>();
+//!
+//!    let (sender, receiver) = channel.sub_channel();
+//!    sender.send(tx).unwrap();
+//!
+//!    drop(receiver);
+//!    
+//!    match rx.recv().unwrap_err() {
+//!        multiplex::MultiplexError::Disconnected => (),
+//!        e => panic!("unexpected error"),
+//!    }
+//! #  Ok(())
+//! # }
+//! ```
 
 #![warn(missing_docs)]
 
