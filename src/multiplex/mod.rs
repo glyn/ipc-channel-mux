@@ -7,16 +7,53 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Multiplex _subchannels_ over IPC channels.
-//! 
+//! This module multiplexes _subchannels_ over IPC channels.
+//!
+//! A subchannel is a multi-producer, single-consumer (MPSC) FIFO queue with
+//! an unbounded buffer.
+//!
+//! ## Multiplexing
+//!
+//! A subchannel uses an underlying IPC channel for its communication. More than
+//! one subchannel may use the same underlying IPC channel and messages are
+//! multiplexed at the sender and demultiplexed at the receiver. This reduces the
+//! number of IPC channels (and corresponding operating system IPC resources) needed
+//! to send messages between processes.
+//!
+//! ## Comparison to IPC channels
+//!
 //! A subchannel is similar to an IPC channel except that:
 //! 1. Subchannel senders may be sent and received without consuming
 //!    scarce operating system resources, such as file descriptors on Unix variants.
-//! 2. Subchannel receivers may not be sent or received.
-//! 
-//! In the current multiplexing prototype, subchannels do not support:
+//!    (Servo has encountered process crashes due to IPC channels consuming all the
+//!    file descriptors for a process.)
+//! 2. Subchannel receivers may not be sent or received. This is a consequence of the
+//!    MPSC nature of the underlying IPC channel: sending a subchannel receiver would
+//!    entail sending the underlying IPC channel receiver and this would break any
+//!    other subchannel receivers depending on that IPC channel receiver.
+//! 3. In order to communicate subchannel receiver drop to all the subchannel senders,
+//!    one additional IPC channel is needed per sender of the IPC channel underlying the
+//!    subchannel. 
+//! 4. Subchannels sharing an underlying IPC channel may interfere with each other's
+//!    performance. For example, a busy subchannel could increase the latency of
+//!    message transmission on another subchannel.
+//!
+//! The current multiplexing prototype is missing a few IPC channel features, including:
 //! * Opaque messages.
 //! * Non-blocking receives and timeouts.
+//!
+//! ## Disconnection
+//!
+//! The send and receive operations on subchannels return a Result indicating
+//! whether or not the operation succeeded. An unsuccessful operation normally
+//! indicates that the other "half" of a channel has "disconnected" by being dropped
+//! or by the process(es) containing the other half terminating or by subchannel
+//! senders being lost in transmission (e.g. because the receiver of a subchannel
+//! used to transmit a subchannel sender was dropped or its containing process
+//! terminated).
+//!
+//! Once half of a channel has been dropped, most operations can no longer
+//! continue to make progress, so Err will be returned.
 
 #![warn(missing_docs)]
 
@@ -41,7 +78,7 @@ use weak_table::WeakValueHashMap;
 
 mod channel_identification;
 mod subchannel_lifecycle;
- 
+
 static EMPTY_SUBCHANNEL_ID: LazyLock<SubChannelId> = LazyLock::new(|| SubChannelId(Uuid::new_v4()));
 static ORIGIN: LazyLock<Uuid> = LazyLock::new(|| Uuid::new_v4());
 
@@ -90,7 +127,7 @@ impl Channel {
 }
 
 /// SubSender is the sending end of a subchannel, used to serialize and send messages of a given type.
-/// 
+///
 /// SubSenders can be sent in messages on other subchannels and can be cloned.
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SubSender<T>
@@ -122,7 +159,7 @@ where
     /// This function must not be called more than once per [SubOneShotServer],
     /// otherwise the behaviour is unpredictable.
     /// For more information, see [issue 378](https://github.com/servo/ipc-channel/issues/378).
-    /// 
+    ///
     /// [new]: crate::multiplex::SubOneShotServer::new
     #[instrument(level = "debug", err(level = "debug"))]
     pub fn connect(name: String) -> Result<SubSender<T>, MultiplexError> {
@@ -144,9 +181,9 @@ where
     ///
     /// An unsuccessful send occurs when the corresponding [SubReceiver] has already been deallocated or the
     /// [SubReceiver]'s process has already terminated. Err is returned and the message will never be received.
-    /// 
+    ///
     /// This method will never block the current thread.
-    /// 
+    ///
     /// [recv]: crate::multiplex::SubReceiver::recv
     #[instrument(level = "debug", skip(self, data), err(level = "debug"))]
     pub fn send(&self, data: T) -> Result<(), MultiplexError> {
@@ -172,8 +209,8 @@ where
     T: for<'de> Deserialize<'de> + Serialize,
 {
     /// Waits for, and returns, a message from the channel or returns an error if all corresponding [SubSender]s have
-    /// disconnected (have been deallocated or their processes have terminated).
-    /// 
+    /// disconnected (have been deallocated, their processes have terminated, or they have been lost in transmission).
+    ///
     /// This method will always block the current thread if no messages are available and it’s possible for more messages
     /// to be sent (at least one [SubSender] still exists). Once a message is sent to a corresponding [SubSender],
     /// this method will wake up and return a message.
@@ -196,15 +233,15 @@ where
     // }
 }
 
-/// A server with a generated name which can be used to establish a subchannel
+/// SubOneShotServer together with its generated name can be used to establish a subchannel
 /// between processes.
-/// 
+///
 /// On the server side, call [accept] against the server to obtain the subchannel receiver
 /// and receive the first message.
-/// 
+///
 /// On the client side, call [connect], passing the server name, to obtain the subchannel
 /// sender. The server is “one-shot” because it accepts only one connect request from a client.
-/// 
+///
 /// [accept]: crate::multiplex::SubOneShotServer::accept
 /// [connect]: crate::multiplex::SubSender::connect
 pub struct SubOneShotServer<T> {
@@ -227,9 +264,9 @@ where
 {
     /// Construct a new server with a generated name in order to establish a subchannel
     /// between processes.
-    /// 
+    ///
     /// Call accept on the server to obtain a subchannel receiver and receive the first message.
-    /// 
+    ///
     /// Call connect passing the server name to obtain the subchannel sender.
     #[instrument(level = "debug", ret, err(level = "debug"))]
     pub fn new() -> Result<(SubOneShotServer<T>, String), MultiplexError> {
@@ -329,17 +366,17 @@ impl fmt::Debug for MultiSender {
 
 /// This enumeration lists the possible reasons for failure of functions and methods in the [multiplex]
 /// module.
-/// 
+///
 /// [multiplex]: crate::multiplex
 #[derive(Debug)]
 pub enum MultiplexError {
     /// An error has occurred while receiving a message from the IPC channel underlying a subchannel.
     IpcError(IpcError),
     /// No more messages may be received.
-    /// 
+    ///
     /// Returned from [send] when the subchannel's [SubReceiver] has disconnected (has been
     /// deallocated or its process has terminated) and no more messages can be received.
-    /// 
+    ///
     /// Returned from [recv] or [accept] when all the subchannel’s [SubSender]s have disconnected (have been
     /// deallocated or their processes have terminated) and no more messages are available to be received.
     ///
