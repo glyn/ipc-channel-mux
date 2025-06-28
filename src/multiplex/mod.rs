@@ -142,7 +142,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{self, Debug, Display, Formatter};
-use std::io;
+use std::io::{self, Cursor, Read};
 use std::marker::PhantomData;
 use std::rc::{Rc, Weak};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -763,9 +763,6 @@ impl MultiReceiver {
                 new_source,
             } => {
                 if let Some(sm) = mr.borrow().mutator.borrow_mut().sub_channels.get(&scid) {
-                    // Each subsender is serialised twice and results in to_be_sent() being called twice. Balance this out by
-                    // calling received() twice.
-                    sm.received(from.clone(), via.clone(), new_source.clone());
                     sm.received(from, via, new_source);
                 }
 
@@ -902,13 +899,16 @@ where
             Ok::<(), MultiplexError>(())
         })?;
 
-        let data = bincode::serialize(&msg)?;
+        let mut c = Cursor::new(Vec::<u8>::new());
+        bincode::serialize_into(&mut c, &msg)?;
+        c.set_position(0);
+        let mut data = Vec::new();
+        c.read_to_end(&mut data).unwrap();
 
         // Notify transmission of any subchannel senders so that they are counted during transmission.
         SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| {
             subchannel_senders.borrow().iter().for_each(
                 |(subchannel_id, ipc_sender, sender_id)| {
-                    // Note: each subsender is serialised twice and so Sending will be sent twice for each subsender.
                     let _ = ipc_sender.send(MultiMessage::Sending {
                         scid: subchannel_id.clone(),
                         from: *ORIGIN, // TODO: do we need to send the actual sender source?
