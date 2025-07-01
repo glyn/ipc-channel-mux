@@ -332,6 +332,27 @@ fn receiving_many_subchannels() {
     }
 }
 
+#[cfg(not(any(
+    feature = "force-inprocess",
+    target_os = "windows",
+    target_os = "android",
+    target_os = "ios"
+)))]
+// This test demonstrates a significant benefit of multiplexing. If IpcChannels were
+// used, then this test would fail on Unix variants since the creating an IpChannel
+// consumes a file descriptor and the test would run out of file descriptors. Using
+// multiplexed channels, the test does not run out of file descriptors.
+#[test]
+fn creating_many_subchannels() {
+    let channel = multiplex::Channel::new().unwrap();
+    let mut subchannels = vec![];
+    for i in 0..10000 {
+        let subchannel = channel.sub_channel::<i32>();
+        subchannels.push(subchannel);
+        println!("{}", i);
+    }
+}
+
 #[test]
 fn sender_transmission_dropped_in_flight() {
     let channel = multiplex::Channel::new().unwrap();

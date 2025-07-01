@@ -33,7 +33,7 @@
 //!    other subchannel receivers depending on that IPC channel receiver.
 //! 3. In order to communicate subchannel receiver drop to all the subchannel senders,
 //!    one additional IPC channel is needed per sender of the IPC channel underlying the
-//!    subchannel. 
+//!    subchannel.
 //! 4. Subchannels sharing an underlying IPC channel may interfere with each other's
 //!    performance. For example, a busy subchannel could increase the latency of
 //!    message transmission on another subchannel.
@@ -54,19 +54,19 @@
 //!
 //! Once half of a channel has been dropped, most operations can no longer
 //! continue to make progress, so Err will be returned.
-//! 
+//!
 //! ## Examples
-//! 
+//!
 //! Simple usage:
 //! ```
 //! # use ipc_channel::multiplex;
 //! # fn main() -> Result<(), multiplex::MultiplexError> {
 //!    let channel = multiplex::Channel::new().unwrap();
-//! 
+//!
 //!    let (tx, rx) = channel.sub_channel();
 //!    tx.send(1729).unwrap();
 //!    assert_eq!(rx.recv().unwrap(), 1729);
-//! 
+//!
 //!    let (tx2, rx2) = channel.sub_channel();
 //!    let taxi = "taxi".to_string();
 //!    tx2.send(taxi.clone()).unwrap();
@@ -74,7 +74,7 @@
 //! #  Ok(())
 //! # }
 //! ```
-//! 
+//!
 //! Inter-process bootstrapping:
 //! ```
 //! # use ipc_channel::multiplex;
@@ -87,14 +87,14 @@
 //!        tx.send(1729).unwrap();
 //!        tx.send(1730).unwrap();
 //!    });
-//! 
-//!    let (rx, val) = server.accept().unwrap(); 
+//!
+//!    let (rx, val) = server.accept().unwrap();
 //!    assert_eq!(val, 1729);
 //!    assert_eq!(rx.recv().unwrap(), 1730);
 //! #  Ok(())
 //! # }
 //! ```
-//! 
+//!
 //! Subchannel sender transmission:
 //! ```
 //! # use ipc_channel::multiplex;
@@ -104,14 +104,14 @@
 //!
 //!    let (sender, receiver) = channel.sub_channel();
 //!    sender.send(tx).unwrap();
-//! 
+//!
 //!    let received_tx = receiver.recv().unwrap();
 //!    received_tx.send(1729);
 //!    assert_eq!(rx.recv().unwrap(), 1729);
 //! #  Ok(())
 //! # }
 //! ```
-//! 
+//!
 //! Subchannel sender transmission failure:
 //! ```
 //! # use ipc_channel::multiplex;
@@ -501,6 +501,7 @@ impl<'a> MultiSender {
     fn new<T>(self: Rc<MultiSender>) -> SubChannelSender<T> {
         let scid = SubChannelId::new();
         let sender_clone = self.ipc_sender.clone();
+        let multi_sender_clone = self.clone();
         SubChannelSender {
             sub_channel_id: scid,
             ipc_sender: self.ipc_sender.clone(),
@@ -509,6 +510,7 @@ impl<'a> MultiSender {
                     sub_channel_id: scid,
                     ipc_sender: sender_clone.clone(),
                     source: *ORIGIN,
+                    multi_sender: multi_sender_clone.clone(),
                 };
                 d.dropped();
             }))),
@@ -659,6 +661,20 @@ impl MultiReceiver {
                 },
             }
         }?;
+        Self::handle(Rc::clone(&mr), msg)
+    }
+
+    #[instrument(level = "debug", err(level = "debug"))]
+    fn try_receive(mr: &Rc<RefCell<MultiReceiver>>) -> Result<(), MultiplexError> {
+        let msg = match mr.borrow().ipc_receiver.try_recv() {
+                Ok(msg) => Ok(msg),
+                Err(crate::ipc::TryRecvError::Empty) => {
+                    return Ok(());
+                },
+                Err(crate::ipc::TryRecvError::IpcError(e)) => {
+                    Err(MultiplexError::IpcError(e))
+                },
+            }?;
         Self::handle(Rc::clone(&mr), msg)
     }
 
@@ -844,14 +860,17 @@ struct SubChannelDisconnector {
     sub_channel_id: SubChannelId,
     ipc_sender: Rc<IpcSender<MultiMessage>>,
     source: Uuid,
+    multi_sender: Rc<MultiSender>,
 }
 
 impl SubChannelDisconnector {
     fn dropped(&self) {
-        // Ignore any error sending disconnect message as it is not needed if the other end has hung up.
-        let _ = self
-            .ipc_sender
-            .send(MultiMessage::Disconnect(self.sub_channel_id, self.source));
+        if self.multi_sender.is_receiver_connected(self.sub_channel_id) {
+            // Ignore any error sending disconnect message as it is not needed if the other end has hung up.
+            let _ = self
+                .ipc_sender
+                .send(MultiMessage::Disconnect(self.sub_channel_id, self.source));
+        }
     }
 }
 
@@ -1031,6 +1050,7 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
             .unwrap();
 
         let ipc_sender_clone = multi_sender.ipc_sender.clone();
+        let multi_sender_clone = multi_sender.clone();
 
         let disc = CURRENT_MULTI_RECEIVER.with(|maybe_mr| {
             let maybe_mr = maybe_mr.borrow();
@@ -1048,6 +1068,7 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
                             sub_channel_id: scsi.sub_channel_id,
                             ipc_sender: ipc_sender_clone.clone(),
                             source: new_source,
+                            multi_sender: multi_sender_clone.clone(),
                         };
                         d.dropped();
                     })));
@@ -1140,6 +1161,9 @@ where
     T: for<'de> Deserialize<'de> + Serialize,
 {
     fn drop(&mut self) {
+        // Clear any messages in MultiReceiver (which could cause sending to block).
+        let _ = MultiReceiver::try_receive(&self.multi_receiver);
+
         // Broadcast disconnection to all SubChannelSenders
         for (client_id, sender) in self
             .multi_receiver
