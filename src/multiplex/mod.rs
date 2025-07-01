@@ -146,7 +146,6 @@ use std::io::{self, Cursor, Read};
 use std::marker::PhantomData;
 use std::rc::{Rc, Weak};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::LazyLock;
 use std::time::Duration;
 use subchannel_lifecycle::SubSenderTracker;
 use tracing::instrument;
@@ -156,8 +155,8 @@ use weak_table::WeakValueHashMap;
 mod channel_identification;
 mod subchannel_lifecycle;
 
-static EMPTY_SUBCHANNEL_ID: LazyLock<SubChannelId> = LazyLock::new(|| SubChannelId(Uuid::new_v4()));
-static ORIGIN: LazyLock<Uuid> = LazyLock::new(|| Uuid::new_v4());
+const EMPTY_SUBCHANNEL_ID: SubChannelId = SubChannelId(uuid::uuid!("11111111-10b1-428f-9447-cb680e5fe0c8"));
+const ORIGIN: Uuid = uuid::uuid!("00000000-10b1-428f-9447-cb680e5fe0c8");
 
 /// Channel wraps an IPC channel and is used to construct subchannels.
 pub struct Channel {
@@ -509,7 +508,7 @@ impl<'a> MultiSender {
                 let d = SubChannelDisconnector {
                     sub_channel_id: scid,
                     ipc_sender: sender_clone.clone(),
-                    source: *ORIGIN,
+                    source: ORIGIN,
                     multi_sender: multi_sender_clone.clone(),
                 };
                 d.dropped();
@@ -615,7 +614,7 @@ impl std::fmt::Debug for MultiReceiverMutator {
 
 thread_local! {
     static IPC_SENDERS_RECEIVED: RefCell<VecDeque<Rc<MultiSender>>> = RefCell::new(VecDeque::new());
-    static FROM_VIA: RefCell<(Uuid, SubChannelId)> = RefCell::new((*ORIGIN, *EMPTY_SUBCHANNEL_ID));
+    static FROM_VIA: RefCell<(Uuid, SubChannelId)> = RefCell::new((ORIGIN, EMPTY_SUBCHANNEL_ID));
 }
 
 impl subchannel_lifecycle::Sender<Vec<u8>, mpsc::SendError<Vec<u8>>> for Sender<Vec<u8>> {
@@ -633,7 +632,7 @@ impl MultiReceiver {
         let (tx, rx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = mpsc::channel();
         mr.borrow().mutator.borrow_mut().sub_channels.insert(
             sub_channel_id,
-            subchannel_lifecycle::SubSenderStateMachine::new(tx, *ORIGIN),
+            subchannel_lifecycle::SubSenderStateMachine::new(tx, ORIGIN),
         );
         SubChannelReceiver {
             multi_receiver: Rc::clone(mr),
@@ -930,7 +929,7 @@ where
                 |(subchannel_id, ipc_sender, sender_id)| {
                     let _ = ipc_sender.send(MultiMessage::Sending {
                         scid: subchannel_id.clone(),
-                        from: *ORIGIN, // TODO: do we need to send the actual sender source?
+                        from: ORIGIN, // TODO: do we need to send the actual sender source?
                         via: self.sub_channel_id,
                         via_chan: Self::ipc_sender_and_or_uuid(
                             sender_id.clone(),
@@ -962,7 +961,7 @@ where
                 .collect();
             let result =
                 self.ipc_sender
-                    .send(MultiMessage::Data(self.sub_channel_id, data, srs, *ORIGIN));
+                    .send(MultiMessage::Data(self.sub_channel_id, data, srs, ORIGIN));
             log::debug!("<SubChannelSender::send -> {:#?}", result.as_ref());
             result.map_err(From::from)
         })
@@ -1003,7 +1002,7 @@ where
     fn disconnect(&self) -> Result<(), MultiplexError> {
         Ok(self
             .ipc_sender
-            .send(MultiMessage::Disconnect(self.sub_channel_id, *ORIGIN))?)
+            .send(MultiMessage::Disconnect(self.sub_channel_id, ORIGIN))?)
     }
 }
 
