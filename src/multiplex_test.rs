@@ -191,6 +191,30 @@ fn embedded_multiplexed_senders() {
 }
 
 #[test]
+fn embedded_multiplexed_sender_lifecycle() {
+    let channel = multiplex::Channel::new().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel();
+
+    let super_channel = multiplex::Channel::new().unwrap();
+    let (super_tx, super_rx) = super_channel.sub_channel();
+    
+    super_tx.send(sub_tx.clone()).unwrap();
+    let received_sub_tx: SubSender<i32> = super_rx.recv().unwrap();
+
+    received_sub_tx.send(1).unwrap();
+    assert_eq!(sub_rx.recv().unwrap(), 1);
+
+    drop(received_sub_tx);
+
+    // Send the subsender again to see if the association still exists on the receiving side.
+    super_tx.send(sub_tx).unwrap();
+    let received_sub_tx: SubSender<i32> = super_rx.recv().unwrap();
+
+    received_sub_tx.send(2).unwrap();
+    assert_eq!(sub_rx.recv().unwrap(), 2);
+}
+
+#[test]
 fn embedded_multiplexed_two_senders() {
     let person = ("Patrick Walton".to_owned(), 29);
 
