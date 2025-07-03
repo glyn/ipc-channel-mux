@@ -37,11 +37,12 @@
 // analogous code.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::Deref;
 use uuid::Uuid;
-use weak_table::{PtrWeakHashSet, WeakValueHashMap};
 use weak_table::traits::WeakElement;
+use weak_table::PtrWeakHashSet;
 
 /// Source is where endpoints are transmitted from. It tracks endpoints,
 /// as they are sent, in a weak hashtable. Thus the hashtable does not
@@ -78,25 +79,20 @@ where
 }
 
 /// Target is where endpoints from a Source are received. The associations
-/// between UUIDs and endpoints are stored in a weak hashtable. Thus the
-/// hashtable does not prevent the endpoint from being dropped. If an endpoint
-/// is dropped, the association to a UUID is removed.
-pub struct Target<T>
-where
-    T: WeakElement,
-{
-    end_points: RefCell<WeakValueHashMap<Uuid, T>>,
+/// between UUIDs and endpoints are stored in a regular hashtable, which prevent the
+/// endpoint from being dropped.
+pub struct Target<T> {
+    end_points: RefCell<HashMap<Uuid, T>>,
 }
 
 impl<T> Target<T>
 where
-    T: WeakElement,
-    <T as WeakElement>::Strong: Clone,
+    T: Clone + ?Sized,
 {
     /// new creates a new Target with an empty hashtable.
     pub fn new() -> Target<T> {
         Target {
-            end_points: RefCell::new(WeakValueHashMap::new()),
+            end_points: RefCell::new(HashMap::new()),
         }
     }
 
@@ -104,10 +100,10 @@ where
     /// associated with another endpoint, but this IS NOT CHECKED. As this
     /// would, with the intended usage of Source and Target here, amount to a
     /// UUID collision, the probability of this occurring is vanishingly small.
-    pub fn add(&mut self, id: Uuid, e: &<T as WeakElement>::Strong) {
+    pub fn add(&mut self, id: Uuid, e: &T) {
         let mut end_points = self.end_points.borrow_mut();
         if !end_points.contains_key(&id) {
-            end_points.insert(id, <T as WeakElement>::Strong::clone(&e));
+            end_points.insert(id, e.clone());
         }
     }
 
@@ -115,8 +111,8 @@ where
     /// If the UUID was found return Some(e) where e is the endpoint
     /// associated with the UUID. Otherwise, there is no endpoint
     /// associated with the UUID, so return None.
-    pub fn look_up(&self, id: Uuid) -> Option<<T as WeakElement>::Strong> {
-        self.end_points.borrow().get(&id)
+    pub fn look_up(&self, id: Uuid) -> Option<T> {
+        self.end_points.borrow().get(&id).map(|e| e.clone())
     }
 }
 
@@ -150,7 +146,7 @@ mod tests {
 
     #[test]
     fn test_target() {
-        type Table = Target<Weak<str>>;
+        type Table = Target<u32>;
 
         let mut map = Table::new();
 
@@ -160,51 +156,44 @@ mod tests {
         assert_eq!(map.look_up(u), None);
 
         // Associating an unassociated UUID with an endpoint should succeed.
-        let a = Rc::<str>::from("a");
-        map.add(u, &a);
+        map.add(u, &1);
 
         // Associating an associated UUID with the same endpoint should succeed.
-        map.add(u, &a);
+        map.add(u, &1);
 
         // look_up should find the endpoint associated with a UUID.
         let val = map.look_up(u);
-        assert_eq!(val, Some(a.clone()));
+        assert_eq!(val, Some(1));
 
         // Associating an associated UUID with a distinct endpoint DOES NOT FAIL.
-        let b = Rc::<str>::from("b");
-        map.add(u, &b);
+        map.add(u, &2);
 
         // Associating an unassociated UUID with an unassociated endpoint should succeed.
         let u2 = Uuid::new_v4();
-        map.add(u2, &b);
+        map.add(u2, &3);
 
         // Associating another UUID with an endpoint already associated with a
         // distinct UUID should succeed.
         let u3 = Uuid::new_v4();
-        map.add(u3, &a);
-
-        // Looking up a UUID associated with a dropped endpoint should fail.
-        drop(a);
-        drop(val); // another strong pointer to the endpoint
-        assert_eq!(map.look_up(u), None);
+        map.add(u3, &1);
     }
 
     // The following test demonstrates the intended use of Source and Target.
     #[test]
     fn test_source_with_target() {
-        type SourceTable = Source<Weak<str>>;
+        type SourceTable = Source<Weak<u32>>;
         let mut source_map = SourceTable::new();
 
         // The first time a given endpoint is sent from source to target, it is
         // sent along with a UUID newly associated with the endpoint by the
         // source. This association is recorded by the target.
 
-        let a = Rc::<str>::from("a");
+        let a = Rc::<u32>::from(1);
         let id = Uuid::new_v4();
         let already_sent = source_map.insert(Rc::clone(&a));
         assert!(!already_sent);
 
-        type TargetTable = Target<Weak<str>>;
+        type TargetTable = Target<Rc<u32>>;
         let mut target_map = TargetTable::new();
 
         target_map.add(id, &a);

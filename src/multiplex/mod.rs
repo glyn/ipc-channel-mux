@@ -600,7 +600,7 @@ struct MultiReceiverMutator {
         >,
     >,
     disconnectors: WeakValueHashMap<SubChannelId, Weak<SubSenderTracker<dyn Fn()>>>,
-    ipc_senders_by_id: Target<Weak<MultiSender>>,
+    ipc_senders_by_id: Target<Rc<MultiSender>>,
 }
 
 impl std::fmt::Debug for MultiReceiverMutator {
