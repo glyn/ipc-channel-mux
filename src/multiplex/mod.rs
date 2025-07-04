@@ -155,7 +155,8 @@ use weak_table::WeakValueHashMap;
 mod channel_identification;
 mod subchannel_lifecycle;
 
-const EMPTY_SUBCHANNEL_ID: SubChannelId = SubChannelId(uuid::uuid!("11111111-10b1-428f-9447-cb680e5fe0c8"));
+const EMPTY_SUBCHANNEL_ID: SubChannelId =
+    SubChannelId(uuid::uuid!("11111111-10b1-428f-9447-cb680e5fe0c8"));
 const ORIGIN: Uuid = uuid::uuid!("00000000-10b1-428f-9447-cb680e5fe0c8");
 
 /// Channel wraps an IPC channel and is used to construct subchannels.
@@ -591,9 +592,9 @@ struct MultiReceiverMutator {
     sub_channels: HashMap<
         SubChannelId,
         subchannel_lifecycle::SubSenderStateMachine<
-            mpsc::Sender<Vec<u8>>,
-            Vec<u8>,
-            mpsc::SendError<Vec<u8>>,
+            mpsc::Sender<(Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId)>,
+            (Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId),
+            mpsc::SendError<(Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId)>,
             Uuid,
             SubChannelId,
             dyn Fn() -> bool,
@@ -614,11 +615,46 @@ impl std::fmt::Debug for MultiReceiverMutator {
 
 thread_local! {
     static IPC_SENDERS_RECEIVED: RefCell<VecDeque<Rc<MultiSender>>> = RefCell::new(VecDeque::new());
+    static CURRENT_MULTI_RECEIVER: RefCell<Option<Rc<RefCell<MultiReceiver>>>> = RefCell::new(None);
     static FROM_VIA: RefCell<(Uuid, SubChannelId)> = RefCell::new((ORIGIN, EMPTY_SUBCHANNEL_ID));
 }
 
-impl subchannel_lifecycle::Sender<Vec<u8>, mpsc::SendError<Vec<u8>>> for Sender<Vec<u8>> {
-    fn send(&self, msg: Vec<u8>) -> Result<(), mpsc::SendError<Vec<u8>>> {
+fn establish_deserialization_context(
+    mr: &Rc<RefCell<MultiReceiver>>,
+    mut multi_senders: VecDeque<Rc<MultiSender>>,
+    from: Uuid,
+    via: SubChannelId,
+) {
+    IPC_SENDERS_RECEIVED.with(|senders| {
+        senders.borrow_mut().clear();
+        senders.borrow_mut().append(&mut multi_senders);
+    });
+    CURRENT_MULTI_RECEIVER.with(|multi_receiver| {
+        multi_receiver.borrow_mut().replace(Rc::clone(mr));
+    });
+    FROM_VIA.with(|from_via| from_via.replace((from, via)));
+}
+
+fn clear_deserialization_context() {
+    FROM_VIA.with(|from_via| from_via.replace((ORIGIN, EMPTY_SUBCHANNEL_ID)));
+    CURRENT_MULTI_RECEIVER.with(|multi_receiver| {
+        multi_receiver.borrow_mut().take();
+    });
+    IPC_SENDERS_RECEIVED.with(|senders| {
+        senders.borrow_mut().clear();
+    });
+}
+
+impl
+    subchannel_lifecycle::Sender<
+        (Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId),
+        mpsc::SendError<(Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId)>,
+    > for Sender<(Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId)>
+{
+    fn send(
+        &self,
+        msg: (Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId),
+    ) -> Result<(), mpsc::SendError<(Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId)>> {
         self.send(msg)
     }
 }
@@ -629,7 +665,10 @@ impl MultiReceiver {
         mr: &Rc<RefCell<MultiReceiver>>,
         sub_channel_id: SubChannelId,
     ) -> SubChannelReceiver<T> {
-        let (tx, rx): (Sender<Vec<u8>>, Receiver<Vec<u8>>) = mpsc::channel();
+        let (tx, rx): (
+            Sender<(Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId)>,
+            Receiver<(Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId)>,
+        ) = mpsc::channel();
         mr.borrow().mutator.borrow_mut().sub_channels.insert(
             sub_channel_id,
             subchannel_lifecycle::SubSenderStateMachine::new(tx, ORIGIN),
@@ -666,14 +705,12 @@ impl MultiReceiver {
     #[instrument(level = "debug", err(level = "debug"))]
     fn try_receive(mr: &Rc<RefCell<MultiReceiver>>) -> Result<(), MultiplexError> {
         let msg = match mr.borrow().ipc_receiver.try_recv() {
-                Ok(msg) => Ok(msg),
-                Err(crate::ipc::TryRecvError::Empty) => {
-                    return Ok(());
-                },
-                Err(crate::ipc::TryRecvError::IpcError(e)) => {
-                    Err(MultiplexError::IpcError(e))
-                },
-            }?;
+            Ok(msg) => Ok(msg),
+            Err(crate::ipc::TryRecvError::Empty) => {
+                return Ok(());
+            },
+            Err(crate::ipc::TryRecvError::IpcError(e)) => Err(MultiplexError::IpcError(e)),
+        }?;
         Self::handle(Rc::clone(&mr), msg)
     }
 
@@ -703,19 +740,10 @@ impl MultiReceiver {
                 Ok(())
             },
             MultiMessage::Data(scid, data, ipc_senders, from) => {
-                IPC_SENDERS_RECEIVED.with(|senders| {
-                    let mut srs: VecDeque<Rc<MultiSender>> = ipc_senders
-                        .iter()
-                        .map(|s| Self::ipcsender_from_sender_and_or_id(&mr, s))
-                        .collect();
-                    senders.borrow_mut().clear();
-                    senders.borrow_mut().append(&mut srs);
-                    Ok::<(), MultiplexError>(())
-                })?;
-                CURRENT_MULTI_RECEIVER.with(|multi_receiver| {
-                    multi_receiver.borrow_mut().replace(Rc::clone(&mr));
-                });
-                FROM_VIA.with(|from_via| from_via.replace((from, scid)));
+                let srs: VecDeque<Rc<MultiSender>> = ipc_senders
+                    .iter()
+                    .map(|s| Self::ipcsender_from_sender_and_or_id(&mr, s))
+                    .collect();
                 let result = mr
                     .borrow()
                     .mutator
@@ -726,17 +754,7 @@ impl MultiReceiver {
                         "invalid subchannel id {}",
                         scid
                     )))?
-                    .send(data);
-
-                // FIXME: where to clear IPC_SENDERS_RECEIVED. If the following is uncommented, tests fail.
-                // IPC_SENDERS_RECEIVED.with(|senders| {
-                //     senders.borrow_mut().clear();
-                // });
-
-                // FIXME: where to clear CURRENT_MULTI_RECEIVER. If the following is uncommented, tests fail.
-                // CURRENT_MULTI_RECEIVER.with(|multi_receiver| {
-                //     multi_receiver.borrow_mut().take();
-                // });
+                    .send((data, srs, from, scid));
 
                 if let Some(Ok(())) = result {
                     Ok(())
@@ -1151,7 +1169,7 @@ where
     multi_receiver: Rc<RefCell<MultiReceiver>>,
     sub_channel_id: SubChannelId,
     ipc_receiver_uuid: Uuid,
-    channel: Receiver<Vec<u8>>,
+    channel: Receiver<(Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId)>,
     phantom: PhantomData<T>,
 }
 
@@ -1188,12 +1206,19 @@ where
         // in the subchannel are received then dropped.
         loop {
             match self.channel.try_recv() {
-                Ok(payload) => {
+                Ok((payload, multi_senders, from, via)) => {
                     log::trace!("SubChannelReceiver::drop draining = {:#?}", payload);
+
+                    establish_deserialization_context(
+                        &self.multi_receiver,
+                        multi_senders,
+                        from,
+                        via,
+                    );
+
                     let _ = bincode::deserialize::<T>(payload.as_slice());
-                    IPC_SENDERS_RECEIVED.with(|senders| {
-                        senders.borrow_mut().clear();
-                    });
+
+                    clear_deserialization_context();
                 },
                 Err(_) => {
                     break;
@@ -1223,13 +1248,20 @@ where
     fn recv(&self) -> Result<T, MultiplexError> {
         loop {
             match self.channel.try_recv() {
-                Ok(payload) => {
+                Ok((payload, multi_senders, from, via)) => {
                     log::trace!("SubChannelReceiver::recv received = {:#?}", payload);
-                    let result = bincode::deserialize(payload.as_slice());
-                    IPC_SENDERS_RECEIVED.with(|senders| {
-                        senders.borrow_mut().clear();
-                        Ok::<(), MultiplexError>(())
-                    })?;
+
+                    establish_deserialization_context(
+                        &self.multi_receiver,
+                        multi_senders,
+                        from,
+                        via,
+                    );
+
+                    let result = bincode::deserialize::<T>(payload.as_slice());
+
+                    clear_deserialization_context();
+
                     return result.map_err(From::from);
                 },
                 Err(mpsc::TryRecvError::Empty) => {
@@ -1247,10 +1279,6 @@ where
             }
         }
     }
-}
-
-thread_local! {
-    static CURRENT_MULTI_RECEIVER: RefCell<Option<Rc<RefCell<MultiReceiver>>>> = RefCell::new(None);
 }
 
 #[derive(Serialize, Deserialize, Debug)]
