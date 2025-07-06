@@ -925,15 +925,7 @@ where
         if !self.multi_sender.is_receiver_connected(self.sub_channel_id) {
             return Err(MultiplexError::Disconnected);
         }
-        IPC_SENDERS_TO_SEND.with(|senders| {
-            senders.borrow_mut().clear();
-            Ok::<(), MultiplexError>(())
-        })?;
-
-        SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| {
-            subchannel_senders.borrow_mut().clear();
-            Ok::<(), MultiplexError>(())
-        })?;
+        clear_serialization_context();
 
         let mut c = Cursor::new(Vec::<u8>::new());
         bincode::serialize_into(&mut c, &msg)?;
@@ -941,48 +933,39 @@ where
         let mut data = Vec::new();
         c.read_to_end(&mut data).unwrap();
 
+        let (serialized_subchannel_senders, ipc_senders_to_send) = take_serialization_context();
+
         // Notify transmission of any subchannel senders so that they are counted during transmission.
-        SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| {
-            subchannel_senders.borrow().iter().for_each(
-                |(subchannel_id, ipc_sender, sender_id)| {
-                    let _ = ipc_sender.send(MultiMessage::Sending {
-                        scid: subchannel_id.clone(),
-                        from: ORIGIN, // TODO: do we need to send the actual sender source?
-                        via: self.sub_channel_id,
-                        via_chan: Self::ipc_sender_and_or_uuid(
-                            sender_id.clone(),
-                            self.ipc_sender.clone(),
-                            self.ipc_sender_uuid.clone(),
-                        ),
-                    });
-                },
-            );
-            Ok::<(), MultiplexError>(())
-        })?;
+        serialized_subchannel_senders
+            .iter()
+            .for_each(|(subchannel_id, ipc_sender, sender_id)| {
+                let _ = ipc_sender.send(MultiMessage::Sending {
+                    scid: subchannel_id.clone(),
+                    from: ORIGIN, // TODO: do we need to send the actual sender source?
+                    via: self.sub_channel_id,
+                    via_chan: Self::ipc_sender_and_or_uuid(
+                        sender_id.clone(),
+                        self.ipc_sender.clone(),
+                        self.ipc_sender_uuid.clone(),
+                    ),
+                });
+            });
 
-        SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| {
-            subchannel_senders.borrow_mut().clear();
-            Ok::<(), MultiplexError>(())
-        })?;
-
-        IPC_SENDERS_TO_SEND.with(|ipc_senders| {
-            let srs = ipc_senders
-                .borrow()
-                .iter()
-                .map(|ipc_sender_and_uuid| {
-                    Self::ipc_sender_and_or_uuid(
-                        self.sender_id.clone(),
-                        ipc_sender_and_uuid.1.clone(),
-                        ipc_sender_and_uuid.0,
-                    )
-                })
-                .collect();
-            let result =
-                self.ipc_sender
-                    .send(MultiMessage::Data(self.sub_channel_id, data, srs, ORIGIN));
-            log::debug!("<SubChannelSender::send -> {:#?}", result.as_ref());
-            result.map_err(From::from)
-        })
+        let srs: Vec<IpcSenderAndOrId> = ipc_senders_to_send
+            .iter()
+            .map(|ipc_sender_and_uuid| {
+                Self::ipc_sender_and_or_uuid(
+                    self.sender_id.clone(),
+                    ipc_sender_and_uuid.1.clone(),
+                    ipc_sender_and_uuid.0,
+                )
+            })
+            .collect();
+        let result =
+            self.ipc_sender
+                .send(MultiMessage::Data(self.sub_channel_id, data, srs, ORIGIN));
+        log::debug!("<SubChannelSender::send -> {:#?}", result.as_ref());
+        result.map_err(From::from)
     }
 
     fn ipc_sender_and_or_uuid(
@@ -1117,10 +1100,37 @@ impl<'a, T> fmt::Debug for SubChannelSender<T> {
     }
 }
 
-// FIXME: ensure this is cleared after use
 thread_local! {
     static IPC_SENDERS_TO_SEND: RefCell<Vec<(Uuid, Rc<IpcSender<MultiMessage>>)>> = RefCell::new(vec!());
     static SERIALIZED_SUBCHANNEL_SENDERS: RefCell<Vec<(SubChannelId, Rc<IpcSender<MultiMessage>>, Rc<RefCell<Source<Weak<IpcSender<MultiMessage>>>>>)>> = RefCell::new(vec!());
+}
+
+
+fn clear_serialization_context() {
+    IPC_SENDERS_TO_SEND.with(|senders| {
+        senders.borrow_mut().clear();
+    });
+
+    SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| {
+        subchannel_senders.borrow_mut().clear();
+    });
+}
+
+fn take_serialization_context() -> (
+    Vec<(
+        SubChannelId,
+        Rc<IpcSender<MultiMessage>>,
+        Rc<RefCell<Source<Weak<IpcSender<MultiMessage>>>>>,
+    )>,
+    Vec<(Uuid, Rc<IpcSender<MultiMessage>>)>,
+) {
+    let serialized_subchannel_senders =
+        SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| subchannel_senders.take());
+        
+    let ipc_senders_to_send: Vec<(Uuid, Rc<IpcSender<MultiMessage>>)> = IPC_SENDERS_TO_SEND
+        .with(|ipc_senders: &RefCell<Vec<(Uuid, Rc<IpcSender<MultiMessage>>)>>| ipc_senders.take());
+
+    (serialized_subchannel_senders, ipc_senders_to_send)
 }
 
 impl<T> Serialize for SubChannelSender<T> {
