@@ -197,7 +197,7 @@ fn embedded_multiplexed_sender_lifecycle() {
 
     let super_channel = multiplex::Channel::new().unwrap();
     let (super_tx, super_rx) = super_channel.sub_channel();
-    
+
     super_tx.send(sub_tx.clone()).unwrap();
     let received_sub_tx: SubSender<i32> = super_rx.recv().unwrap();
 
@@ -581,4 +581,41 @@ fn compare_base_transmission_failure() {
         multiplex::MultiplexError::Disconnected => (),
         e => panic!("expected Disconnected, got {:?}", e),
     }
+}
+
+#[test]
+fn opaque_sender() {
+    let channel = multiplex::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel::<i32>();
+
+    let opaque_tx = tx.to_opaque();
+    let tx: SubSender<i32> = opaque_tx.to();
+
+    tx.send(1).unwrap();
+    assert_eq!(rx.recv().unwrap(), 1);
+}
+
+#[test]
+fn embedded_opaque_sender() {
+    let channel = multiplex::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel::<i32>();
+
+    let (via_tx, via_rx) = channel.sub_channel();
+    via_tx.send(tx.to_opaque()).unwrap();
+    let received_sender = via_rx.recv().unwrap();
+
+    received_sender.to::<i32>().send(1).unwrap();
+    assert_eq!(rx.recv().unwrap(), 1);
+}
+
+#[test]
+fn opaque_receiver() {
+    let channel = multiplex::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel::<i32>();
+
+    let opaque_rx = rx.to_opaque();
+    let rx: SubReceiver<i32> = opaque_rx.to();
+
+    tx.send(1).unwrap();
+    assert_eq!(rx.recv().unwrap(), 1);
 }

@@ -131,6 +131,22 @@
 //! #  Ok(())
 //! # }
 //! ```
+//!
+//! Opaque subchannel sender:
+//! ```
+//! # use ipc_channel::multiplex;
+//! # fn main() -> Result<(), multiplex::MultiplexError> {
+//! let channel = multiplex::Channel::new().unwrap();
+//! let (tx, rx) = channel.sub_channel::<i32>();
+//!
+//! let opaque_tx = tx.to_opaque();
+//! let tx: multiplex::SubSender<i32> = opaque_tx.to();
+//!
+//! tx.send(1).unwrap();
+//! assert_eq!(rx.recv().unwrap(), 1);
+//! #  Ok(())
+//! # }
+//! ```
 
 #![warn(missing_docs)]
 
@@ -211,7 +227,7 @@ pub struct SubSender<T>
 where
     T: Serialize,
 {
-    sub_channel_sender: SubChannelSender<T>,
+    sub_channel_sender: SubChannelSender,
     phantom: PhantomData<T>,
 }
 
@@ -241,7 +257,7 @@ where
     #[instrument(level = "debug", err(level = "debug"))]
     pub fn connect(name: String) -> Result<SubSender<T>, MultiplexError> {
         let multi_sender: Rc<MultiSender> = MultiSender::connect(name.to_string())?;
-        let sub_channel_sender: SubChannelSender<T> = MultiSender::new(Rc::clone(&multi_sender));
+        let sub_channel_sender: SubChannelSender = MultiSender::new(Rc::clone(&multi_sender));
         MultiSender::notify_sub_channel(multi_sender, sub_channel_sender.sub_channel_id(), name)?;
         Ok(SubSender {
             sub_channel_sender: sub_channel_sender,
@@ -267,8 +283,36 @@ where
         self.sub_channel_sender.send(data)
     }
 
-    // pub fn to_opaque(self) -> OpaqueIpcSender {
-    // }
+    /// Convert a SubSender to an OpaqueSubSender by erasing its message type.
+    pub fn to_opaque(self) -> OpaqueSubSender {
+        OpaqueSubSender {
+            sub_channel_sender: self.sub_channel_sender,
+        }
+    }
+}
+
+/// OpaqueSubSender is a SubSender with the message type erased. It can be
+/// passed around in a message type independent manner, but must be converted
+/// into a SubSender before it can be used to send messages.
+#[derive(Deserialize, Serialize)]
+pub struct OpaqueSubSender {
+    sub_channel_sender: SubChannelSender,
+}
+
+impl OpaqueSubSender {
+    /// Convert an OpaqueSubSender to a SubSender by restoring its message type.
+    /// If the message type and the original message type have incompatible
+    /// serial representations, deserialization may produce errors or unexpected
+    /// deserialized values.
+    pub fn to<'de, T>(self) -> SubSender<T>
+    where
+        T: Deserialize<'de> + Serialize,
+    {
+        SubSender {
+            sub_channel_sender: self.sub_channel_sender,
+            phantom: PhantomData,
+        }
+    }
 }
 
 /// SubReceiver is the receiving end of a subchannel, used to receive and deserialize messages of a given type.
@@ -277,7 +321,7 @@ pub struct SubReceiver<T>
 where
     T: for<'x> Deserialize<'x> + Serialize,
 {
-    sub_channel_receiver: SubChannelReceiver<T>,
+    sub_channel_receiver: SubChannelReceiver,
     phantom: PhantomData<T>,
 }
 
@@ -306,8 +350,37 @@ where
     // pub fn try_recv_timeout(&self, duration: Duration) -> Result<T, TryRecvError> {
     // }
 
-    // pub fn to_opaque(self) -> OpaqueIpcReceiver {
-    // }
+    /// Convert a SubReceiver to an OpaqueSubReceiver by erasing its message type.
+    ///
+    /// Useful for adding routes to a `RouterProxy`.
+    pub fn to_opaque(self) -> OpaqueSubReceiver {
+        OpaqueSubReceiver {
+            sub_channel_receiver: self.sub_channel_receiver,
+        }
+    }
+}
+
+/// OpaqueSubReceiver is a SubReceiver with the message type erased. It can be
+/// passed around in a message type independent manner, but must be converted
+/// into a SubReceiver before it can be used to receive messages.
+pub struct OpaqueSubReceiver {
+    sub_channel_receiver: SubChannelReceiver,
+}
+
+impl OpaqueSubReceiver {
+    /// Convert an OpaqueSubReceiver to a SubReceiver by restoring its message type.
+    /// If the message type and the original message type have incompatible
+    /// serial representations, deserialization may produce errors or unexpected
+    /// deserialized values.
+    pub fn to<'de, T>(self) -> SubReceiver<T>
+    where
+        T: for<'x> Deserialize<'x> + Serialize,
+    {
+        SubReceiver {
+            sub_channel_receiver: self.sub_channel_receiver,
+            phantom: PhantomData,
+        }
+    }
 }
 
 /// SubOneShotServer together with its generated name can be used to establish a subchannel
@@ -498,7 +571,7 @@ impl From<bincode::Error> for MultiplexError {
 
 impl<'a> MultiSender {
     #[instrument(level = "debug", ret)]
-    fn new<T>(self: Rc<MultiSender>) -> SubChannelSender<T> {
+    fn new(self: Rc<MultiSender>) -> SubChannelSender {
         let scid = SubChannelId::new();
         let sender_clone = self.ipc_sender.clone();
         let multi_sender_clone = self.clone();
@@ -517,7 +590,6 @@ impl<'a> MultiSender {
             ipc_sender_uuid: self.uuid,
             sender_id: Rc::clone(&self.sender_id),
             multi_sender: self,
-            phantom: PhantomData,
         }
     }
 
@@ -592,9 +664,24 @@ struct MultiReceiverMutator {
     sub_channels: HashMap<
         SubChannelId,
         subchannel_lifecycle::SubSenderStateMachine<
-            mpsc::Sender<(Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId)>,
-            (Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId),
-            mpsc::SendError<(Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId)>,
+            mpsc::Sender<(
+                Vec<u8>,
+                VecDeque<(SubChannelId, Rc<MultiSender>)>,
+                Uuid,
+                SubChannelId,
+            )>,
+            (
+                Vec<u8>,
+                VecDeque<(SubChannelId, Rc<MultiSender>)>,
+                Uuid,
+                SubChannelId,
+            ),
+            mpsc::SendError<(
+                Vec<u8>,
+                VecDeque<(SubChannelId, Rc<MultiSender>)>,
+                Uuid,
+                SubChannelId,
+            )>,
             Uuid,
             SubChannelId,
             dyn Fn() -> bool,
@@ -614,14 +701,14 @@ impl std::fmt::Debug for MultiReceiverMutator {
 }
 
 thread_local! {
-    static IPC_SENDERS_RECEIVED: RefCell<VecDeque<Rc<MultiSender>>> = RefCell::new(VecDeque::new());
+    static IPC_SENDERS_RECEIVED: RefCell<VecDeque<(SubChannelId, Rc<MultiSender>)>> = RefCell::new(VecDeque::new());
     static CURRENT_MULTI_RECEIVER: RefCell<Option<Rc<RefCell<MultiReceiver>>>> = RefCell::new(None);
     static FROM_VIA: RefCell<(Uuid, SubChannelId)> = RefCell::new((ORIGIN, EMPTY_SUBCHANNEL_ID));
 }
 
 fn establish_deserialization_context(
     mr: &Rc<RefCell<MultiReceiver>>,
-    mut multi_senders: VecDeque<Rc<MultiSender>>,
+    mut multi_senders: VecDeque<(SubChannelId, Rc<MultiSender>)>,
     from: Uuid,
     via: SubChannelId,
 ) {
@@ -647,27 +734,63 @@ fn clear_deserialization_context() {
 
 impl
     subchannel_lifecycle::Sender<
-        (Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId),
-        mpsc::SendError<(Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId)>,
-    > for Sender<(Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId)>
+        (
+            Vec<u8>,
+            VecDeque<(SubChannelId, Rc<MultiSender>)>,
+            Uuid,
+            SubChannelId,
+        ),
+        mpsc::SendError<(
+            Vec<u8>,
+            VecDeque<(SubChannelId, Rc<MultiSender>)>,
+            Uuid,
+            SubChannelId,
+        )>,
+    >
+    for Sender<(
+        Vec<u8>,
+        VecDeque<(SubChannelId, Rc<MultiSender>)>,
+        Uuid,
+        SubChannelId,
+    )>
 {
     fn send(
         &self,
-        msg: (Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId),
-    ) -> Result<(), mpsc::SendError<(Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId)>> {
+        msg: (
+            Vec<u8>,
+            VecDeque<(SubChannelId, Rc<MultiSender>)>,
+            Uuid,
+            SubChannelId,
+        ),
+    ) -> Result<
+        (),
+        mpsc::SendError<(
+            Vec<u8>,
+            VecDeque<(SubChannelId, Rc<MultiSender>)>,
+            Uuid,
+            SubChannelId,
+        )>,
+    > {
         self.send(msg)
     }
 }
 
 impl MultiReceiver {
     #[instrument(level = "debug", ret)]
-    fn attach<T: for<'de> Deserialize<'de> + Serialize>(
-        mr: &Rc<RefCell<MultiReceiver>>,
-        sub_channel_id: SubChannelId,
-    ) -> SubChannelReceiver<T> {
+    fn attach(mr: &Rc<RefCell<MultiReceiver>>, sub_channel_id: SubChannelId) -> SubChannelReceiver {
         let (tx, rx): (
-            Sender<(Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId)>,
-            Receiver<(Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId)>,
+            Sender<(
+                Vec<u8>,
+                VecDeque<(SubChannelId, Rc<MultiSender>)>,
+                Uuid,
+                SubChannelId,
+            )>,
+            Receiver<(
+                Vec<u8>,
+                VecDeque<(SubChannelId, Rc<MultiSender>)>,
+                Uuid,
+                SubChannelId,
+            )>,
         ) = mpsc::channel();
         mr.borrow().mutator.borrow_mut().sub_channels.insert(
             sub_channel_id,
@@ -678,7 +801,6 @@ impl MultiReceiver {
             sub_channel_id: sub_channel_id,
             ipc_receiver_uuid: mr.borrow().ipc_receiver_uuid,
             channel: rx,
-            phantom: PhantomData,
         }
     }
 
@@ -740,9 +862,9 @@ impl MultiReceiver {
                 Ok(())
             },
             MultiMessage::Data(scid, data, ipc_senders, from) => {
-                let srs: VecDeque<Rc<MultiSender>> = ipc_senders
+                let srs: VecDeque<(SubChannelId, Rc<MultiSender>)> = ipc_senders
                     .iter()
-                    .map(|s| Self::ipcsender_from_sender_and_or_id(&mr, s))
+                    .map(|(scid, s)| (scid.clone(), Self::ipcsender_from_sender_and_or_id(&mr, s)))
                     .collect();
                 let result = mr
                     .borrow()
@@ -787,6 +909,21 @@ impl MultiReceiver {
                     );
                 }
 
+                Ok(())
+            },
+            MultiMessage::ReceiveFailed { scid, from, via } => {
+                // TODO: combine the following into a state machine call which does not involve pretend_new_source.
+                let pretend_new_source = Uuid::new_v4();
+                MultiReceiver::handle(
+                    Rc::clone(&mr),
+                    MultiMessage::Received {
+                        scid,
+                        from,
+                        via,
+                        new_source: pretend_new_source,
+                    },
+                )?;
+                MultiReceiver::handle(mr, MultiMessage::Disconnect(scid, pretend_new_source))?;
                 Ok(())
             },
             MultiMessage::Received {
@@ -891,18 +1028,17 @@ impl SubChannelDisconnector {
     }
 }
 
-struct SubChannelSender<T> {
+struct SubChannelSender {
     sub_channel_id: SubChannelId,
     ipc_sender: Rc<IpcSender<MultiMessage>>,
     disconnector: Rc<subchannel_lifecycle::SubSenderTracker<dyn Fn()>>,
     ipc_sender_uuid: Uuid,
     sender_id: Rc<RefCell<Source<Weak<IpcSender<MultiMessage>>>>>,
     multi_sender: Rc<MultiSender>,
-    phantom: PhantomData<T>,
 }
 
-impl<T> Clone for SubChannelSender<T> {
-    fn clone(&self) -> SubChannelSender<T> {
+impl Clone for SubChannelSender {
+    fn clone(&self) -> SubChannelSender {
         SubChannelSender {
             sub_channel_id: self.sub_channel_id,
             ipc_sender: Rc::clone(&self.ipc_sender),
@@ -910,17 +1046,16 @@ impl<T> Clone for SubChannelSender<T> {
             ipc_sender_uuid: self.ipc_sender_uuid,
             sender_id: Rc::clone(&self.sender_id),
             multi_sender: Rc::clone(&self.multi_sender),
-            phantom: self.phantom,
         }
     }
 }
 
-impl<T> SubChannelSender<T>
-where
-    T: Serialize,
-{
+impl SubChannelSender {
     #[instrument(level = "debug", skip(msg), err(level = "debug"))]
-    fn send(&self, msg: T) -> Result<(), MultiplexError> {
+    fn send<T>(&self, msg: T) -> Result<(), MultiplexError>
+    where
+        T: Serialize,
+    {
         log::debug!(">SubChannelSender::send");
         if !self.multi_sender.is_receiver_connected(self.sub_channel_id) {
             return Err(MultiplexError::Disconnected);
@@ -951,13 +1086,16 @@ where
                 });
             });
 
-        let srs: Vec<IpcSenderAndOrId> = ipc_senders_to_send
+        let srs: Vec<(SubChannelId, IpcSenderAndOrId)> = ipc_senders_to_send
             .iter()
             .map(|ipc_sender_and_uuid| {
-                Self::ipc_sender_and_or_uuid(
-                    self.sender_id.clone(),
-                    ipc_sender_and_uuid.1.clone(),
-                    ipc_sender_and_uuid.0,
+                (
+                    ipc_sender_and_uuid.0.clone(),
+                    Self::ipc_sender_and_or_uuid(
+                        self.sender_id.clone(),
+                        ipc_sender_and_uuid.2.clone(),
+                        ipc_sender_and_uuid.1,
+                    ),
                 )
             })
             .collect();
@@ -1007,7 +1145,7 @@ where
     }
 }
 
-impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
+impl<'de> Deserialize<'de> for SubChannelSender {
     #[instrument(level = "trace", ret, skip(deserializer))]
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -1040,6 +1178,7 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
         let (from, via) = FROM_VIA.with(|from_via| from_via.borrow().clone());
 
         multi_sender
+            .1
             .ipc_sender
             .send(MultiMessage::Received {
                 scid: scsi.sub_channel_id,
@@ -1049,8 +1188,8 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
             })
             .unwrap();
 
-        let ipc_sender_clone = multi_sender.ipc_sender.clone();
-        let multi_sender_clone = multi_sender.clone();
+        let ipc_sender_clone = multi_sender.1.ipc_sender.clone();
+        let multi_sender_clone = multi_sender.1.clone();
 
         let disc = CURRENT_MULTI_RECEIVER.with(|maybe_mr| {
             let maybe_mr = maybe_mr.borrow();
@@ -1081,17 +1220,16 @@ impl<'de, T> Deserialize<'de> for SubChannelSender<T> {
 
         Ok(SubChannelSender {
             sub_channel_id: scsi.sub_channel_id,
-            ipc_sender: Rc::clone(&multi_sender.ipc_sender),
+            ipc_sender: Rc::clone(&multi_sender.1.ipc_sender),
             disconnector: disc,
-            ipc_sender_uuid: multi_sender.uuid,
+            ipc_sender_uuid: multi_sender.1.uuid,
             sender_id: Rc::new(RefCell::new(Source::new())),
-            multi_sender: multi_sender,
-            phantom: PhantomData,
+            multi_sender: multi_sender.1,
         })
     }
 }
 
-impl<'a, T> fmt::Debug for SubChannelSender<T> {
+impl<'a> fmt::Debug for SubChannelSender {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SubChannelSender")
             .field("sub_channel_id", &self.sub_channel_id)
@@ -1100,11 +1238,11 @@ impl<'a, T> fmt::Debug for SubChannelSender<T> {
     }
 }
 
+// TODO: rationalise the following to avoid duplication of data
 thread_local! {
-    static IPC_SENDERS_TO_SEND: RefCell<Vec<(Uuid, Rc<IpcSender<MultiMessage>>)>> = RefCell::new(vec!());
+    static IPC_SENDERS_TO_SEND: RefCell<Vec<(SubChannelId, Uuid, Rc<IpcSender<MultiMessage>>)>> = RefCell::new(vec!());
     static SERIALIZED_SUBCHANNEL_SENDERS: RefCell<Vec<(SubChannelId, Rc<IpcSender<MultiMessage>>, Rc<RefCell<Source<Weak<IpcSender<MultiMessage>>>>>)>> = RefCell::new(vec!());
 }
-
 
 fn clear_serialization_context() {
     IPC_SENDERS_TO_SEND.with(|senders| {
@@ -1118,22 +1256,26 @@ fn clear_serialization_context() {
 
 fn take_serialization_context() -> (
     Vec<(
-        SubChannelId,
-        Rc<IpcSender<MultiMessage>>,
-        Rc<RefCell<Source<Weak<IpcSender<MultiMessage>>>>>,
+        SubChannelId,                // SubChannelId of serialized SubChannelSender
+        Rc<IpcSender<MultiMessage>>, // IpcSender of the SubChannelSender
+        Rc<RefCell<Source<Weak<IpcSender<MultiMessage>>>>>, // sender_id the SubChannelSender
     )>,
-    Vec<(Uuid, Rc<IpcSender<MultiMessage>>)>,
+    Vec<(SubChannelId, Uuid, Rc<IpcSender<MultiMessage>>)>, // SubChannelId, IPC sender UUID, and IpcSender of serialized SubChannelSenders
 ) {
     let serialized_subchannel_senders =
         SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| subchannel_senders.take());
-        
-    let ipc_senders_to_send: Vec<(Uuid, Rc<IpcSender<MultiMessage>>)> = IPC_SENDERS_TO_SEND
-        .with(|ipc_senders: &RefCell<Vec<(Uuid, Rc<IpcSender<MultiMessage>>)>>| ipc_senders.take());
+
+    let ipc_senders_to_send: Vec<(SubChannelId, Uuid, Rc<IpcSender<MultiMessage>>)> =
+        IPC_SENDERS_TO_SEND.with(
+            |ipc_senders: &RefCell<Vec<(SubChannelId, Uuid, Rc<IpcSender<MultiMessage>>)>>| {
+                ipc_senders.take()
+            },
+        );
 
     (serialized_subchannel_senders, ipc_senders_to_send)
 }
 
-impl<T> Serialize for SubChannelSender<T> {
+impl Serialize for SubChannelSender {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -1144,9 +1286,11 @@ impl<T> Serialize for SubChannelSender<T> {
         );
 
         IPC_SENDERS_TO_SEND.with(|ipc_senders| {
-            ipc_senders
-                .borrow_mut()
-                .push((self.ipc_sender_uuid, self.ipc_sender.clone()))
+            ipc_senders.borrow_mut().push((
+                self.sub_channel_id,
+                self.ipc_sender_uuid,
+                self.ipc_sender.clone(),
+            ))
         });
 
         SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| {
@@ -1172,26 +1316,26 @@ struct SubChannelSenderIds {
     ipc_sender_uuid: String,
 }
 
-struct SubChannelReceiver<T>
-where
-    T: for<'de> Deserialize<'de> + Serialize,
-{
+struct SubChannelReceiver {
     multi_receiver: Rc<RefCell<MultiReceiver>>,
     sub_channel_id: SubChannelId,
     ipc_receiver_uuid: Uuid,
-    channel: Receiver<(Vec<u8>, VecDeque<Rc<MultiSender>>, Uuid, SubChannelId)>,
-    phantom: PhantomData<T>,
+    channel: Receiver<(
+        Vec<u8>,
+        VecDeque<(SubChannelId, Rc<MultiSender>)>,
+        Uuid,
+        SubChannelId,
+    )>,
 }
 
-impl<T> Drop for SubChannelReceiver<T>
-where
-    T: for<'de> Deserialize<'de> + Serialize,
-{
+impl Drop for SubChannelReceiver {
     fn drop(&mut self) {
         // Clear any messages in MultiReceiver (which could cause sending to block).
         let _ = MultiReceiver::try_receive(&self.multi_receiver);
 
-        // Broadcast disconnection to all SubChannelSenders
+        // Broadcast disconnection to all MultiSenders connected to the MultiReceiver for this SubChannelReceiver.
+        // Note: This may be overkill as not all MultiSenders will have a SubChannelSender corresponding to this
+        // SubChannelReceiver.
         for (client_id, sender) in self
             .multi_receiver
             .borrow()
@@ -1212,23 +1356,19 @@ where
         // Drain the multireceiver.
         MultiReceiver::drain(&self.multi_receiver);
 
-        // Drain the SubChannelReceiver. This ensures that any in-flight subsenders in messages
-        // in the subchannel are received then dropped.
+        // Drain the SubChannelReceiver and mark any subsenders as "receive failed". This is equivalent to receiving and then dropping
+        // the subsenders.
         loop {
             match self.channel.try_recv() {
-                Ok((payload, multi_senders, from, via)) => {
-                    log::trace!("SubChannelReceiver::drop draining = {:#?}", payload);
-
-                    establish_deserialization_context(
-                        &self.multi_receiver,
-                        multi_senders,
-                        from,
-                        via,
-                    );
-
-                    let _ = bincode::deserialize::<T>(payload.as_slice());
-
-                    clear_deserialization_context();
+                Ok((_, scids_and_multi_senders, from, via)) => {
+                    log::trace!("SubChannelReceiver::drop draining = {:#?}", scids_and_multi_senders);
+                    scids_and_multi_senders.iter().for_each(|(scid, ms)| {
+                        let _ = ms.ipc_sender.send(MultiMessage::ReceiveFailed {
+                            scid: scid.clone(),
+                            from,
+                            via,
+                        });
+                    });
                 },
                 Err(_) => {
                     break;
@@ -1238,10 +1378,7 @@ where
     }
 }
 
-impl<T> fmt::Debug for SubChannelReceiver<T>
-where
-    T: for<'de> Deserialize<'de> + Serialize,
-{
+impl fmt::Debug for SubChannelReceiver {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SubChannelReceiver")
             .field("sub_channel_id", &self.sub_channel_id)
@@ -1250,12 +1387,12 @@ where
     }
 }
 
-impl<T> SubChannelReceiver<T>
-where
-    T: for<'de> Deserialize<'de> + Serialize,
-{
+impl SubChannelReceiver {
     #[instrument(level = "debug", err(level = "debug"))]
-    fn recv(&self) -> Result<T, MultiplexError> {
+    fn recv<T>(&self) -> Result<T, MultiplexError>
+    where
+        T: for<'de> Deserialize<'de> + Serialize,
+    {
         loop {
             match self.channel.try_recv() {
                 Ok((payload, multi_senders, from, via)) => {
@@ -1301,13 +1438,23 @@ struct SubChannelReceiverIds {
 #[derive(Serialize, Deserialize, Debug)]
 enum MultiMessage {
     Connect(IpcSender<MultiResponse>, ClientId),
-    Data(SubChannelId, Vec<u8>, Vec<IpcSenderAndOrId>, Uuid),
+    Data(
+        SubChannelId,
+        Vec<u8>,
+        Vec<(SubChannelId, IpcSenderAndOrId)>,
+        Uuid,
+    ),
     SubChannelId(SubChannelId, String),
     Sending {
         scid: SubChannelId,
         from: Uuid,
         via: SubChannelId,
         via_chan: IpcSenderAndOrId,
+    },
+    ReceiveFailed {
+        scid: SubChannelId,
+        from: Uuid,
+        via: SubChannelId,
     },
     Received {
         scid: SubChannelId,
