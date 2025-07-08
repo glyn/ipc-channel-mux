@@ -150,6 +150,7 @@ use weak_table::WeakValueHashMap;
 
 mod channel_identification;
 mod subchannel_lifecycle;
+pub mod subchannel_router;
 
 const EMPTY_SUBCHANNEL_ID: SubChannelId =
     SubChannelId(uuid::uuid!("11111111-10b1-428f-9447-cb680e5fe0c8"));

@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::mux::{self, SubOneShotServer, SubReceiver, SubSelectionResult, SubSender};
+use crate::mux::{self, SubOneShotServer, SubReceiver, SubSelectionResult, SubSender, subchannel_router::ROUTER};
 use std::thread;
 use test_log::test;
 
@@ -497,6 +497,8 @@ fn opaque_receiver() {
     assert_eq!(rx.recv().unwrap(), 1);
 }
 
+type Person = (String, u32);
+
 #[test]
 // A homogeneous SubReceiverSet is one whose SubReceivers all have the same underlying IpcChannel.
 fn receiver_set_homogeneous() {
@@ -870,4 +872,48 @@ fn receiver_sets_with_subreceivers_sharing_ipc_channel() {
 
     assert!(recvd1, "i32 was not received");
     assert!(recvd2, "String was not received");
+}
+
+#[test]
+fn router_simple_global() {
+    // Note: All ROUTER operation need to run in a single test,
+    // since the state of the router will carry across tests.
+
+    let channel = mux::Channel::new().unwrap();
+    let message: usize = 42;
+    let (tx, rx) = channel.sub_channel();
+    tx.send(message.clone()).unwrap();
+
+    let (callback_fired_sender, callback_fired_receiver) = crossbeam_channel::unbounded::<usize>();
+    ROUTER.add_typed_route(
+        rx,
+        Box::new(move |message| {
+            callback_fired_sender.send(message.unwrap()).unwrap();
+        }),
+    );
+    let received_message = callback_fired_receiver.recv().unwrap();
+    assert_eq!(received_message, message);
+
+    // Now shut down the router.
+    ROUTER.shutdown();
+
+    // Use router after shutdown.
+    let person = ("Patrick Walton".to_owned(), 29);
+    let (tx, rx) = channel.sub_channel();
+    tx.send(person.clone()).unwrap();
+
+    let (callback_fired_sender, callback_fired_receiver) = crossbeam_channel::unbounded::<Person>();
+    ROUTER.add_typed_route(
+        rx,
+        Box::new(move |person| {
+            callback_fired_sender.send(person.unwrap()).unwrap();
+        }),
+    );
+
+    // The sender should have been dropped.
+    let received_person = callback_fired_receiver.recv();
+    assert!(received_person.is_err());
+
+    // Shutdown the router, again (should be a no-op).
+    ROUTER.shutdown();
 }
