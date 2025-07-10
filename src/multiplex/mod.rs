@@ -866,17 +866,28 @@ impl MultiReceiver {
                     .iter()
                     .map(|(scid, s)| (scid.clone(), Self::ipcsender_from_sender_and_or_id(&mr, s)))
                     .collect();
-                let result = mr
-                    .borrow()
-                    .mutator
-                    .borrow()
-                    .sub_channels
-                    .get(&scid)
-                    .ok_or(MultiplexError::InternalError(format!(
-                        "invalid subchannel id {}",
-                        scid
-                    )))?
-                    .send((data, srs, from, scid));
+                let srs_clone = srs.clone();
+                let result =
+                    mr.borrow()
+                        .mutator
+                        .borrow()
+                        .sub_channels
+                        .get(&scid)
+                        .ok_or_else(|| {
+                            // Send ReceiveFailed to members of srs
+                            // TODO: Need to test this path
+                            srs_clone.into_iter().for_each(|(recv_scid, recv_multi_sender)| {
+                                let _ = recv_multi_sender.ipc_sender.send(
+                                    MultiMessage::ReceiveFailed {
+                                        scid: recv_scid.clone(),
+                                        from,
+                                        via: scid.clone(),
+                                    },
+                                );
+                            });
+                            MultiplexError::InternalError(format!("invalid subchannel id {}", scid))
+                        })?
+                        .send((data, srs, from, scid));
 
                 if let Some(Ok(())) = result {
                     Ok(())
@@ -1361,7 +1372,10 @@ impl Drop for SubChannelReceiver {
         loop {
             match self.channel.try_recv() {
                 Ok((_, scids_and_multi_senders, from, via)) => {
-                    log::trace!("SubChannelReceiver::drop draining = {:#?}", scids_and_multi_senders);
+                    log::trace!(
+                        "SubChannelReceiver::drop draining = {:#?}",
+                        scids_and_multi_senders
+                    );
                     scids_and_multi_senders.iter().for_each(|(scid, ms)| {
                         let _ = ms.ipc_sender.send(MultiMessage::ReceiveFailed {
                             scid: scid.clone(),
