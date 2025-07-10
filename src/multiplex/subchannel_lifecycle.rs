@@ -131,6 +131,7 @@ where
     }
 
     #[instrument(level = "debug", skip(self))]
+    // Record the receipt of an inflight value.
     pub fn received(&self, from: Source, via: Via, received_at_source: Source) {
         self.in_flight.borrow_mut().remove(&(from, via));
         self.sources.borrow_mut().insert(received_at_source);
@@ -144,6 +145,15 @@ where
         let mut sources = self.sources.borrow_mut();
         sources.remove(&source);
         if sources.is_empty() && self.in_flight.borrow().is_empty() {
+            self.maybe.replace(None);
+        }
+    }
+
+    // Remove the given inflight value and disconnect it.
+    #[instrument(level = "debug", skip(self))]
+    pub fn receive_failed(&self, from: Source, via: Via) {
+        self.in_flight.borrow_mut().remove(&(from, via));
+        if self.sources.borrow().is_empty() && self.in_flight.borrow().is_empty() {
             self.maybe.replace(None);
         }
     }
@@ -463,5 +473,27 @@ mod tests {
 
         ssm.poll();
         assert_eq!(ssm.send('c'), None);
+    }
+
+    #[test]
+    fn sub_sender_state_machine_receive_failed() {
+        let sent = Rc::new(RefCell::new(vec![]));
+        let ssm: SubSenderStateMachine<
+            TestSender,
+            char,
+            TestError,
+            &'static str,
+            &'static str,
+            dyn Fn() -> bool,
+        > = SubSenderStateMachine::new(TestSender::new(&sent), "x");
+
+        ssm.to_be_sent("x", "scid", Box::new(|| true));
+
+        // Disconnecting the original source should have no effect.
+        ssm.disconnect("x");
+        assert_eq!(ssm.send('a'), Some(Ok(())));
+
+        ssm.receive_failed("x", "scid");
+        assert_eq!(ssm.send('a'), None);
     }
 }

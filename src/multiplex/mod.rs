@@ -867,16 +867,18 @@ impl MultiReceiver {
                     .map(|(scid, s)| (scid.clone(), Self::ipcsender_from_sender_and_or_id(&mr, s)))
                     .collect();
                 let srs_clone = srs.clone();
-                let result =
-                    mr.borrow()
-                        .mutator
-                        .borrow()
-                        .sub_channels
-                        .get(&scid)
-                        .ok_or_else(|| {
-                            // Send ReceiveFailed to members of srs
-                            // TODO: Need to test this path
-                            srs_clone.into_iter().for_each(|(recv_scid, recv_multi_sender)| {
+                let result = mr
+                    .borrow()
+                    .mutator
+                    .borrow()
+                    .sub_channels
+                    .get(&scid)
+                    .ok_or_else(|| {
+                        // Send ReceiveFailed to members of srs
+                        // TODO: Need to test this path
+                        srs_clone
+                            .into_iter()
+                            .for_each(|(recv_scid, recv_multi_sender)| {
                                 let _ = recv_multi_sender.ipc_sender.send(
                                     MultiMessage::ReceiveFailed {
                                         scid: recv_scid.clone(),
@@ -885,9 +887,9 @@ impl MultiReceiver {
                                     },
                                 );
                             });
-                            MultiplexError::InternalError(format!("invalid subchannel id {}", scid))
-                        })?
-                        .send((data, srs, from, scid));
+                        MultiplexError::InternalError(format!("invalid subchannel id {}", scid))
+                    })?
+                    .send((data, srs, from, scid));
 
                 if let Some(Ok(())) = result {
                     Ok(())
@@ -923,18 +925,10 @@ impl MultiReceiver {
                 Ok(())
             },
             MultiMessage::ReceiveFailed { scid, from, via } => {
-                // TODO: combine the following into a state machine call which does not involve pretend_new_source.
-                let pretend_new_source = Uuid::new_v4();
-                MultiReceiver::handle(
-                    Rc::clone(&mr),
-                    MultiMessage::Received {
-                        scid,
-                        from,
-                        via,
-                        new_source: pretend_new_source,
-                    },
-                )?;
-                MultiReceiver::handle(mr, MultiMessage::Disconnect(scid, pretend_new_source))?;
+                if let Some(sm) = mr.borrow().mutator.borrow_mut().sub_channels.get(&scid) {
+                    sm.receive_failed(from, via);
+                }
+                
                 Ok(())
             },
             MultiMessage::Received {
