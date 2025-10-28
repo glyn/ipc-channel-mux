@@ -45,7 +45,7 @@ hashbag = "0.1.12"
 lazy_static = "1"
 libc = "0.2.162"
 log = "0.4.26"
-serde_core = "1.0"
+serde = { version = "1.0", features = ["derive", "rc"] }
 tracing = { version = "0.1.41", features = ["log"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 weak-table = "0.3.2"
@@ -58,7 +58,6 @@ tempfile = "3.4"
 rand = "0.9"
 
 [dev-dependencies]
-serde = { version = "1.0", features = ["derive", "rc"] }
 crossbeam-utils = "0.8"
 futures-test = "0.3"
 static_assertions = "1.1.0"
