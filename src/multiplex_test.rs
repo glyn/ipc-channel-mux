@@ -7,120 +7,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
-//use ipc_channel::ipc::IpcReceiver;
-//use ipc_channel::ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
 use crate::multiplex::{self, SubOneShotServer, SubReceiver, SubSender};
-//use crossbeam_channel::{self, Sender};
-// #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
-// use std::env;
-//use std::iter;
-// #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios",)))]
-// use std::process::{self, Command, Stdio};
-// #[cfg(not(any(
-//     feature = "force-inprocess",
-//     target_os = "android",
-//     target_os = "ios",
-//     target_os = "windows",
-// )))]
-// use std::ptr;
-//use std::rc::Rc;
 use std::thread;
 use test_log::test;
-
-// #[cfg(not(any(
-//     feature = "force-inprocess",
-//     target_os = "android",
-//     target_os = "ios",
-//     target_os = "windows"
-// )))]
-// use ipc_channel::ipc::IpcOneShotServer;
-
-// #[cfg(not(any(
-//     feature = "force-inprocess",
-//     target_os = "android",
-//     target_os = "ios",
-//     target_os = "windows",
-// )))]
-// use std::io::Error;
-//use std::time::{Duration, Instant};
-
-/*
-#[cfg(not(any(
-    feature = "force-inprocess",
-    target_os = "windows",
-    target_os = "android",
-    target_os = "ios"
-)))]
-// I'm not actually sure invoking this is indeed unsafe -- but better safe than sorry...
-pub unsafe fn fork<F: FnOnce()>(child_func: F) -> libc::pid_t {
-    match libc::fork() {
-        -1 => panic!("Fork failed: {}", Error::last_os_error()),
-        0 => {
-            child_func();
-            libc::exit(0);
-        },
-        pid => pid,
-    }
-}
-
-#[cfg(not(any(
-    feature = "force-inprocess",
-    target_os = "windows",
-    target_os = "android",
-    target_os = "ios"
-)))]
-pub trait Wait {
-    fn wait(self);
-}
-
-#[cfg(not(any(
-    feature = "force-inprocess",
-    target_os = "windows",
-    target_os = "android",
-    target_os = "ios"
-)))]
-impl Wait for libc::pid_t {
-    fn wait(self) {
-        unsafe {
-            libc::waitpid(self, ptr::null_mut(), 0);
-        }
-    }
-}
-
-// Helper to get a channel_name argument passed in; used for the
-// cross-process spawn server tests.
-#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
-pub fn get_channel_name_arg(which: &str) -> Option<String> {
-    for arg in env::args() {
-        let arg_str = &*format!("channel_name-{}:", which);
-        if let Some(arg) = arg.strip_prefix(arg_str) {
-            return Some(arg.to_owned());
-        }
-    }
-    None
-}
-
-// Helper to get a channel_name argument passed in; used for the
-// cross-process spawn server tests.
-#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios",)))]
-pub fn spawn_server(test_name: &str, server_args: &[(&str, &str)]) -> process::Child {
-    Command::new(env::current_exe().unwrap())
-        .arg(test_name)
-        .args(
-            server_args
-                .iter()
-                .map(|(name, val)| format!("channel_name-{}:{}", name, val)),
-        )
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("failed to execute server process")
-}
-*/
-
-// type Person = (String, u32);
 
 #[test]
 fn multiplex_simple() {
@@ -306,12 +195,6 @@ fn embedded_multiplexed_senders_with_middleman() {
     assert!(sub_rx.recv().is_err());
 }
 
-#[cfg(not(any(
-    feature = "force-inprocess",
-    target_os = "windows",
-    target_os = "android",
-    target_os = "ios"
-)))]
 // This test demonstrates the basic purpose of multiplexing. If IpcChannels were
 // used, then this test would fail on Unix variants since the spawned process
 // would run out of file descriptors. Using multiplexed channels, the spawned
@@ -356,12 +239,6 @@ fn receiving_many_subchannels() {
     }
 }
 
-#[cfg(not(any(
-    feature = "force-inprocess",
-    target_os = "windows",
-    target_os = "android",
-    target_os = "ios"
-)))]
 // This test demonstrates a significant benefit of multiplexing. If IpcChannels were
 // used, then this test would fail on Unix variants since the creating an IpChannel
 // consumes a file descriptor and the test would run out of file descriptors. Using

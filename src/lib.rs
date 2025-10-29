@@ -8,26 +8,6 @@
 // except according to those terms.
 
 #![doc = include_str!("../README.md")]
-//!
-//! # Features
-//! ## `force-inprocess`
-//!
-//! Force the `inprocess` backend to be used instead of the OS specific backend.
-//! The `inprocess` backend is a dummy back-end, that behaves like the real ones,
-//! but doesn't actually work between processes.
-
-#[cfg(any(
-    feature = "force-inprocess",
-    target_os = "windows",
-    target_os = "android",
-    target_os = "ios"
-))]
-#[cfg(all(not(feature = "force-inprocess"), target_os = "linux"))]
-#[cfg(feature = "async")]
-use futures;
-
-#[cfg(all(not(feature = "force-inprocess"), target_os = "windows"))]
-extern crate windows;
 
 pub mod multiplex;
 

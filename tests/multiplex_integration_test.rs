@@ -7,16 +7,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use ipc_channel_multiplexer::multiplex;
-#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use std::{env, process};
 
 // The integration tests may be run on their own by issuing:
 // cargo test --test '*'
 
 /// Test multiplexing channels.
-#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 #[test]
 fn multiplexing() {
     // let (multi_sender, multi_receiver) = multiplex::multi_channel().unwrap();
@@ -39,7 +36,6 @@ fn multiplexing() {
 
 /// Test spawning a process which then acts as a client to a
 /// one-shot multi server in the parent process.
-#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 #[test]
 fn spawn_sub_one_shot_server_client() {
     let executable_path: String = env!("CARGO_BIN_EXE_spawn_multi_client_test_helper").to_string();

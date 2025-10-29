@@ -1429,12 +1429,6 @@ impl SubChannelReceiver {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct SubChannelReceiverIds {
-    sub_channel_id: SubChannelId,
-    ipc_receiver_uuid: String,
-}
-
 /// MultiMessage is used to communicate across multiplexing channels.
 #[derive(Serialize, Deserialize, Debug)]
 enum MultiMessage {
