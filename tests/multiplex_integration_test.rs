@@ -8,7 +8,7 @@
 // except according to those terms.
 
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
-use ipc_channel::multiplex;
+use ipc_channel_multiplexer::multiplex;
 #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
 use std::{env, process};
 
@@ -22,7 +22,7 @@ fn multiplexing() {
     // let (multi_sender, multi_receiver) = multiplex::multi_channel().unwrap();
     // let sub_sender = multi_sender.new();
 
-    use ipc_channel::multiplex;
+    use ipc_channel_multiplexer::multiplex;
     let channel = multiplex::Channel::new().unwrap();
     let (sub_sender, sub_receiver) = channel.sub_channel();
     sub_sender.send(45 as u8).unwrap();

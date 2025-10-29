@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ipc_channel::multiplex::SubSender;
+use ipc_channel_multiplexer::multiplex::SubSender;
 use std::{env, process};
 
 /// Test executable which connects to the one-shot server with name

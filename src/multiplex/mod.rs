@@ -59,7 +59,7 @@
 //!
 //! Simple usage:
 //! ```
-//! # use ipc_channel::multiplex;
+//! # use ipc_channel_multiplexer::multiplex;
 //! # fn main() -> Result<(), multiplex::MultiplexError> {
 //!    let channel = multiplex::Channel::new().unwrap();
 //!
@@ -77,7 +77,7 @@
 //!
 //! Inter-process bootstrapping:
 //! ```
-//! # use ipc_channel::multiplex;
+//! # use ipc_channel_multiplexer::multiplex;
 //! # use std::thread;
 //! # fn main() -> Result<(), multiplex::MultiplexError> {
 //!    let (server, name) = multiplex::SubOneShotServer::<i32>::new().unwrap();
@@ -97,7 +97,7 @@
 //!
 //! Subchannel sender transmission:
 //! ```
-//! # use ipc_channel::multiplex;
+//! # use ipc_channel_multiplexer::multiplex;
 //! # fn main() -> Result<(), multiplex::MultiplexError> {
 //!    let channel = multiplex::Channel::new().unwrap();
 //!    let (tx, rx) = channel.sub_channel();
@@ -114,7 +114,7 @@
 //!
 //! Subchannel sender transmission failure:
 //! ```
-//! # use ipc_channel::multiplex;
+//! # use ipc_channel_multiplexer::multiplex;
 //! # fn main() -> Result<(), multiplex::MultiplexError> {
 //!    let channel = multiplex::Channel::new().unwrap();
 //!    let (tx, rx) = channel.sub_channel::<i32>();
@@ -134,7 +134,7 @@
 //!
 //! Opaque subchannel sender:
 //! ```
-//! # use ipc_channel::multiplex;
+//! # use ipc_channel_multiplexer::multiplex;
 //! # fn main() -> Result<(), multiplex::MultiplexError> {
 //! let channel = multiplex::Channel::new().unwrap();
 //! let (tx, rx) = channel.sub_channel::<i32>();
@@ -150,7 +150,7 @@
 
 #![warn(missing_docs)]
 
-use crate::ipc::{self, IpcError, IpcOneShotServer, IpcReceiver, IpcSender};
+use ipc_channel::ipc::{self, IpcError, IpcOneShotServer, IpcReceiver, IpcSender};
 use bincode;
 use channel_identification::{Source, Target};
 use log;
@@ -810,13 +810,13 @@ impl MultiReceiver {
             let polling_interval = Duration::new(1, 0);
             match mr.borrow().ipc_receiver.try_recv_timeout(polling_interval) {
                 Ok(msg) => break Ok(msg),
-                Err(crate::ipc::TryRecvError::Empty) => {
+                Err(ipc_channel::ipc::TryRecvError::Empty) => {
                     if mr.borrow().poll() {
                         // At least one probe failed, so return to caller.
                         return Ok(());
                     }
                 },
-                Err(crate::ipc::TryRecvError::IpcError(e)) => {
+                Err(ipc_channel::ipc::TryRecvError::IpcError(e)) => {
                     break Err(MultiplexError::IpcError(e))
                 },
             }
@@ -828,10 +828,10 @@ impl MultiReceiver {
     fn try_receive(mr: &Rc<RefCell<MultiReceiver>>) -> Result<(), MultiplexError> {
         let msg = match mr.borrow().ipc_receiver.try_recv() {
             Ok(msg) => Ok(msg),
-            Err(crate::ipc::TryRecvError::Empty) => {
+            Err(ipc_channel::ipc::TryRecvError::Empty) => {
                 return Ok(());
             },
-            Err(crate::ipc::TryRecvError::IpcError(e)) => Err(MultiplexError::IpcError(e)),
+            Err(ipc_channel::ipc::TryRecvError::IpcError(e)) => Err(MultiplexError::IpcError(e)),
         }?;
         Self::handle(Rc::clone(&mr), msg)
     }

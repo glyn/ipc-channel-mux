@@ -8,8 +8,8 @@
 // except according to those terms.
 
 //#[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
-//use crate::ipc::IpcReceiver;
-//use crate::ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
+//use ipc_channel::ipc::IpcReceiver;
+//use ipc_channel::ipc::{self, IpcReceiverSet, IpcSender, IpcSharedMemory};
 use crate::multiplex::{self, SubOneShotServer, SubReceiver, SubSender};
 //use crossbeam_channel::{self, Sender};
 // #[cfg(not(any(feature = "force-inprocess", target_os = "android", target_os = "ios")))]
@@ -34,7 +34,7 @@ use test_log::test;
 //     target_os = "ios",
 //     target_os = "windows"
 // )))]
-// use crate::ipc::IpcOneShotServer;
+// use ipc_channel::ipc::IpcOneShotServer;
 
 // #[cfg(not(any(
 //     feature = "force-inprocess",

@@ -26,19 +26,11 @@
 #[cfg(feature = "async")]
 use futures;
 
-#[cfg(feature = "async")]
-pub mod asynch;
-
 #[cfg(all(not(feature = "force-inprocess"), target_os = "windows"))]
 extern crate windows;
 
-pub mod ipc;
 pub mod multiplex;
-pub mod platform;
-pub mod router;
 
-#[cfg(test)]
-mod test;
 #[cfg(test)]
 mod multiplex_test;
 

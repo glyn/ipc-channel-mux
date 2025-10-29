@@ -1,31 +1,11 @@
 [package]
-name = "ipc-channel"
-version = "0.21.0"
-description = "A multiprocess drop-in replacement for Rust channels"
+name = "ipc-channel-multiplexer"
+version = "0.0.1"
+description = "Multiplexing for servo/ipc-channel"
 authors = ["The Servo Project Developers"]
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/servo/ipc-channel"
+repository = "https://codeberg.org/glyn/ipc-channel-multiplexer"
 edition = "2021"
-
-[[bench]]
-name = "platform"
-harness = false
-
-[[bench]]
-name = "ipc"
-harness = false
-
-[[bench]]
-name = "ipc_receiver_set"
-harness = false
-
-[[bench]]
-name = "ipc_shared_mem"
-harness = false
-
-[[bench]]
-name = "struct_ipc"
-harness = false
 
 [features]
 default = []
@@ -42,6 +22,7 @@ fnv = "1.0.3"
 futures-channel = { version = "0.3.31", optional = true }
 futures-core = { version = "0.3.31", optional = true }
 hashbag = "0.1.12"
+ipc-channel = "0.20.2"
 lazy_static = "1"
 libc = "0.2.162"
 log = "0.4.26"
