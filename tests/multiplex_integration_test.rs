@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ipc_channel_multiplexer::multiplex;
+use ipc_channel_mux::multiplex;
 use std::{env, process};
 
 // The integration tests may be run on their own by issuing:
@@ -19,7 +19,7 @@ fn multiplexing() {
     // let (multi_sender, multi_receiver) = multiplex::multi_channel().unwrap();
     // let sub_sender = multi_sender.new();
 
-    use ipc_channel_multiplexer::multiplex;
+    use ipc_channel_mux::multiplex;
     let channel = multiplex::Channel::new().unwrap();
     let (sub_sender, sub_receiver) = channel.sub_channel();
     sub_sender.send(45 as u8).unwrap();

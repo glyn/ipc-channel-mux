@@ -59,7 +59,7 @@
 //!
 //! Simple usage:
 //! ```
-//! # use ipc_channel_multiplexer::multiplex;
+//! # use ipc_channel_mux::multiplex;
 //! # fn main() -> Result<(), multiplex::MultiplexError> {
 //!    let channel = multiplex::Channel::new().unwrap();
 //!
@@ -77,7 +77,7 @@
 //!
 //! Inter-process bootstrapping:
 //! ```
-//! # use ipc_channel_multiplexer::multiplex;
+//! # use ipc_channel_mux::multiplex;
 //! # use std::thread;
 //! # fn main() -> Result<(), multiplex::MultiplexError> {
 //!    let (server, name) = multiplex::SubOneShotServer::<i32>::new().unwrap();
@@ -97,7 +97,7 @@
 //!
 //! Subchannel sender transmission:
 //! ```
-//! # use ipc_channel_multiplexer::multiplex;
+//! # use ipc_channel_mux::multiplex;
 //! # fn main() -> Result<(), multiplex::MultiplexError> {
 //!    let channel = multiplex::Channel::new().unwrap();
 //!    let (tx, rx) = channel.sub_channel();
@@ -114,7 +114,7 @@
 //!
 //! Subchannel sender transmission failure:
 //! ```
-//! # use ipc_channel_multiplexer::multiplex;
+//! # use ipc_channel_mux::multiplex;
 //! # fn main() -> Result<(), multiplex::MultiplexError> {
 //!    let channel = multiplex::Channel::new().unwrap();
 //!    let (tx, rx) = channel.sub_channel::<i32>();
@@ -134,7 +134,7 @@
 //!
 //! Opaque subchannel sender:
 //! ```
-//! # use ipc_channel_multiplexer::multiplex;
+//! # use ipc_channel_mux::multiplex;
 //! # fn main() -> Result<(), multiplex::MultiplexError> {
 //! let channel = multiplex::Channel::new().unwrap();
 //! let (tx, rx) = channel.sub_channel::<i32>();
