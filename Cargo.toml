@@ -5,7 +5,7 @@ description = "Multiplexer for servo/ipc-channel"
 authors = ["The Servo Project Developers"]
 license = "MIT OR Apache-2.0"
 repository = "https://codeberg.org/glyn/ipc-channel-mux"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
 bincode = "1"

@@ -519,7 +519,7 @@ pub enum MultiplexError {
 impl fmt::Display for MultiplexError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            MultiplexError::IpcError(ref err) => write!(fmt, "IPC error: {}", err),
+            MultiplexError::IpcError(err) => write!(fmt, "IPC error: {}", err),
             MultiplexError::Disconnected => write!(fmt, "disconnected"),
             MultiplexError::InternalError(s) => write!(fmt, "internal logic error: {s}"),
         }
