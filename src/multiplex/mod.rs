@@ -20,28 +20,6 @@
 //! number of IPC channels (and corresponding operating system IPC resources) needed
 //! to send messages between processes.
 //!
-//! ## Comparison to IPC channels
-//!
-//! A subchannel is similar to an IPC channel except that:
-//! 1. Subchannel senders may be sent and received without consuming
-//!    scarce operating system resources, such as file descriptors on Unix variants.
-//!    (Servo has encountered process crashes due to IPC channels consuming all the
-//!    file descriptors for a process.)
-//! 2. Subchannel receivers may not be sent or received. This is a consequence of the
-//!    MPSC nature of the underlying IPC channel: sending a subchannel receiver would
-//!    entail sending the underlying IPC channel receiver and this would break any
-//!    other subchannel receivers depending on that IPC channel receiver.
-//! 3. In order to communicate subchannel receiver drop to all the subchannel senders,
-//!    one additional IPC channel is needed per sender of the IPC channel underlying the
-//!    subchannel.
-//! 4. Subchannels sharing an underlying IPC channel may interfere with each other's
-//!    performance. For example, a busy subchannel could increase the latency of
-//!    message transmission on another subchannel.
-//!
-//! The current multiplexing prototype is missing a few IPC channel features, including:
-//! * Opaque messages.
-//! * Non-blocking receives and timeouts.
-//!
 //! ## Disconnection
 //!
 //! The send and receive operations on subchannels return a Result indicating
