@@ -9,7 +9,7 @@
 
 #![doc = include_str!("../README.md")]
 
-pub mod multiplex;
+pub mod mux;
 
 #[cfg(test)]
 mod multiplex_test;

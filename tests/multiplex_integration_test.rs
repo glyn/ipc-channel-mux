@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ipc_channel_mux::multiplex;
+use ipc_channel_mux::mux;
 use std::{env, process};
 
 // The integration tests may be run on their own by issuing:
@@ -16,11 +16,11 @@ use std::{env, process};
 /// Test multiplexing channels.
 #[test]
 fn multiplexing() {
-    // let (multi_sender, multi_receiver) = multiplex::multi_channel().unwrap();
+    // let (multi_sender, multi_receiver) = mux::multi_channel().unwrap();
     // let sub_sender = multi_sender.new();
 
-    use ipc_channel_mux::multiplex;
-    let channel = multiplex::Channel::new().unwrap();
+    use ipc_channel_mux::mux;
+    let channel = mux::Channel::new().unwrap();
     let (sub_sender, sub_receiver) = channel.sub_channel();
     sub_sender.send(45 as u8).unwrap();
 
@@ -41,7 +41,7 @@ fn spawn_sub_one_shot_server_client() {
     let executable_path: String = env!("CARGO_BIN_EXE_spawn_multi_client_test_helper").to_string();
 
     let (server, token) =
-        multiplex::SubOneShotServer::<String>::new().expect("Failed to create sub one-shot server");
+        mux::SubOneShotServer::<String>::new().expect("Failed to create sub one-shot server");
 
     let mut command = process::Command::new(executable_path);
     let child_process = command.arg(token);

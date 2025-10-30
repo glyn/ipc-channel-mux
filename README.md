@@ -12,9 +12,9 @@ The `serde` library is used to serialize and deserialize messages sent over `ipc
 
 As much as possible, `ipc-channel-mux` has been designed to be a drop-in replacement for Rust channels. The mapping from the Rust channel APIs to subchannel APIs is as follows:
 
-* `channel()` → `multiplex::Channel::new().unwrap().sub_channel();`
-* `Sender<T>` → `multiplex::SubSender<T>` (requires `T: Serialize`)
-* `Receiver<T>` → `multiplex::SubReceiver<T>` (requires `T: Deserialize`)
+* `channel()` → `mux::Channel::new().unwrap().sub_channel();`
+* `Sender<T>` → `mux::SubSender<T>` (requires `T: Serialize`)
+* `Receiver<T>` → `mux::SubReceiver<T>` (requires `T: Deserialize`)
 
 Note that `SubSender<T>` implements `Serialize` and `Deserialize`, so you can send subsenders over subchannels freely, just as you can with Rust channels.
 However, you cannot send or receive subreceivers - the reason is explained below.
@@ -41,7 +41,7 @@ Let's look at the two ways of creating a channel: directly constructing a channe
 Creating a subchannel requires a multiplexing IPC channel to be created first:
 
 ~~~Rust
-let channel = multiplex::Channel::new().unwrap();
+let channel = mux::Channel::new().unwrap();
 ...
 let (tx, rx) = channel.sub_channel();
 ~~~
@@ -51,9 +51,9 @@ let (tx, rx) = channel.sub_channel();
 Multiplexing one-shot servers are used like this:
 
 ~~~Rust
-let (server, server_name) = multiplex::SubOneShotServer::new().unwrap();
+let (server, server_name) = mux::SubOneShotServer::new().unwrap();
 ...
-let tx = multiplex::SubSender::connect(server_name).unwrap(); // Typically in another process
+let tx = mux::SubSender::connect(server_name).unwrap(); // Typically in another process
 
 let (rx, data) = server.accept().unwrap();
 ~~~
@@ -125,7 +125,7 @@ For example, if one of the missing features for multiplexing was essentially the
 Another disadvantage is that Servo will require an additional dependency.
 However, it would be feasible to merge `ipc-channel-mux` into the IPC channel repository later.
 
-[^restriction]: Since subreceivers cannot be transmitted between processes, we expect a subsender created using a `multiplex::Channel` instance to be moved or transmitted to another process.
+[^restriction]: Since subreceivers cannot be transmitted between processes, we expect a subsender created using a `mux::Channel` instance to be moved or transmitted to another process.
 
 [^never]: Creating a subchannel could exhaust the memory of a process, but memory allocation is treated as infallible in Rust as [Handling memory exhaustion – State of the art?](https://users.rust-lang.org/t/handling-memory-exhaustion-state-of-the-art/87375) explores.
 Essentially, if memory allocation fails, the program will panic or, more likely (at least on Linux), be killed by the Out of Memory killer.

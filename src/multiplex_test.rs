@@ -7,14 +7,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::multiplex::{self, SubOneShotServer, SubReceiver, SubSender};
+use crate::mux::{self, SubOneShotServer, SubReceiver, SubSender};
 use std::thread;
 use test_log::test;
 
 #[test]
 fn multiplex_simple() {
     let person = ("Patrick Walton".to_owned(), 29);
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (tx, rx) = channel.sub_channel();
     tx.send(person.clone()).unwrap();
     let received_person = rx.recv().unwrap();
@@ -22,14 +22,14 @@ fn multiplex_simple() {
 
     drop(tx);
     match rx.recv().unwrap_err() {
-        multiplex::MultiplexError::Disconnected => (),
+        mux::MultiplexError::Disconnected => (),
         e => panic!("expected disconnected error, got {:?}", e),
     }
 }
 
 #[test]
 fn multiplex_two_subchannels() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (tx1, rx1) = channel.sub_channel();
     tx1.send(1).unwrap();
     assert_eq!(1, rx1.recv().unwrap());
@@ -41,7 +41,7 @@ fn multiplex_two_subchannels() {
 
 #[test]
 fn multiplex_two_subchannels_reverse_ordered() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (tx1, rx1) = channel.sub_channel();
     tx1.send(1).unwrap();
 
@@ -56,7 +56,7 @@ fn multiplex_two_subchannels_reverse_ordered() {
 fn embedded_multiplexed_senders() {
     let person = ("Patrick Walton".to_owned(), 29);
 
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (sub_tx, sub_rx) = channel.sub_channel();
 
     let person_and_sender = (person.clone(), sub_tx);
@@ -81,10 +81,10 @@ fn embedded_multiplexed_senders() {
 
 #[test]
 fn embedded_multiplexed_sender_lifecycle() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (sub_tx, sub_rx) = channel.sub_channel();
 
-    let super_channel = multiplex::Channel::new().unwrap();
+    let super_channel = mux::Channel::new().unwrap();
     let (super_tx, super_rx) = super_channel.sub_channel();
 
     super_tx.send(sub_tx.clone()).unwrap();
@@ -107,7 +107,7 @@ fn embedded_multiplexed_sender_lifecycle() {
 fn embedded_multiplexed_two_senders() {
     let person = ("Patrick Walton".to_owned(), 29);
 
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (sub_tx, sub_rx) = channel.sub_channel();
     let (sub_tx2, sub_rx2) = channel.sub_channel();
 
@@ -148,11 +148,11 @@ fn embedded_multiplexed_two_senders() {
 
 #[test]
 fn embedded_multiplexed_senders_interacting() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (super_tx1, super_rx1) = channel.sub_channel();
     let (sub_tx1, sub_rx1) = channel.sub_channel();
 
-    let channel2 = multiplex::Channel::new().unwrap();
+    let channel2 = mux::Channel::new().unwrap();
     let (super_tx2, super_rx2) = channel2.sub_channel();
     let (sub_tx2, sub_rx2) = channel2.sub_channel();
 
@@ -171,11 +171,11 @@ fn embedded_multiplexed_senders_interacting() {
 #[test]
 fn embedded_multiplexed_senders_with_middleman() {
     // TODO: this test aimed to break the code that always sets MultiMessage:Sending.from to ORIGIN, but it passes.
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (super_tx, super_rx) = channel.sub_channel();
     let (sub_tx, sub_rx) = channel.sub_channel::<i32>();
 
-    let middleman = multiplex::Channel::new().unwrap();
+    let middleman = mux::Channel::new().unwrap();
     let (middleman_super_tx, middleman_super_rx) = middleman.sub_channel();
     let (middleman_sub_tx, middleman_sub_rx) = middleman.sub_channel();
 
@@ -201,7 +201,7 @@ fn embedded_multiplexed_senders_with_middleman() {
 // process does not run out of file descriptors.
 #[test]
 fn receiving_many_subchannels() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (send2, recv2) = channel.sub_channel();
 
     // this will be used to receive from the spawned thread
@@ -211,7 +211,7 @@ fn receiving_many_subchannels() {
         let bootstrap_sub_sender: SubSender<SubSender<SubSender<bool>>> =
             SubSender::connect(bootstrap_token).unwrap();
 
-        let channel = multiplex::Channel::new().unwrap();
+        let channel = mux::Channel::new().unwrap();
         let (send1, recv1) = channel.sub_channel();
 
         bootstrap_sub_sender.send(send1).unwrap();
@@ -245,7 +245,7 @@ fn receiving_many_subchannels() {
 // multiplexed channels, the test does not run out of file descriptors.
 #[test]
 fn creating_many_subchannels() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let mut subchannels = vec![];
     for i in 0..10000 {
         let subchannel = channel.sub_channel::<i32>();
@@ -256,7 +256,7 @@ fn creating_many_subchannels() {
 
 #[test]
 fn sender_transmission_dropped_in_flight() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (sub_tx, sub_rx) = channel.sub_channel::<i32>();
 
     let (super_tx, super_rx) = channel.sub_channel();
@@ -270,45 +270,45 @@ fn sender_transmission_dropped_in_flight() {
     drop(super_rx);
 
     match sub_rx.recv().unwrap_err() {
-        multiplex::MultiplexError::Disconnected => (),
+        mux::MultiplexError::Disconnected => (),
         e => panic!("expected disconnected error, got {:?}", e),
     }
 }
 
 #[test]
 fn multiplex_drop_only_subsender_for_dropped_channel() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (tx, rx) = channel.sub_channel::<i32>();
     drop(channel);
 
     drop(tx);
     match rx.recv().unwrap_err() {
-        multiplex::MultiplexError::Disconnected => (),
+        mux::MultiplexError::Disconnected => (),
         e => panic!("expected send error, got {:?}", e),
     }
 }
 
 #[test]
 fn multiplex_drop_only_subsender_for_channel() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (tx, rx) = channel.sub_channel::<i32>();
 
     drop(tx);
     match rx.recv().unwrap_err() {
-        multiplex::MultiplexError::Disconnected => (),
+        mux::MultiplexError::Disconnected => (),
         e => panic!("expected disconnected error, got {:?}", e),
     }
 }
 
 #[test]
 fn multiplex_drop_only_subsender_for_subchannel_of_dropped_channel() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (tx1, rx1) = channel.sub_channel::<i32>();
     let (tx2, rx2) = channel.sub_channel::<i32>();
 
     drop(tx1);
     match rx1.recv().unwrap_err() {
-        multiplex::MultiplexError::Disconnected => (),
+        mux::MultiplexError::Disconnected => (),
         e => panic!("expected disconnected error, got {:?}", e),
     }
 
@@ -319,7 +319,7 @@ fn multiplex_drop_only_subsender_for_subchannel_of_dropped_channel() {
 
 #[test]
 fn multiplex_drop_cloned_subsender() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (tx, rx) = channel.sub_channel::<i32>();
 
     drop(tx.clone());
@@ -330,13 +330,13 @@ fn multiplex_drop_cloned_subsender() {
 
 #[test]
 fn multiplex_drop_only_subsender_for_subchannel() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (tx1, rx1) = channel.sub_channel::<i32>();
     let (tx2, rx2) = channel.sub_channel::<i32>();
 
     drop(tx1);
     match rx1.recv().unwrap_err() {
-        multiplex::MultiplexError::Disconnected => (),
+        mux::MultiplexError::Disconnected => (),
         e => panic!("expected disconnected error, got {:?}", e),
     }
 
@@ -347,7 +347,7 @@ fn multiplex_drop_only_subsender_for_subchannel() {
 
 #[test]
 fn drop_transmitted_subsender() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (sub_tx, sub_rx) = channel.sub_channel::<i32>();
     let (super_tx, super_rx) = channel.sub_channel();
     super_tx.send(sub_tx).unwrap();
@@ -355,14 +355,14 @@ fn drop_transmitted_subsender() {
     drop(received_sub_tx);
 
     match sub_rx.recv().unwrap_err() {
-        multiplex::MultiplexError::Disconnected => (),
+        mux::MultiplexError::Disconnected => (),
         e => panic!("expected Disconnected, got {:?}", e),
     }
 }
 
 #[test]
 fn drop_transmitted_subsender_send_using_clone_of_original() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (sub_tx, sub_rx) = channel.sub_channel::<i32>();
     let (super_tx, super_rx) = channel.sub_channel();
     let sub_tx_clone = sub_tx.clone();
@@ -376,7 +376,7 @@ fn drop_transmitted_subsender_send_using_clone_of_original() {
 
 #[test]
 fn drop_transmitted_subsender_send_using_another_transmitted_subsender() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (sub_tx, sub_rx) = channel.sub_channel::<i32>();
     let (super_tx1, super_rx1) = channel.sub_channel();
     super_tx1.send(sub_tx.clone()).unwrap();
@@ -394,13 +394,13 @@ fn drop_transmitted_subsender_send_using_another_transmitted_subsender() {
 
 #[test]
 fn drop_transmitted_subsender_send_using_another_subsender_transmitted_over_another_ipc_channel() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (sub_tx, sub_rx) = channel.sub_channel::<i32>();
     let (super_tx1, super_rx1) = channel.sub_channel();
     super_tx1.send(sub_tx.clone()).unwrap();
     let received_sub_tx1 = super_rx1.recv().unwrap();
 
-    let channel2 = multiplex::Channel::new().unwrap();
+    let channel2 = mux::Channel::new().unwrap();
     let (super_tx2, super_rx2) = channel2.sub_channel();
     super_tx2.send(sub_tx).unwrap();
     let received_sub_tx2 = super_rx2.recv().unwrap();
@@ -413,7 +413,7 @@ fn drop_transmitted_subsender_send_using_another_subsender_transmitted_over_anot
 
 #[test]
 fn multiplex_drop_only_subreceiver_for_dropped_channel() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (tx, rx) = channel.sub_channel::<i32>();
     drop(channel);
 
@@ -423,7 +423,7 @@ fn multiplex_drop_only_subreceiver_for_dropped_channel() {
 
 #[test]
 fn multiplex_drop_only_subreceiver_for_channel() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (tx, rx) = channel.sub_channel::<i32>();
 
     drop(rx);
@@ -433,7 +433,7 @@ fn multiplex_drop_only_subreceiver_for_channel() {
 
 #[test]
 fn multiplex_drop_only_subreceiver_for_subchannel_of_dropped_channel() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (tx1, rx1) = channel.sub_channel::<i32>();
     drop(channel);
 
@@ -444,10 +444,10 @@ fn multiplex_drop_only_subreceiver_for_subchannel_of_dropped_channel() {
 
 #[test]
 fn compare_base_transmission_failure() {
-    let channel1 = multiplex::Channel::new().unwrap();
+    let channel1 = mux::Channel::new().unwrap();
     let (tx, rx) = channel1.sub_channel::<i32>();
 
-    let channel2 = multiplex::Channel::new().unwrap();
+    let channel2 = mux::Channel::new().unwrap();
     let (via_tx, via_rx) = channel2.sub_channel();
 
     via_tx.send(tx).unwrap();
@@ -455,14 +455,14 @@ fn compare_base_transmission_failure() {
     drop(via_rx);
 
     match rx.recv().unwrap_err() {
-        multiplex::MultiplexError::Disconnected => (),
+        mux::MultiplexError::Disconnected => (),
         e => panic!("expected Disconnected, got {:?}", e),
     }
 }
 
 #[test]
 fn opaque_sender() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (tx, rx) = channel.sub_channel::<i32>();
 
     let opaque_tx = tx.to_opaque();
@@ -474,7 +474,7 @@ fn opaque_sender() {
 
 #[test]
 fn embedded_opaque_sender() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (tx, rx) = channel.sub_channel::<i32>();
 
     let (via_tx, via_rx) = channel.sub_channel();
@@ -487,7 +487,7 @@ fn embedded_opaque_sender() {
 
 #[test]
 fn opaque_receiver() {
-    let channel = multiplex::Channel::new().unwrap();
+    let channel = mux::Channel::new().unwrap();
     let (tx, rx) = channel.sub_channel::<i32>();
 
     let opaque_rx = rx.to_opaque();

@@ -37,9 +37,9 @@
 //!
 //! Simple usage:
 //! ```
-//! # use ipc_channel_mux::multiplex;
-//! # fn main() -> Result<(), multiplex::MultiplexError> {
-//!    let channel = multiplex::Channel::new().unwrap();
+//! # use ipc_channel_mux::mux;
+//! # fn main() -> Result<(), mux::MultiplexError> {
+//!    let channel = mux::Channel::new().unwrap();
 //!
 //!    let (tx, rx) = channel.sub_channel();
 //!    tx.send(1729).unwrap();
@@ -55,13 +55,13 @@
 //!
 //! Inter-process bootstrapping:
 //! ```
-//! # use ipc_channel_mux::multiplex;
+//! # use ipc_channel_mux::mux;
 //! # use std::thread;
-//! # fn main() -> Result<(), multiplex::MultiplexError> {
-//!    let (server, name) = multiplex::SubOneShotServer::<i32>::new().unwrap();
+//! # fn main() -> Result<(), mux::MultiplexError> {
+//!    let (server, name) = mux::SubOneShotServer::<i32>::new().unwrap();
 //!
 //!    thread::spawn(move || {
-//!        let tx = multiplex::SubSender::connect(name).unwrap();
+//!        let tx = mux::SubSender::connect(name).unwrap();
 //!        tx.send(1729).unwrap();
 //!        tx.send(1730).unwrap();
 //!    });
@@ -75,9 +75,9 @@
 //!
 //! Subchannel sender transmission:
 //! ```
-//! # use ipc_channel_mux::multiplex;
-//! # fn main() -> Result<(), multiplex::MultiplexError> {
-//!    let channel = multiplex::Channel::new().unwrap();
+//! # use ipc_channel_mux::mux;
+//! # fn main() -> Result<(), mux::MultiplexError> {
+//!    let channel = mux::Channel::new().unwrap();
 //!    let (tx, rx) = channel.sub_channel();
 //!
 //!    let (sender, receiver) = channel.sub_channel();
@@ -92,9 +92,9 @@
 //!
 //! Subchannel sender transmission failure:
 //! ```
-//! # use ipc_channel_mux::multiplex;
-//! # fn main() -> Result<(), multiplex::MultiplexError> {
-//!    let channel = multiplex::Channel::new().unwrap();
+//! # use ipc_channel_mux::mux;
+//! # fn main() -> Result<(), mux::MultiplexError> {
+//!    let channel = mux::Channel::new().unwrap();
 //!    let (tx, rx) = channel.sub_channel::<i32>();
 //!
 //!    let (sender, receiver) = channel.sub_channel();
@@ -103,7 +103,7 @@
 //!    drop(receiver);
 //!    
 //!    match rx.recv().unwrap_err() {
-//!        multiplex::MultiplexError::Disconnected => (),
+//!        mux::MultiplexError::Disconnected => (),
 //!        e => panic!("unexpected error"),
 //!    }
 //! #  Ok(())
@@ -112,13 +112,13 @@
 //!
 //! Opaque subchannel sender:
 //! ```
-//! # use ipc_channel_mux::multiplex;
-//! # fn main() -> Result<(), multiplex::MultiplexError> {
-//! let channel = multiplex::Channel::new().unwrap();
+//! # use ipc_channel_mux::mux;
+//! # fn main() -> Result<(), mux::MultiplexError> {
+//! let channel = mux::Channel::new().unwrap();
 //! let (tx, rx) = channel.sub_channel::<i32>();
 //!
 //! let opaque_tx = tx.to_opaque();
-//! let tx: multiplex::SubSender<i32> = opaque_tx.to();
+//! let tx: mux::SubSender<i32> = opaque_tx.to();
 //!
 //! tx.send(1).unwrap();
 //! assert_eq!(rx.recv().unwrap(), 1);
@@ -231,7 +231,7 @@ where
     /// otherwise the behaviour is unpredictable.
     /// For more information, see [issue 378](https://github.com/servo/ipc-channel/issues/378).
     ///
-    /// [new]: crate::multiplex::SubOneShotServer::new
+    /// [new]: crate::mux::SubOneShotServer::new
     #[instrument(level = "debug", err(level = "debug"))]
     pub fn connect(name: String) -> Result<SubSender<T>, MultiplexError> {
         let multi_sender: Rc<MultiSender> = MultiSender::connect(name.to_string())?;
@@ -255,7 +255,7 @@ where
     ///
     /// This method will never block the current thread.
     ///
-    /// [recv]: crate::multiplex::SubReceiver::recv
+    /// [recv]: crate::mux::SubReceiver::recv
     #[instrument(level = "debug", skip(self, data), err(level = "debug"))]
     pub fn send(&self, data: T) -> Result<(), MultiplexError> {
         self.sub_channel_sender.send(data)
@@ -370,8 +370,8 @@ impl OpaqueSubReceiver {
 /// On the client side, call [connect], passing the server name, to obtain the subchannel
 /// sender. The server is “one-shot” because it accepts only one connect request from a client.
 ///
-/// [accept]: crate::multiplex::SubOneShotServer::accept
-/// [connect]: crate::multiplex::SubSender::connect
+/// [accept]: crate::mux::SubOneShotServer::accept
+/// [connect]: crate::mux::SubSender::connect
 pub struct SubOneShotServer<T> {
     one_shot_multi_server: OneShotMultiServer,
     name: String,
@@ -508,9 +508,9 @@ pub enum MultiplexError {
     /// Returned from [recv] or [accept] when all the subchannel’s [SubSender]s have disconnected (have been
     /// deallocated or their processes have terminated) and no more messages are available to be received.
     ///
-    /// [send]: crate::multiplex::SubSender::send
-    /// [recv]: crate::multiplex::SubReceiver::recv
-    /// [accept]: crate::multiplex::SubOneShotServer::accept
+    /// [send]: crate::mux::SubSender::send
+    /// [recv]: crate::mux::SubReceiver::recv
+    /// [accept]: crate::mux::SubOneShotServer::accept
     Disconnected,
     /// An internal logic error has occurred.
     InternalError(String),
