@@ -15,7 +15,7 @@ use std::{env, process};
 
 /// Test multiplexing channels.
 #[test]
-fn multiplexing() {
+fn muxing() {
     // let (multi_sender, multi_receiver) = mux::multi_channel().unwrap();
     // let sub_sender = multi_sender.new();
 
