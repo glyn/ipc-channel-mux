@@ -148,6 +148,46 @@ cargo test
 
 Multiplexed one-shot servers are implemented using IPC channel one-shot servers. One-shot server names are implemented as a file system path (for Unix variants, with the file system path bound to the socket) or other kinds of generated names on macOS and Windows.
 
+The following sections describe the principles of multiplexing subchannels over IPC channels and some of the design considerations.
+
+### Subchannel identifiers
+
+Each subchannel needs a separate identifier. This is used to _tag_ messages for that subchannel before they are sent to the IPC channel underlying the subchannel. On message receipt, the subchannel id. is used to route the message to the appropriate subchannel.
+
+### When to block
+
+Generally, sends are non-blocking (but see below) so the main blocking consideration is for receives.
+A receive on a subchannel _may_ have to receive from the underlying IPC channel, unless the message has already been received (and placed on a standard Rust channel corresponding to the subchannel receiver).
+
+On subchannel receive, we first of all issue a non-blocking receive (`try_recv`) on the corresponding standard channel. If this returns a message, we can return the message as the result of subchannel receive.
+
+If the corresponding standard channel is empty, we can safely issue a blocking receive on the IPC channel underlying the multi-receiver. (This wouldn't be true if the code supported multi-threading.)
+
+Once a message is received, we can re-try the non-blocking receive on the standard channel to see if a message has been received for the subreceiver.
+If not, we can block again on the IPC channel.
+
+### Polling
+
+In the last section, we mentioned issuing a blocking receive on the IPC channel underlying a multi-receiver. It's actually a little more complicated than that because we need to poll for in-flight subsenders having been destroyed.
+We do this by probing the IPC channel used to transmit the subsender, by sending a small message on the IPC channel.
+
+Polling is implemented by issuing a `try_recv_timeout` on the IPC channel, with a timeout of one second. When the timeout occurs, polling can be initiated and we can then drop the sender half of the standard channel for a subreceiver whose "other half" (meaning the senders for all clients) has hung up. This will cause the non-blocking receive on such standard channels to return with an error and we can then return `Disconnected` from the corresponding subchannel receives.
+
+The receive on the multi-receiver's IPC channel also serves the purpose of detecting `Disconnect` messages generated when a subsender and all its clones on a particular _client_ (approximately equivalent to an IPC sender) have been dropped. That's another way that the sending side of a subchannel can "hang up", after which a receive from the subchannel should fail with `Disconnected`.
+
+### Blocking sends and deadlocks
+
+It turns out that a send to an IPC channel can block when the buffer fills up.
+So we have to be careful to take every opportunity to receive messages from IPC channels when we can, for example before generating `Disconnect` messages when a subsender and all its clones on a particular client have been dropped.
+
+Failure to do this can result in deadlocks.
+For example, if a process creates a large number of subchannels and then drops them, messages are sent to notify the "other side" that one side has hung up.
+If these messages are not received, drop of a subsender or subreceiver can block.
+
+This risk of deadlock was present for non-multiplexed IPC channels, but the risk was lower because fewer messages were sent on each IPC channel.
+With multiplexing, a potentially large number of messages can be sent.
+Fortunately, a multireceiver will tend to drain messages when receiving on behalf of a subreceiver. Providing that the application code issues receives fairly frequently, the underlying IPC channels shouldn't fill up.
+
 ## Major missing features
 
 * ROUTER - routing messages from subreceivers to crossbeam channels. This allows receiving code to utilise crossbeam features.
