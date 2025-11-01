@@ -28,9 +28,9 @@ The easiest way to make your types implement `Serialize` and `Deserialize` is to
 The client process calls `connect()` passing the server name and this returns the sender end of an subchannel from
 the client to the server. Note that there is a restriction in `connect()` may be called at most once per one-shot server.
 
-The server process calls `accept()` on the server to accept connect requests from clients. `accept()` blocks until a client has connected to the server and sent a message. It then returns a pair consisting of the receiver end of the subchannel from client to server and the first message received from the client.
+The server process calls `accept()` on the server to accept a connect request from a client. `accept()` blocks until a client has connected to the server and sent a message. It then returns a pair consisting of the receiver end of the subchannel from client to server and the first message received from the client.
 
-So, in order to bootstrap an subchannel between processes, you create an instance of the `SubOneShotServer` type, pass the resultant server name into the client process (perhaps via an environment variable or command line flag), and connect to the server in the client. See `spawn_sub_one_shot_server_client()` in `multiplex_integration_test.rs` for an example of how to do this using a command to spawn the client process.
+So, in order to bootstrap a subchannel between processes, you create an instance of the `SubOneShotServer` type, pass the resultant server name into the client process (perhaps via an environment variable or command line flag), and connect to the server in the client. See `spawn_sub_one_shot_server_client()` in `multiplex_integration_test.rs` for an example of how to do this using a command to spawn the client process.
 
 ## API overview
 
@@ -58,7 +58,7 @@ let tx = mux::SubSender::connect(server_name).unwrap(); // Typically in another 
 let (rx, data) = server.accept().unwrap();
 ~~~
 
-The advantage of creating a subchannel, rather than an IPC channel, using a one-shot server is that the subchannel can then be used to transmit subsenders.[^interop]
+An advantage of creating a subchannel, rather than an IPC channel, using a one-shot server is that the subchannel can then be used to transmit subsenders.[^interop]
 
 ## Semantic differences from Rust channels
 
@@ -69,6 +69,8 @@ The advantage of creating a subchannel, rather than an IPC channel, using a one-
 
 ## Semantic differences from IPC channels
 
+IPC channels are provided by Servo's [ipc-channel](https://github.com/server/ipc-channel) crate which the implementation of `ipc-channel-mux` uses for IPC communication.
+
 * Subchannel creation requires the underlying IPC channel to have been created already.
 Reusing the underlying channel when creating multiple subchannels enables those subchannels to be multiplexed over the underlying channel.
 * Subchannel receivers, or _subreceivers_, may not be sent or received.[^restriction] This is a consequence of the MPSC nature of the underlying IPC channel: sending a subreceiver would entail sending the underlying IPC receiver and this would break any other subreceivers using that IPC receiver.
@@ -76,7 +78,7 @@ Reusing the underlying channel when creating multiple subchannels enables those 
 
 ## When is multiplexing beneficial?
 
-Readers familiar with Servo's [`ipc-channel`](https://crates.io/crates/ipc-channel) crate may be experiencing some _déjà vu_ at this point since `ipc-channel-mux` is built on top of `ipc-channel` and has a similar API.
+Readers familiar with `ipc-channel` may be experiencing some _déjà vu_ at this point since `ipc-channel-mux` is built on top of `ipc-channel` and has a similar API.
 The main difference is that `ipc-channel-mux` multiplexes subchannels over the IPC channels provided by `ipc-channel`.
 
 We'll now explore when it's worth using `ipc-channel-mux` instead of `ipc-channel`.
@@ -106,21 +108,19 @@ So, to replace an IPC one-shot server with a multiplexed one-shot server and get
 `ipc-channel-mux` is packaged in its own repository and crate, separate from `ipc-channel`.
 This has the following advantages:
 
-* The repository can be hosted on codeberg.org rather than github.com.
 * The code is more easily navigated, since it's portable rather than multiplatform.
 * Changes may be promoted more easily, since IPC channel committers need not be involved.
-* The crate can be published to crates.io[^crate] for ease of consumption by Servo[^gitdep] while avoiding "infecting" the published IPC channel crate and its public API with experimental code which might be ditched if the multiplexing turns out not to be useful to Servo.
-* Documentation is focused on multiplexing.
+* The crate can be published to crates.io for ease of consumption by Servo[^gitdep] while avoiding "infecting" the published IPC channel crate and its public API with experimental code which might be ditched if multiplexing turns out not to be useful to Servo.
+* Documentation, especially this overview, is focused on multiplexing.
 * Tests run fast since the IPC channel tests are elsewhere.[^testspeed]
 * The dependencies of `ipc-channel-mux` are kept separate from those of IPC channel.
-* The clean separation of the `ipc-channel-mux` crate depending on the public API of IPC channel makes the pair easier to grok.
-* If the multiplexing proves useful and is applied to some IPC channel usecases in Servo, it will be possible to release a version of `ipc-channel-mux` and keep enhancing it and experimenting with applying it to other Servo usecases without giving it the (possibly misleading) status of being part of the IPC channel API.
-In particular, it will be reasonable to change the multiplexing API as necessary without impacting backwards compatibility of IPC channel.
+* Implementing `ipc-channel-mux` using the public API of IPC channel makes the projects easier to understand than if they were combined.
+* If multiplexing proves useful and is applied to some IPC channel usecases in Servo, it will be possible to release a version of `ipc-channel-mux` and keep enhancing it and experimenting with applying it to other Servo usecases without giving it the (possibly misleading) status of being part of the IPC channel API.
+In particular, the multiplexing API can be changed as necessary without impacting backwards compatibility of IPC channel.
 
-[^testspeed]: `cargo test` ran in just over 2 seconds with the new repo. whereas it used to take over 8 seconds with the ipc-channel repo.
+[^testspeed]: `cargo test` of `ipc-channel-mux` currently takes just over 2 seconds whereas it used to take over 8 seconds before the multiplexing code was split out of the `ipc-channel` repo.
 
-One possible disadvantage is that it is not be possible to reuse IPC channel internals, which would have been possible if `ipc-channel-mux` was implemented in the `ipc-channel` repository.
-For example, if one of the missing features for multiplexing was essentially the same as that for vanilla IPC channel, it wouldn't be possible to just generalise the code and share it (at least not without exposing an API to the code as an IPC channel external).
+One possible disadvantage is that `ipc-channel-mux` cannot use IPC channel internals, which would have been possible if they were in the same repository.
 
 Another disadvantage is that Servo will require an additional dependency.
 However, it would be feasible to merge `ipc-channel-mux` into the IPC channel repository later.
@@ -130,10 +130,7 @@ However, it would be feasible to merge `ipc-channel-mux` into the IPC channel re
 [^never]: Creating a subchannel could exhaust the memory of a process, but memory allocation is treated as infallible in Rust as [Handling memory exhaustion – State of the art?](https://users.rust-lang.org/t/handling-memory-exhaustion-state-of-the-art/87375) explores.
 Essentially, if memory allocation fails, the program will panic or, more likely (at least on Linux), be killed by the Out of Memory killer.
 
-[^interop]: In the current implementation, an IPC channel cannot be used to transmit a subsender.
-Similarly, a subchannel cannot be used to transmit an IPC sender.
-
-[^crate]: Unfortunately, this still requires the repository to be mirrored to github.com. See [Non-Github account creation](https://github.com/rust-lang/crates.io/issues/326). However, this is easily worked around by pushing to a mirror at github.com before publishing to crates.io.
+[^interop]: `ipc-channel-mux` and `ipc-channel` do not currently interoperate: an IPC channel cannot be used to transmit a subsender and a subchannel cannot be used to transmit an IPC sender or receiver.
 
 [^gitdep]: An alternative would be to have the relevant Servo branch use a [git dependency](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#specifying-dependencies-from-git-repositories) on `ipc-channel-mux`.
 
@@ -153,9 +150,9 @@ Multiplexed one-shot servers are implemented using IPC channel one-shot servers.
 
 ## Major missing features
 
-* ROUTER - routing messages from IPC receivers to crossbeam channels. This allows receiving code to utilise crossbeam features.
-* Receiver sets - monitoring multiple receivers with a single thread.
-* Non-blocking receives.
+* ROUTER - routing messages from subreceivers to crossbeam channels. This allows receiving code to utilise crossbeam features.
+* Receiver sets - monitoring multiple subreceivers with a single thread.
+* Non-blocking subreceivers.
 * Transmission of shared memory.
 * Each one-shot server accepts only one client connect request. This is fine if you simply want to use this API to split your application up into a fixed number of mutually untrusting processes, but it's not suitable for implementing a system service.
 
@@ -163,8 +160,8 @@ Multiplexed one-shot servers are implemented using IPC channel one-shot servers.
 
 * [Rust channel](https://doc.rust-lang.org/std/sync/mpsc/index.html): MPSC (multi-producer, single-consumer) channels in the Rust standard library. The implementation
 consists of a single consumer wrapper of a port of Crossbeam channel.
-* [Crossbeam channel](https://github.com/crossbeam-rs/crossbeam/tree/master/crossbeam-channel): extends Rust channels to be more like their Go counterparts. Crossbeam channels are MPMC (multi-producer, multi-consumer)
-* [IPC channel](https://github.com/server/ipc-channel): the IPC channels which `ipc-channel-mux` is based on on top of which it is implemented.
+* [Crossbeam channel](https://github.com/crossbeam-rs/crossbeam/tree/master/crossbeam-channel): extends Rust channels to be more like their Go counterparts. Crossbeam channels are MPMC (multi-producer, multi-consumer).
+* [IPC channel](https://github.com/server/ipc-channel): the IPC channels which `ipc-channel-mux` is implemented on top of.
 * [Channels](https://docs.rs/channels/latest/channels/): provides Sender and Receiver types for communicating with a channel-like API across generic IO streams.
 
 [^CSP]: Tony Hoare conceived Communicating Sequential Processes (CSP) as a concurrent programming language.
