@@ -142,6 +142,26 @@ To run the tests, issue:
 cargo test
 ```
 
+## Diagnostics
+
+`ipc-channel-mux` uses the `log` crate to produce log messages when logging is enabled for one or more processes.
+
+You can emit these log messages from an executable by setting the environment variable RUST_LOG to `debug` or, for more detail, `trace`. For example:
+
+~~~console
+RUST_LOG=debug someexecutable
+~~~
+
+If you want to see the log messages from a test, pass the `--nocapture` flag to the test executable, e.g.
+
+~~~console
+RUST_LOG=trace cargo test mux_test::multiplex_simple -- --nocapture
+~~~
+
+Note: `RUST_LOG` is not automatically propagated between processes, so you have to ensure this is done if you want to enable logging for launched processes.
+
+For more information, see [Configure Logging](https://rust-lang-nursery.github.io/rust-cookbook/development_tools/debugging/config_log.html) in The Rust Cookbook.
+
 ## Implementation overview
 
 `ipc-channel-mux` multiplexes its subchannels over IPC channels provided by `ipc-channel` which is implemented in terms of native IPC primitives: file descriptor passing over Unix sockets on Unix variants, Mach ports on macOS, and named pipes on Windows.
