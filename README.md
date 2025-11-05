@@ -1,4 +1,3 @@
-
 `ipc-channel-mux` is an inter-process implementation of Rust channels (which were inspired by CSP[^CSP]).
 
 A Rust channel is a unidirectional, FIFO queue of messages which can be used to send messages between threads in a single operating system process.
@@ -36,7 +35,7 @@ So, in order to bootstrap a subchannel between processes, you create an instance
 
 Let's look at the two ways of creating a channel: directly constructing a channel and using a one-shot server.
 
-#### Direct channel construction
+### Direct channel construction
 
 Creating a subchannel requires a multiplexing IPC channel to be created first:
 
@@ -46,7 +45,7 @@ let channel = mux::Channel::new().unwrap();
 let (tx, rx) = channel.sub_channel();
 ~~~
 
-#### One-shot servers
+### One-shot servers
 
 Multiplexing one-shot servers are used like this:
 
@@ -138,9 +137,9 @@ Essentially, if memory allocation fails, the program will panic or, more likely 
 
 To run the tests, issue:
 
-```console
+~~~console
 cargo test
-```
+~~~
 
 ## Diagnostics
 
