@@ -492,10 +492,10 @@ impl fmt::Debug for MultiSender {
     }
 }
 
-/// This enumeration lists the possible reasons for failure of functions and methods in the [multiplex]
+/// This enumeration lists the possible reasons for failure of functions and methods in the [mux]
 /// module.
 ///
-/// [multiplex]: crate::multiplex
+/// [mux]: crate::mux
 #[derive(Debug)]
 pub enum MultiplexError {
     /// An error has occurred while receiving a message from the IPC channel underlying a subchannel.

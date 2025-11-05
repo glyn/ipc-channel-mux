@@ -1,9 +1,10 @@
-`ipc-channel-mux` is an inter-process implementation of Rust channels (which were inspired by CSP[^CSP]).
+<!-- markdownlint-disable MD041 -->
+`ipc-channel-mux`[^mux] is a multiplexing, inter-process implementation of Rust channels (which were inspired by CSP[^CSP]).
 
 A Rust channel is a unidirectional, FIFO queue of messages which can be used to send messages between threads in a single operating system process.
 For an excellent introduction to Rust channels, see [Using Message Passing to Transfer Data Between Threads](https://doc.rust-lang.org/stable/book/ch16-02-message-passing.html) in the Rust reference.
 
-`ipc-channel-mux`[^mux] extends Rust channels to support inter-process communication (IPC) in a single operating system instance.
+`ipc-channel-mux` extends Rust channels to support inter-process communication (IPC) in a single operating system instance.
 `ipc-channel-mux` multiplexes _subchannels_ over IPC primitives to reduce the consumption of such primitives.
 The `serde` library is used to serialize and deserialize messages sent over `ipc-channel-mux`.
 
