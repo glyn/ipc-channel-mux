@@ -26,7 +26,7 @@ The easiest way to make your types implement `Serialize` and `Deserialize` is to
 `ipc-channel-mux` provides a one-shot server to help establish a subchannel between two processes. When a one-shot server is created, a server name is generated and returned along with the server.
 
 The client process calls `connect()` passing the server name and this returns the sender end of an subchannel from
-the client to the server. Note that there is a restriction in `connect()` may be called at most once per one-shot server.
+the client to the server. Note that there is a restriction: `connect()` may be called at most once per one-shot server.
 
 The server process calls `accept()` on the server to accept a connect request from a client. `accept()` blocks until a client has connected to the server and sent a message. It then returns a pair consisting of the receiver end of the subchannel from client to server and the first message received from the client.
 
