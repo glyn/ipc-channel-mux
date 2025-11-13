@@ -632,7 +632,7 @@ impl<'a> MultiSender {
 /// [MultiReceiver]: struct.MultiReceiver.html
 #[derive(Debug)]
 struct MultiReceiver {
-    ipc_receiver: Rc<IpcReceiver<MultiMessage>>,
+    ipc_receiver: IpcReceiver<MultiMessage>,
     ipc_receiver_uuid: Uuid,
     mutator: RefCell<MultiReceiverMutator>,
 }
@@ -1469,7 +1469,7 @@ fn multi_channel() -> Result<(Rc<MultiSender>, Rc<MultiReceiver>), io::Error> {
     let mut senders = HashMap::new();
     senders.insert(client_id, ipc_response_sender);
     let multi_receiver = MultiReceiver {
-        ipc_receiver: Rc::new(ipc_receiver),
+        ipc_receiver: ipc_receiver,
         ipc_receiver_uuid: Uuid::new_v4(),
         mutator: RefCell::new(MultiReceiverMutator {
             ipc_senders: senders,
@@ -1507,7 +1507,7 @@ impl OneShotMultiServer {
             self.multi_server.accept()?;
 
         let mr = MultiReceiver {
-            ipc_receiver: Rc::new(multi_receiver),
+            ipc_receiver: multi_receiver,
             ipc_receiver_uuid: Uuid::new_v4(),
             mutator: RefCell::new(MultiReceiverMutator {
                 ipc_senders: HashMap::new(),
