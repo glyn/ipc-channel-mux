@@ -479,7 +479,7 @@ struct MultiSender {
     ipc_sender: Rc<IpcSender<MultiMessage>>,
     uuid: Uuid,
     sender_id: Rc<RefCell<Source<Weak<IpcSender<MultiMessage>>>>>,
-    response_receiver: Rc<IpcReceiver<MultiResponse>>,
+    response_receiver: IpcReceiver<MultiResponse>,
     sub_receiver_proxies: RefCell<HashMap<SubChannelId, subchannel_lifecycle::SubReceiverProxy>>,
 }
 
@@ -590,7 +590,7 @@ impl<'a> MultiSender {
             ipc_sender: sender,
             uuid: ipc_sender_uuid,
             sender_id: Rc::new(RefCell::new(Source::new())),
-            response_receiver: Rc::new(response_receiver),
+            response_receiver: response_receiver,
             sub_receiver_proxies: RefCell::new(HashMap::new()),
         }))
     }
@@ -1484,7 +1484,7 @@ fn multi_channel() -> Result<(Rc<MultiSender>, Rc<MultiReceiver>), io::Error> {
         ipc_sender: Rc::new(ipc_sender),
         uuid: Uuid::new_v4(),
         sender_id: Rc::new(RefCell::new(Source::new())),
-        response_receiver: Rc::new(ipc_response_receiver),
+        response_receiver: ipc_response_receiver,
         sub_receiver_proxies: RefCell::new(HashMap::new()),
     };
     Ok((Rc::new(multi_sender), multi_receiver_rc))
