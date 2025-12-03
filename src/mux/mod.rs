@@ -641,7 +641,6 @@ struct ResolvedMessage {
     scid: SubChannelId,
     payload: Vec<u8>,
     senders: VecDeque<(SubChannelId, Rc<MultiSender>)>,
-    from: Uuid,
 }
 
 struct MultiReceiverMutator {
@@ -673,13 +672,12 @@ impl std::fmt::Debug for MultiReceiverMutator {
 thread_local! {
     static IPC_SENDERS_RECEIVED: RefCell<VecDeque<(SubChannelId, Rc<MultiSender>)>> = RefCell::new(VecDeque::new());
     static CURRENT_MULTI_RECEIVER: RefCell<Option<Rc<MultiReceiver>>> = RefCell::new(None);
-    static FROM_VIA: RefCell<(Uuid, SubChannelId)> = RefCell::new((ORIGIN, EMPTY_SUBCHANNEL_ID));
+    static VIA: RefCell<SubChannelId> = RefCell::new(EMPTY_SUBCHANNEL_ID);
 }
 
 fn establish_deserialization_context(
     mr: &Rc<MultiReceiver>,
     mut multi_senders: VecDeque<(SubChannelId, Rc<MultiSender>)>,
-    from: Uuid,
     via: SubChannelId,
 ) {
     IPC_SENDERS_RECEIVED.with(|senders| {
@@ -689,11 +687,11 @@ fn establish_deserialization_context(
     CURRENT_MULTI_RECEIVER.with(|multi_receiver| {
         multi_receiver.borrow_mut().replace(Rc::clone(mr));
     });
-    FROM_VIA.with(|from_via| from_via.replace((from, via)));
+    VIA.with(|via_val| via_val.replace(via));
 }
 
 fn clear_deserialization_context() {
-    FROM_VIA.with(|from_via| from_via.replace((ORIGIN, EMPTY_SUBCHANNEL_ID)));
+    VIA.with(|via| via.replace(EMPTY_SUBCHANNEL_ID));
     CURRENT_MULTI_RECEIVER.with(|multi_receiver| {
         multi_receiver.borrow_mut().take();
     });
@@ -783,7 +781,7 @@ impl MultiReceiver {
                 Ok(())
             },
 
-            MultiMessage::Data(scid, payload, ipc_senders, from) => {
+            MultiMessage::Data(scid, payload, ipc_senders) => {
                 let srs: VecDeque<(SubChannelId, Rc<MultiSender>)> = ipc_senders
                     .iter()
                     .map(|(scid, s)| (scid.clone(), Self::ipcsender_from_sender_and_or_id(&mr, s)))
@@ -794,7 +792,6 @@ impl MultiReceiver {
                         scid: scid,
                         payload: payload,
                         senders: srs,
-                        from: from,
                     })
                 } else {
                     // Send ReceiveFailed to members of srs
@@ -804,7 +801,6 @@ impl MultiReceiver {
                             .ipc_sender
                             .send(MultiMessage::ReceiveFailed {
                                 scid: recv_scid.clone(),
-                                from,
                                 via: scid.clone(),
                             });
                     });
@@ -821,8 +817,6 @@ impl MultiReceiver {
                 }
             },
             MultiMessage::Disconnect(scid, source) => {
-                // FIXME: all senders (the original, its clones, and any transmitted copies) need to disconnect
-                // before the receiver should stop blocking to receive messages.
                 if let Some(sm) = mr.mutator.borrow_mut().sub_channels.get(&scid) {
                     sm.disconnect(source);
                 }
@@ -831,7 +825,6 @@ impl MultiReceiver {
             },
             MultiMessage::Sending {
                 scid,
-                from,
                 via,
                 via_chan,
             } => {
@@ -839,7 +832,7 @@ impl MultiReceiver {
 
                 if let Some(sm) = mr.mutator.borrow_mut().sub_channels.get(&scid) {
                     sm.to_be_sent(
-                        from,
+                        ORIGIN,
                         via,
                         Box::new(move || probe(ipc_sender.ipc_sender.clone())),
                     );
@@ -847,21 +840,20 @@ impl MultiReceiver {
 
                 Ok(())
             },
-            MultiMessage::ReceiveFailed { scid, from, via } => {
+            MultiMessage::ReceiveFailed { scid, via } => {
                 if let Some(sm) = mr.mutator.borrow_mut().sub_channels.get(&scid) {
-                    sm.receive_failed(from, via);
+                    sm.receive_failed(ORIGIN, via);
                 }
 
                 Ok(())
             },
             MultiMessage::Received {
                 scid,
-                from,
                 via,
                 new_source,
             } => {
                 if let Some(sm) = mr.mutator.borrow_mut().sub_channels.get(&scid) {
-                    sm.received(from, via, new_source);
+                    sm.received(ORIGIN, via, new_source);
                 }
 
                 Ok(())
@@ -1003,7 +995,6 @@ impl SubChannelSender {
             .for_each(|(subchannel_id, ipc_sender, sender_id)| {
                 let _ = ipc_sender.send(MultiMessage::Sending {
                     scid: subchannel_id.clone(),
-                    from: ORIGIN, // TODO: do we need to send the actual sender source?
                     via: self.sub_channel_id,
                     via_chan: Self::ipc_sender_and_or_uuid(
                         sender_id.clone(),
@@ -1028,7 +1019,7 @@ impl SubChannelSender {
             .collect();
         let result =
             self.ipc_sender
-                .send(MultiMessage::Data(self.sub_channel_id, payload, srs, ORIGIN));
+                .send(MultiMessage::Data(self.sub_channel_id, payload, srs));
         log::debug!("<SubChannelSender::send -> {:#?}", result.as_ref());
         result.map_err(From::from)
     }
@@ -1068,6 +1059,7 @@ impl SubChannelSender {
     fn disconnect(&self) -> Result<(), MultiplexError> {
         Ok(self
             .ipc_sender
+            // FIXME: is ORIGIN always correct below?
             .send(MultiMessage::Disconnect(self.sub_channel_id, ORIGIN))?)
     }
 }
@@ -1101,14 +1093,13 @@ impl<'de> Deserialize<'de> for SubChannelSender {
                 .ipc_receiver_uuid
         });
 
-        let (from, via) = FROM_VIA.with(|from_via| from_via.borrow().clone());
+        let via = VIA.with(|via| via.borrow().clone());
 
         multi_sender
             .1
             .ipc_sender
             .send(MultiMessage::Received {
                 scid: scsi.sub_channel_id,
-                from: from,
                 via: via,
                 new_source,
             })
@@ -1275,7 +1266,6 @@ impl Drop for SubChannelReceiver {
                     scid: via,
                     payload: _,
                     senders: scids_and_multi_senders,
-                    from,
                 }) => {
                     log::trace!(
                         "SubChannelReceiver::drop draining = {:#?}",
@@ -1284,7 +1274,6 @@ impl Drop for SubChannelReceiver {
                     scids_and_multi_senders.iter().for_each(|(scid, ms)| {
                         let _ = ms.ipc_sender.send(MultiMessage::ReceiveFailed {
                             scid: scid.clone(),
-                            from,
                             via,
                         });
                     });
@@ -1318,14 +1307,12 @@ impl SubChannelReceiver {
                     scid,
                     payload,
                     senders: multi_senders,
-                    from,
                 }) => {
                     log::trace!("SubChannelReceiver::recv received = {:#?}", payload);
 
                     establish_deserialization_context(
                         &self.multi_receiver,
                         multi_senders,
-                        from,
                         scid,
                     );
 
@@ -1360,23 +1347,19 @@ enum MultiMessage {
         SubChannelId,
         Vec<u8>,
         Vec<(SubChannelId, IpcSenderAndOrId)>,
-        Uuid,
     ),
     SubChannelId(SubChannelId, String),
     Sending {
         scid: SubChannelId,
-        from: Uuid,
         via: SubChannelId,
         via_chan: IpcSenderAndOrId,
     },
     ReceiveFailed {
         scid: SubChannelId,
-        from: Uuid,
         via: SubChannelId,
     },
     Received {
         scid: SubChannelId,
-        from: Uuid,
         via: SubChannelId,
         new_source: Uuid,
     },
