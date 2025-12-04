@@ -76,7 +76,7 @@ where
 {
     maybe: RefCell<Option<T>>,
     sources: RefCell<HashSet<Source>>,
-    in_flight: RefCell<HashBag<(Source, Via)>>,
+    in_flight: RefCell<HashBag<Via>>,
     probes: RefCell<HashMap<Via, Box<Probe>>>,
     phantom_m: PhantomData<M>,
     phantom_e: PhantomData<Error>,
@@ -125,15 +125,15 @@ where
     }
 
     #[instrument(level = "debug", skip(self, probe))]
-    pub fn to_be_sent(&self, from: Source, via: Via, probe: Box<Probe>) {
-        self.in_flight.borrow_mut().insert((from, via.clone()));
+    pub fn to_be_sent(&self, via: Via, probe: Box<Probe>) {
+        self.in_flight.borrow_mut().insert(via.clone());
         self.probes.borrow_mut().insert(via, probe);
     }
 
     #[instrument(level = "debug", skip(self))]
     // Record the receipt of an inflight value.
-    pub fn received(&self, from: Source, via: Via, received_at_source: Source) {
-        self.in_flight.borrow_mut().remove(&(from, via));
+    pub fn received(&self, via: Via, received_at_source: Source) {
+        self.in_flight.borrow_mut().remove(&via);
         self.sources.borrow_mut().insert(received_at_source);
     }
 
@@ -151,8 +151,8 @@ where
 
     // Remove the given inflight value and disconnect it.
     #[instrument(level = "debug", skip(self))]
-    pub fn receive_failed(&self, from: Source, via: Via) {
-        self.in_flight.borrow_mut().remove(&(from, via));
+    pub fn receive_failed(&self, via: Via) {
+        self.in_flight.borrow_mut().remove(&via);
         if self.sources.borrow().is_empty() && self.in_flight.borrow().is_empty() {
             self.maybe.replace(None);
         }
@@ -174,9 +174,9 @@ where
         self.in_flight
             .borrow()
             .iter()
-            .filter(|(_, via)| disconnected.contains(via))
-            .for_each(|(source, via)| {
-                disconnected_in_flight.insert(((*source).clone(), via.clone()));
+            .filter(|via| disconnected.contains(via))
+            .for_each(|via| {
+                disconnected_in_flight.insert(via.clone());
             });
 
         // Remove all in-flight entries for disconnected Vias.
@@ -187,7 +187,7 @@ where
 
         // Remove all probes for disconnected Vias.
         let mut probes = self.probes.borrow_mut();
-        disconnected_in_flight.iter().for_each(|(_, via)| {
+        disconnected_in_flight.iter().for_each(|via| {
             probes.remove(via);
         });
 
@@ -320,8 +320,8 @@ mod tests {
             dyn Fn() -> bool,
         > = SubSenderStateMachine::new(TestSender::new(&sent), "x");
 
-        ssm.to_be_sent("x", "scid", Box::new(|| true));
-        ssm.received("x", "scid", "y");
+        ssm.to_be_sent("scid", Box::new(|| true));
+        ssm.received("scid", "y");
         ssm.disconnect("y");
         assert_eq!(ssm.send('a'), Some(Ok(())));
 
@@ -341,8 +341,8 @@ mod tests {
             dyn Fn() -> bool,
         > = SubSenderStateMachine::new(TestSender::new(&sent), "x");
 
-        ssm.to_be_sent("x", "scid", Box::new(|| true));
-        ssm.received("x", "scid", "y");
+        ssm.to_be_sent("scid", Box::new(|| true));
+        ssm.received("scid", "y");
 
         // Disconnecting the original source should have no effect.
         ssm.disconnect("x");
@@ -363,7 +363,7 @@ mod tests {
             &'static str,
             dyn Fn() -> bool,
         > = SubSenderStateMachine::new(TestSender::new(&sent), "x");
-        ssm.to_be_sent("x", "scid", Box::new(|| true));
+        ssm.to_be_sent("scid", Box::new(|| true));
         ssm.disconnect("x");
         assert_eq!(ssm.send('a'), Some(Ok(())));
         assert_eq!(sent.borrow().clone(), vec!['a']);
@@ -381,14 +381,14 @@ mod tests {
             dyn Fn() -> bool,
         > = SubSenderStateMachine::new(TestSender::new(&sent), "x");
 
-        ssm.to_be_sent("x", "scid", Box::new(|| true));
-        ssm.to_be_sent("x", "scid", Box::new(|| true));
+        ssm.to_be_sent("scid", Box::new(|| true));
+        ssm.to_be_sent("scid", Box::new(|| true));
         ssm.disconnect("x");
 
-        ssm.received("x", "scid", "y");
+        ssm.received("scid", "y");
         ssm.disconnect("y");
 
-        ssm.received("x", "scid", "y");
+        ssm.received("scid", "y");
         assert_eq!(ssm.send('a'), Some(Ok(())));
         assert_eq!(sent.borrow().clone(), vec!['a']);
     }
@@ -405,7 +405,7 @@ mod tests {
             dyn Fn() -> bool,
         > = SubSenderStateMachine::new(TestSender::new(&sent), "x");
 
-        ssm.to_be_sent("x", "scid", Box::new(|| false));
+        ssm.to_be_sent("scid", Box::new(|| false));
         ssm.disconnect("x");
 
         assert_eq!(ssm.send('a'), Some(Ok(())));
@@ -427,8 +427,8 @@ mod tests {
             dyn Fn() -> bool,
         > = SubSenderStateMachine::new(TestSender::new(&sent), "x");
 
-        ssm.to_be_sent("x", "scid", Box::new(|| false));
-        ssm.to_be_sent("x", "scid", Box::new(|| false));
+        ssm.to_be_sent("scid", Box::new(|| false));
+        ssm.to_be_sent("scid", Box::new(|| false));
         ssm.disconnect("x");
 
         assert_eq!(ssm.send('a'), Some(Ok(())));
@@ -453,7 +453,6 @@ mod tests {
         let count: Rc<RefCell<u8>> = Rc::new(RefCell::new(0));
         let count_clone = Rc::clone(&count);
         ssm.to_be_sent(
-            "x",
             "scid",
             Box::new(move || {
                 let mut c = count_clone.borrow().clone();
@@ -487,13 +486,13 @@ mod tests {
             dyn Fn() -> bool,
         > = SubSenderStateMachine::new(TestSender::new(&sent), "x");
 
-        ssm.to_be_sent("x", "scid", Box::new(|| true));
+        ssm.to_be_sent("scid", Box::new(|| true));
 
         // Disconnecting the original source should have no effect.
         ssm.disconnect("x");
         assert_eq!(ssm.send('a'), Some(Ok(())));
 
-        ssm.receive_failed("x", "scid");
+        ssm.receive_failed("scid");
         assert_eq!(ssm.send('a'), None);
     }
 }
