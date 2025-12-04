@@ -135,6 +135,7 @@ where
     pub fn received(&self, via: Via, received_at_source: Source) {
         self.in_flight.borrow_mut().remove(&via);
         self.sources.borrow_mut().insert(received_at_source);
+        self.probes.borrow_mut().remove(&via);
     }
 
     // Disconnect from the given source. Once the subsender has been disconnected
@@ -495,4 +496,22 @@ mod tests {
         ssm.receive_failed("scid");
         assert_eq!(ssm.send('a'), None);
     }
+
+    #[test]
+    fn sub_sender_state_machine_remove_probe_on_disconnect() {
+        let sent = Rc::new(RefCell::new(vec![]));
+        let ssm: SubSenderStateMachine<
+            TestSender,
+            char,
+            TestError,
+            &'static str,
+            &'static str,
+            dyn Fn() -> bool,
+        > = SubSenderStateMachine::new(TestSender::new(&sent), "x");
+
+        ssm.to_be_sent("scid", Box::new(|| panic!("probe should not be run")));
+        ssm.received("scid", "y");
+        ssm.poll();
+    }
+
 }
