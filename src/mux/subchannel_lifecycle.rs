@@ -104,6 +104,7 @@ where
     Via: Clone + Debug + Eq + Hash,
     Probe: Fn() -> bool + ?Sized,
 {
+    #[instrument(level = "debug", skip(t))]
     pub fn new(
         t: T,
         initial_source: Source,

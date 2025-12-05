@@ -1050,14 +1050,6 @@ impl SubChannelSender {
     fn sub_channel_id(&self) -> SubChannelId {
         self.sub_channel_id
     }
-
-    #[allow(dead_code)]
-    fn disconnect(&self) -> Result<(), MultiplexError> {
-        Ok(self
-            .ipc_sender
-            // FIXME: is ORIGIN always correct below?
-            .send(MultiMessage::Disconnect(self.sub_channel_id, ORIGIN))?)
-    }
 }
 
 impl<'de> Deserialize<'de> for SubChannelSender {
