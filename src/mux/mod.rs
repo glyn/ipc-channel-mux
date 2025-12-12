@@ -1540,7 +1540,7 @@ impl SubReceiverSet {
                         },
                     )]);
                 },
-                Err(std::sync::mpsc::TryRecvError::Empty) => unimplemented!(),
+                Err(std::sync::mpsc::TryRecvError::Empty) => MultiReceiver::receive(&rx.multi_receiver).unwrap(),
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     return Ok(vec![SubSelectionResult::ChannelClosed(0)]);
                 },
