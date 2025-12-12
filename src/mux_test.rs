@@ -496,3 +496,47 @@ fn opaque_receiver() {
     tx.send(1).unwrap();
     assert_eq!(rx.recv().unwrap(), 1);
 }
+
+#[test]
+fn receiver_set() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel::<i32>();
+
+    let mut rx_set = mux::SubReceiverSet::new().unwrap();
+    let rx_id = rx_set.add(rx);
+
+    tx.send(1).unwrap();
+    let sel = rx_set.select();
+    // let (received_id, received_data) = rx_set
+    //     .select()
+    //     .unwrap()
+    //     .into_iter()
+    //     .next()
+    //     .unwrap()
+    //     .unwrap();
+    // let received_value: i32 = received_data.to().unwrap();
+    // assert_eq!(received_id, rx_id);
+    // assert_eq!(received_value, 1);
+}
+
+#[test]
+fn receiver_set_disconnect() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel::<i32>();
+
+    let mut rx_set = mux::SubReceiverSet::new().unwrap();
+    let rx_id = rx_set.add(rx);
+
+    drop(tx);
+    let sel = rx_set.select();
+    // let (received_id, received_data) = rx_set
+    //     .select()
+    //     .unwrap()
+    //     .into_iter()
+    //     .next()
+    //     .unwrap()
+    //     .unwrap();
+    // let received_value: i32 = received_data.to().unwrap();
+    // assert_eq!(received_id, rx_id);
+    // assert_eq!(received_value, 1);
+}

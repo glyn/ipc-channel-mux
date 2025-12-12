@@ -1430,3 +1430,121 @@ impl OneShotMultiServer {
         Ok(mr_rc)
     }
 }
+
+/// Collection of [SubReceiver]s moved into a set; thus creating a common
+/// (and exclusive) endpoint for receiving messages on any of the added
+/// subchannels.
+///
+/// # Examples
+///
+/// ```
+/// # use ipc_channel_mux::mux::{self, RawMessage, SubReceiverSet, SubSelectionResult};
+/// let data = vec![0x52, 0x75, 0x73, 0x74, 0x00];
+/// let channel = mux::Channel::new().unwrap();
+/// let (tx, rx) = channel.sub_channel();
+/// let mut rx_set = SubReceiverSet::new().unwrap();
+///
+/// // Add the receiver to the receiver set and send the data
+/// // from the sender
+/// let rx_id = rx_set.add(rx).unwrap();
+/// tx.send(data.clone()).unwrap();
+///
+/// // Poll the receiver set for any readable events
+/// for event in rx_set.select().unwrap() {
+///     match event {
+///         SubSelectionResult::MessageReceived(id, message) => {
+///             let rx_data: Vec<u8> = message.to().unwrap();
+///             assert_eq!(id, rx_id);
+///             assert_eq!(data, rx_data);
+///             println!("Received: {:?} from {}", data, id);
+///         },
+///         SubSelectionResult::ChannelClosed(id) => {
+///             assert_eq!(id, rx_id);
+///             println!("No more data from {}", id);
+///         }
+///     }
+/// }
+/// ```
+/// [SubReceiver]: struct.SubReceiver.html
+#[derive(Debug)]
+pub struct SubReceiverSet {
+    next_id: u64,
+    rxs: HashMap<u64, SubChannelReceiver>,
+}
+
+/// Result for readable events returned from [SubReceiverSet::select].
+///
+/// [SubReceiverSet::select]: struct.SubReceiverSet.html#method.select
+pub enum SubSelectionResult {
+    /// A message received from the [`SubReceiver`] in the [`RawMessage`] form,
+    /// identified by the `u64` value.
+    MessageReceived(u64, RawMessage),
+    /// The channel has been closed for the [SubReceiver] identified by the `u64` value.
+    /// [SubReceiver]: struct.SubReceiver.html
+    /// [RawMessage]: struct.RawMessage.html
+    ChannelClosed(u64),
+}
+
+pub struct RawMessage {
+    payload: Vec<u8>,
+    senders: VecDeque<(SubChannelId, Rc<MultiSender>)>,
+    scid: SubChannelId,
+}
+
+impl SubReceiverSet {
+    /// Create a new empty [SubReceiverSet].
+    ///
+    /// SubReceivers may then be added to the set with the [add]
+    /// method.
+    ///
+    /// [add]: #method.add
+    /// [SubReceiverSet]: struct.SubReceiverSet.html
+    #[instrument(level = "debug", err(level = "debug"))]
+    pub fn new() -> Result<SubReceiverSet, io::Error> {
+        Ok(SubReceiverSet {
+            next_id: 0,
+            rxs: HashMap::new(),
+        })
+    }
+
+    /// Add and move the given [SubReceiver] into the set of subreceivers to be polled.
+    /// [SubReceiver]: struct.SubReceiver.html
+    #[instrument(level = "debug", skip(subreceiver), err(level = "debug"))]
+    pub fn add<T>(&mut self, subreceiver: SubReceiver<T>) -> Result<u64, io::Error>
+    where
+        T: for<'x> Deserialize<'x> + Serialize,
+    {
+        let id = self.next_id;
+        self.next_id += 1;
+        self.rxs.insert(id, subreceiver.sub_channel_receiver);
+        Ok(id)
+    }
+
+    /// Wait for a message to be received or the channel to be closed for any of the
+    /// receivers in the set. The method may return multiple events. An event may be
+    /// either a message received or a channel closed event.
+    #[instrument(level = "debug", err(level = "debug"))]
+    pub fn select(&mut self) -> Result<Vec<SubSelectionResult>, io::Error> {
+        // FIXME: assume for now there is one receiver in the set and it is non-empty
+        let rx = self.rxs.get(&0).unwrap();
+        loop {
+            let t = rx.channel.try_recv();
+            match t {
+                Ok(ResolvedMessage { scid, payload, senders }) => {
+                    return Ok(vec![SubSelectionResult::MessageReceived(
+                        0,
+                        RawMessage {
+                            payload,
+                            senders,
+                            scid,
+                        },
+                    )]);
+                },
+                Err(std::sync::mpsc::TryRecvError::Empty) => unimplemented!(),
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    return Ok(vec![SubSelectionResult::ChannelClosed(0)]);
+                },
+            }
+        }
+    }
+}
