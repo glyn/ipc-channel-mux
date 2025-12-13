@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::mux::{self, SubOneShotServer, SubReceiver, SubSender};
+use crate::mux::{self, SubOneShotServer, SubReceiver, SubSelectionResult, SubSender};
 use std::thread;
 use test_log::test;
 
@@ -503,20 +503,18 @@ fn receiver_set() {
     let (tx, rx) = channel.sub_channel::<i32>();
 
     let mut rx_set = mux::SubReceiverSet::new().unwrap();
-    let rx_id = rx_set.add(rx);
+    let rx_id = rx_set.add(rx).unwrap();
 
     tx.send(1).unwrap();
-    let sel = rx_set.select();
-    // let (received_id, received_data) = rx_set
-    //     .select()
-    //     .unwrap()
-    //     .into_iter()
-    //     .next()
-    //     .unwrap()
-    //     .unwrap();
-    // let received_value: i32 = received_data.to().unwrap();
-    // assert_eq!(received_id, rx_id);
-    // assert_eq!(received_value, 1);
+    if let SubSelectionResult::MessageReceived(received_id, received_data) =
+        rx_set.select().unwrap().into_iter().next().unwrap()
+    {
+        // let received_value: i32 = received_data.to().unwrap();
+        assert_eq!(received_id, rx_id);
+        // assert_eq!(received_value, 1);
+    } else {
+        assert!(false);
+    }
 }
 
 #[test]
@@ -525,18 +523,14 @@ fn receiver_set_disconnect() {
     let (tx, rx) = channel.sub_channel::<i32>();
 
     let mut rx_set = mux::SubReceiverSet::new().unwrap();
-    let rx_id = rx_set.add(rx);
+    let rx_id = rx_set.add(rx).unwrap();
 
     drop(tx);
-    let sel = rx_set.select();
-    // let (received_id, received_data) = rx_set
-    //     .select()
-    //     .unwrap()
-    //     .into_iter()
-    //     .next()
-    //     .unwrap()
-    //     .unwrap();
-    // let received_value: i32 = received_data.to().unwrap();
-    // assert_eq!(received_id, rx_id);
-    // assert_eq!(received_value, 1);
+    if let SubSelectionResult::ChannelClosed(received_id) =
+        rx_set.select().unwrap().into_iter().next().unwrap()
+    {
+        assert_eq!(received_id, rx_id);
+    } else {
+        assert!(false);
+    }
 }
