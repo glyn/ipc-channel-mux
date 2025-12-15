@@ -1485,6 +1485,7 @@ pub enum SubSelectionResult {
     ChannelClosed(u64),
 }
 
+/// A message received on a subchannel prior to deserialisation.
 pub struct RawMessage {
     multi_receiver: Rc<MultiReceiver>,
     payload: Vec<u8>,
