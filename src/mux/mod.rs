@@ -1486,9 +1486,27 @@ pub enum SubSelectionResult {
 }
 
 pub struct RawMessage {
+    multi_receiver: Rc<MultiReceiver>,
     payload: Vec<u8>,
     senders: VecDeque<(SubChannelId, Rc<MultiSender>)>,
     scid: SubChannelId,
+}
+
+impl RawMessage {
+    /// Deserialise the raw message into the inferred type.
+    pub fn to<T>(self) -> Result<T, MultiplexError>
+    where
+        T: for<'de> Deserialize<'de> + Serialize,
+    {
+
+        establish_deserialization_context(&self.multi_receiver, self.senders, self.scid);
+
+        let result = bincode::deserialize::<T>(self.payload.as_slice());
+
+        clear_deserialization_context();
+
+        return result.map_err(From::from);
+    }
 }
 
 impl SubReceiverSet {
@@ -1534,6 +1552,7 @@ impl SubReceiverSet {
                     return Ok(vec![SubSelectionResult::MessageReceived(
                         0,
                         RawMessage {
+                            multi_receiver: Rc::clone(&rx.multi_receiver),
                             payload,
                             senders,
                             scid,

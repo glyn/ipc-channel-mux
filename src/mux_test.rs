@@ -509,9 +509,9 @@ fn receiver_set() {
     if let SubSelectionResult::MessageReceived(received_id, received_data) =
         rx_set.select().unwrap().into_iter().next().unwrap()
     {
-        // let received_value: i32 = received_data.to().unwrap();
         assert_eq!(received_id, rx_id);
-        // assert_eq!(received_value, 1);
+        let received_value: i32 = received_data.to().unwrap();
+        assert_eq!(received_value, 1);
     } else {
         assert!(false);
     }
