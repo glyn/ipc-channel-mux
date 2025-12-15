@@ -1499,7 +1499,6 @@ impl RawMessage {
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {
-
         establish_deserialization_context(&self.multi_receiver, self.senders, self.scid);
 
         let result = bincode::deserialize::<T>(self.payload.as_slice());
@@ -1544,27 +1543,32 @@ impl SubReceiverSet {
     /// either a message received or a channel closed event.
     #[instrument(level = "debug", err(level = "debug"))]
     pub fn select(&mut self) -> Result<Vec<SubSelectionResult>, io::Error> {
-        // FIXME: assume for now there is one receiver in the set and it is non-empty
-        let rx = self.rxs.get(&0).unwrap();
+        // TODO: relax the current restriction of returning at most one SubSelectionResult.
         loop {
-            let t = rx.channel.try_recv();
-            match t {
-                Ok(ResolvedMessage { scid, payload, senders }) => {
-                    return Ok(vec![SubSelectionResult::MessageReceived(
-                        0,
-                        RawMessage {
-                            multi_receiver: Rc::clone(&rx.multi_receiver),
-                            payload,
-                            senders,
-                            scid,
-                        },
-                    )]);
-                },
-                Err(std::sync::mpsc::TryRecvError::Empty) => MultiReceiver::receive(&rx.multi_receiver).unwrap(),
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    return Ok(vec![SubSelectionResult::ChannelClosed(0)]);
-                },
+            for (id, rx) in self.rxs.iter() {
+                let t = rx.channel.try_recv();
+                match t {
+                    Ok(ResolvedMessage { scid, payload, senders }) => {
+                        log::trace!("SubReceiverSet::select received = {:#?} on subchannel {}", payload, scid);
+                        return Ok(vec![SubSelectionResult::MessageReceived(
+                            *id,
+                            RawMessage {
+                                multi_receiver: Rc::clone(&rx.multi_receiver),
+                                payload,
+                                senders,
+                                scid,
+                            },
+                        )]);
+                    },
+                    Err(std::sync::mpsc::TryRecvError::Empty) => (),
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        return Ok(vec![SubSelectionResult::ChannelClosed(0)]);
+                    },
+                }
             }
+            // FIXME: the following assumes a non-empty, homogeneous collection of SubReceivers.
+            let rx = self.rxs.get(&0).unwrap();
+            MultiReceiver::receive(&rx.multi_receiver).unwrap();
         }
     }
 }
