@@ -142,12 +142,17 @@ where
     // Disconnect from the given source. Once the subsender has been disconnected
     // from all its sources, sending is disabled and receiving should return
     // Disconnected.
+    // Return an optional Sender which is `None` unless all the sources have been
+    // disconnected, in which case the returned value is `Some(s)` where s is the
+    // Sender.
     #[instrument(level = "debug", skip(self))]
-    pub fn disconnect(&self, source: Source) {
+    pub fn disconnect(&self, source: Source) -> Option<T> {
         let mut sources = self.sources.borrow_mut();
         sources.remove(&source);
         if sources.is_empty() && self.in_flight.borrow().is_empty() {
-            self.maybe.replace(None);
+            self.maybe.replace(None)
+        } else {
+            None
         }
     }
 
@@ -199,6 +204,10 @@ where
         } else {
             true
         }
+    }
+
+    pub fn switch_sender(&mut self, t: T) {
+        self.maybe.replace(Some(t));
     }
 }
 
