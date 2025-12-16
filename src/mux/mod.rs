@@ -1566,9 +1566,9 @@ impl SubReceiverSet {
                     },
                 }
             }
-            // FIXME: the following assumes a non-empty, homogeneous collection of SubReceivers.
-            let rx = self.rxs.get(&0).unwrap();
-            MultiReceiver::receive(&rx.multi_receiver).unwrap();
+            for (_, rx) in self.rxs.iter() {
+                MultiReceiver::receive(&rx.multi_receiver).unwrap();
+            }
         }
     }
 }

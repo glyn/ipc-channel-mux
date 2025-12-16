@@ -498,6 +498,7 @@ fn opaque_receiver() {
 }
 
 #[test]
+// A homogeneous SubReceiverSet is one whose SubReceivers all have the same underlying IpcChannel.
 fn receiver_set_homogeneous() {
     let channel = mux::Channel::new().unwrap();
     let (tx1, rx1) = channel.sub_channel::<i32>();
@@ -506,6 +507,51 @@ fn receiver_set_homogeneous() {
     let rx1_id = rx_set.add(rx1).unwrap();
 
     let (tx2, rx2) = channel.sub_channel::<String>();
+    let rx2_id = rx_set.add(rx2).unwrap();
+
+    tx1.send(1).unwrap();
+    tx2.send("test".to_string()).unwrap();
+
+    let mut recvd1 = false;
+    let mut recvd2 = false;
+    for _ in 1..3 {
+        if let SubSelectionResult::MessageReceived(received_id, received_data) =
+            rx_set.select().unwrap().into_iter().next().unwrap()
+        {
+            match received_id {
+                id if id == rx1_id => {
+                    assert!(!recvd1, "i32 received twice");
+                    let received_value: i32 = received_data.to().unwrap();
+                    assert_eq!(received_value, 1);
+                    recvd1 = true;
+                },
+                id if id == rx2_id => {
+                    assert!(!recvd2, "String received twice");
+                    let received_value: String = received_data.to().unwrap();
+                    assert_eq!(received_value, "test".to_string());
+                    recvd2 = true;
+                },
+                _ => assert!(false),
+            }
+        } else {
+            assert!(false, "Unexpected SubSelectionResult");
+        }
+    }
+    assert!(recvd1, "i32 was not received");
+    assert!(recvd2, "String was not received");
+}
+
+#[test]
+// A heterogeneous SubReceiverSet is one with SubReceivers having distinct underlying IpcChannels.
+fn receiver_set_heterogeneous() {
+    let channel1 = mux::Channel::new().unwrap();
+    let (tx1, rx1) = channel1.sub_channel::<i32>();
+
+    let mut rx_set = mux::SubReceiverSet::new().unwrap();
+    let rx1_id = rx_set.add(rx1).unwrap();
+
+    let channel2 = mux::Channel::new().unwrap();
+    let (tx2, rx2) = channel2.sub_channel::<String>();
     let rx2_id = rx_set.add(rx2).unwrap();
 
     tx1.send(1).unwrap();
@@ -559,5 +605,4 @@ fn receiver_set_disconnect() {
 }
 
 // TODO: test homogeneous SubReceiverSet where select has to wait
-// TODO: test heterogeneous SubReceiverSet
 // TODO: test empty SubReceiverSet
