@@ -647,39 +647,8 @@ struct ResolvedMessage {
     multi_receiver: Option<Rc<MultiReceiver>>,
 }
 
-enum IpcReceiverOrMultiReceiverSet {
-    IpcReceiver(IpcReceiver<MultiMessage>),
-    MultiReceiverSet(Rc<RefCell<MultiReceiverSet>>),
-}
-
-impl IpcReceiverOrMultiReceiverSet {
-    /// Takes the IpcReceiver out of the value, leaving an MultiReceiverSet in its place.
-    fn take(&mut self, set: Rc<RefCell<MultiReceiverSet>>) -> Option<IpcReceiver<MultiMessage>> {
-        match std::mem::replace(self, IpcReceiverOrMultiReceiverSet::MultiReceiverSet(set)) {
-            IpcReceiverOrMultiReceiverSet::IpcReceiver(ipc_receiver) => Some(ipc_receiver),
-            IpcReceiverOrMultiReceiverSet::MultiReceiverSet(_) => None,
-        }
-    }
-
-    /// Converts from `&IpcReceiverOrMultiReceiverSet` to `Option<&IpcReceiver>`.
-    fn ipc_receiver_as_ref(&self) -> Option<&IpcReceiver<MultiMessage>> {
-        match *self {
-            IpcReceiverOrMultiReceiverSet::IpcReceiver(ref ipc_receiver) => Some(ipc_receiver),
-            _ => None,
-        }
-    }
-
-    /// Converts from `&IpcReceiverOrMultiReceiverSet` to `Option<&Rc<MultiReceiverSet>>`.
-    fn multi_receiver_set_as_ref(&self) -> Option<&Rc<RefCell<MultiReceiverSet>>> {
-        match *self {
-            IpcReceiverOrMultiReceiverSet::MultiReceiverSet(ref set) => Some(set),
-            _ => None,
-        }
-    }
-}
-
 struct MultiReceiverMutator {
-    ipc_receiver_or_multi_receiver_set: IpcReceiverOrMultiReceiverSet,
+    maybe_ipc_receiver: Option<IpcReceiver<MultiMessage>>,
     ipc_senders: HashMap<ClientId, IpcSender<MultiResponse>>,
     sub_channels: HashMap<
         SubChannelId,
@@ -778,12 +747,7 @@ impl MultiReceiver {
     fn receive(mr: &Rc<MultiReceiver>) -> Result<(), MultiplexError> {
         let msg = loop {
             let polling_interval = Duration::new(1, 0);
-            let result = if let Some(receiver) = mr
-                .mutator
-                .borrow()
-                .ipc_receiver_or_multi_receiver_set
-                .ipc_receiver_as_ref()
-            {
+            let result = if let Some(receiver) = mr.mutator.borrow().maybe_ipc_receiver.as_ref() {
                 receiver.try_recv_timeout(polling_interval)
             } else {
                 return Err(MultiplexError::InternalError(
@@ -808,12 +772,7 @@ impl MultiReceiver {
 
     #[instrument(level = "debug", err(level = "debug"))]
     fn try_receive(mr: &Rc<MultiReceiver>) -> Result<(), MultiplexError> {
-        let result = if let Some(receiver) = mr
-            .mutator
-            .borrow()
-            .ipc_receiver_or_multi_receiver_set
-            .ipc_receiver_as_ref()
-        {
+        let result = if let Some(receiver) = mr.mutator.borrow().maybe_ipc_receiver.as_ref() {
             receiver.try_recv()
         } else {
             return Err(MultiplexError::InternalError(
@@ -833,12 +792,7 @@ impl MultiReceiver {
     #[instrument(level = "debug")]
     fn drain(mr: &Rc<MultiReceiver>) {
         loop {
-            let result = if let Some(receiver) = mr
-                .mutator
-                .borrow()
-                .ipc_receiver_or_multi_receiver_set
-                .ipc_receiver_as_ref()
-            {
+            let result = if let Some(receiver) = mr.mutator.borrow().maybe_ipc_receiver.as_ref() {
                 receiver.try_recv()
             } else {
                 return;
@@ -855,10 +809,7 @@ impl MultiReceiver {
     }
 
     #[instrument(level = "debug", ret, err(level = "debug"))]
-    fn handle(
-        mr: Rc<MultiReceiver>,
-        msg: MultiMessage,
-    ) -> Result<(), MultiplexError> {
+    fn handle(mr: Rc<MultiReceiver>, msg: MultiMessage) -> Result<(), MultiplexError> {
         let mr_clone = Rc::clone(&mr);
         match msg {
             MultiMessage::Connect(sender, client_id) => {
@@ -985,12 +936,7 @@ impl MultiReceiver {
     fn receive_sub_channel(
         mr: &Rc<MultiReceiver>,
     ) -> Result<(SubChannelId, String), MultiplexError> {
-        let msg = if let Some(receiver) = mr
-            .mutator
-            .borrow()
-            .ipc_receiver_or_multi_receiver_set
-            .ipc_receiver_as_ref()
-        {
+        let msg = if let Some(receiver) = mr.mutator.borrow().maybe_ipc_receiver.as_ref() {
             receiver.recv()?
         } else {
             return Err(MultiplexError::InternalError(
@@ -1486,9 +1432,7 @@ fn multi_channel() -> Result<(Rc<MultiSender>, Rc<MultiReceiver>), io::Error> {
     let multi_receiver = MultiReceiver {
         ipc_receiver_uuid: Uuid::new_v4(),
         mutator: RefCell::new(MultiReceiverMutator {
-            ipc_receiver_or_multi_receiver_set: IpcReceiverOrMultiReceiverSet::IpcReceiver(
-                ipc_receiver,
-            ),
+            maybe_ipc_receiver: Some(ipc_receiver),
             ipc_senders: senders,
             sub_channels: HashMap::new(),
             disconnectors: WeakValueHashMap::new(),
@@ -1526,9 +1470,7 @@ impl OneShotMultiServer {
         let mr = MultiReceiver {
             ipc_receiver_uuid: Uuid::new_v4(),
             mutator: RefCell::new(MultiReceiverMutator {
-                ipc_receiver_or_multi_receiver_set: IpcReceiverOrMultiReceiverSet::IpcReceiver(
-                    multi_receiver,
-                ),
+                maybe_ipc_receiver: Some(multi_receiver),
                 ipc_senders: HashMap::new(),
                 sub_channels: HashMap::new(),
                 disconnectors: WeakValueHashMap::new(),
@@ -1651,18 +1593,14 @@ impl SubReceiverSet {
     where
         T: for<'x> Deserialize<'x> + Serialize,
     {
-        let new = match &subreceiver
+        if subreceiver
             .sub_channel_receiver
             .multi_receiver
             .mutator
             .borrow()
-            .ipc_receiver_or_multi_receiver_set
+            .maybe_ipc_receiver
+            .is_some()
         {
-            IpcReceiverOrMultiReceiverSet::IpcReceiver(_) => true,
-            IpcReceiverOrMultiReceiverSet::MultiReceiverSet(_) => false,
-        };
-
-        if new {
             MultiReceiverSet::add(
                 &self.multi_receiver_set,
                 Rc::clone(&subreceiver.sub_channel_receiver.multi_receiver),
@@ -1764,8 +1702,8 @@ impl MultiReceiverSet {
         let ipc_receiver = multi_receiver
             .mutator
             .borrow_mut()
-            .ipc_receiver_or_multi_receiver_set
-            .take(Rc::clone(&mrs));
+            .maybe_ipc_receiver
+            .take();
         if let Some(rec) = ipc_receiver {
             let mut multi_receiver_set_mut = mrs.borrow_mut();
             let id = multi_receiver_set_mut.ipc_receiver_set.add(rec)?;
@@ -1787,10 +1725,7 @@ impl MultiReceiverSet {
             match result {
                 IpcSelectionResult::MessageReceived(id, ipc_message) => {
                     if let Some(multi_receiver) = mrs_mut.multi_receivers.get(&id) {
-                        MultiReceiver::handle(
-                            Rc::clone(multi_receiver),
-                            ipc_message.to()?,
-                        )?;
+                        MultiReceiver::handle(Rc::clone(multi_receiver), ipc_message.to()?)?;
                     }
                 },
                 IpcSelectionResult::ChannelClosed(id) => {
