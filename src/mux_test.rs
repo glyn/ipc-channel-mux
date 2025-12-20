@@ -819,4 +819,55 @@ fn receiver_set_heterogeneous_with_freestanding_subreceiver() {
     thread.join().expect("the spawned thread panicked");
 }
 
-// TODO: test empty SubReceiverSet
+#[test]
+// A homogeneous SubReceiverSet is one whose SubReceivers all have the same underlying IpcChannel.
+fn receiver_sets_with_subreceivers_sharing_ipc_channel() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx1, rx1) = channel.sub_channel::<i32>();
+
+    let mut rx_set1 = mux::SubReceiverSet::new().unwrap();
+    let rx1_id = rx_set1.add(rx1).unwrap();
+
+    let mut rx_set2 = mux::SubReceiverSet::new().unwrap();
+    let (tx2, rx2) = channel.sub_channel::<String>();
+    let rx2_id = rx_set2.add(rx2).unwrap();
+
+    tx1.send(1).unwrap();
+    tx2.send("test".to_string()).unwrap();
+
+    let mut recvd1 = false;
+    let mut recvd2 = false;
+
+    if let SubSelectionResult::MessageReceived(received_id, received_data) =
+        rx_set1.select().unwrap().into_iter().next().unwrap()
+    {
+        match received_id {
+            id if id == rx1_id => {
+                let received_value: i32 = received_data.to().unwrap();
+                assert_eq!(received_value, 1);
+                recvd1 = true;
+            },
+            _ => assert!(false),
+        }
+    } else {
+        assert!(false, "Unexpected SubSelectionResult");
+    }
+
+    if let SubSelectionResult::MessageReceived(received_id, received_data) =
+        rx_set2.select().unwrap().into_iter().next().unwrap()
+    {
+        match received_id {
+            id if id == rx2_id => {
+                let received_value: String = received_data.to().unwrap();
+                assert_eq!(received_value, "test".to_string());
+                recvd2 = true;
+            },
+            _ => assert!(false),
+        }
+    } else {
+        assert!(false, "Unexpected SubSelectionResult");
+    }
+
+    assert!(recvd1, "i32 was not received");
+    assert!(recvd2, "String was not received");
+}
