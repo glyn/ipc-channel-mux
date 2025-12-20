@@ -722,6 +722,35 @@ fn receiver_set_heterogeneous_blocking() {
     thread.join().expect("the spawned thread panicked");
 }
 
-// TODO: test homogeneous SubReceiverSet with a related SubReceiver not in the set
+#[test]
+// Test homogeneous SubReceiverSet with a "freestanding" SubReceiver not in the set.
+fn receiver_set_homogeneous_with_freestanding_subreceiver() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx1, rx1) = channel.sub_channel::<i32>();
+
+    let mut rx_set = mux::SubReceiverSet::new().unwrap();
+    let rx1_id = rx_set.add(rx1).unwrap();
+
+    let (tx2, rx2) = channel.sub_channel::<String>();
+
+    tx1.send(1).unwrap();
+    tx2.send("test".to_string()).unwrap();
+
+    if let SubSelectionResult::MessageReceived(received_id, received_data) =
+        rx_set.select().unwrap().into_iter().next().unwrap()
+    {
+        match received_id {
+            id if id == rx1_id => {
+                let received_value: i32 = received_data.to().unwrap();
+                assert_eq!(received_value, 1);
+            },
+            _ => assert!(false),
+        }
+    } else {
+        assert!(false, "Unexpected SubSelectionResult");
+    }
+    assert_eq!(rx2.recv().unwrap(), "test".to_string());
+}
+
 // TODO: test heterogeneous SubReceiverSet with a related SubReceiver not in the set
 // TODO: test empty SubReceiverSet
