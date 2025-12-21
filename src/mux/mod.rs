@@ -1593,7 +1593,13 @@ impl SubReceiverSet {
     where
         T: for<'x> Deserialize<'x> + Serialize,
     {
-        if subreceiver
+        self.add_opaque(subreceiver.to_opaque())
+    }
+
+    /// Add an [OpaqueSubReceiver] to the set of subreceivers to be polled.
+    /// [OpaqueSubReceiver]: struct.OpaqueSubReceiver.html
+    pub fn add_opaque(&mut self, receiver: OpaqueSubReceiver) -> Result<u64, MultiplexError> {
+        if receiver
             .sub_channel_receiver
             .multi_receiver
             .mutator
@@ -1603,20 +1609,20 @@ impl SubReceiverSet {
         {
             MultiReceiverSet::add(
                 &self.multi_receiver_set,
-                Rc::clone(&subreceiver.sub_channel_receiver.multi_receiver),
+                Rc::clone(&receiver.sub_channel_receiver.multi_receiver),
             )?;
         }
 
         // Modify MultiReceiver so that message for the subchannel are sent to the set.
         {
-            let mut multi_receiver_mutator = subreceiver
+            let mut multi_receiver_mutator = receiver
                 .sub_channel_receiver
                 .multi_receiver
                 .mutator
                 .borrow_mut();
             let sub_sender_state_machine = multi_receiver_mutator
                 .sub_channels
-                .get_mut(&subreceiver.sub_channel_receiver.sub_channel_id)
+                .get_mut(&receiver.sub_channel_receiver.sub_channel_id)
                 .unwrap();
             sub_sender_state_machine.switch_sender(self.tx.clone());
         }
@@ -1624,8 +1630,8 @@ impl SubReceiverSet {
         let id = self.next_id;
         self.next_id += 1;
         self.ids
-            .insert(subreceiver.sub_channel_receiver.sub_channel_id, id);
-        self.rxs.insert(id, subreceiver.sub_channel_receiver);
+            .insert(receiver.sub_channel_receiver.sub_channel_id, id);
+        self.rxs.insert(id, receiver.sub_channel_receiver);
         Ok(id)
     }
 
