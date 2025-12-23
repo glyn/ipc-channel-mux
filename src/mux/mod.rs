@@ -657,8 +657,116 @@ struct ResolvedMessage {
     multi_receiver: Option<Arc<MultiReceiver>>,
 }
 
+#[derive(Debug)]
+enum IpcReceiverOrMultiReceiverSet {
+    IpcReceiver(IpcReceiver<MultiMessage>),
+    MultiReceiverSet(Arc<Mutex<MultiReceiverSet>>),
+}
+
+#[derive(Debug)]
+enum TryRecvError {
+    MultiplexError(MultiplexError),
+    Empty,
+    Handled,
+}
+
+impl fmt::Display for TryRecvError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TryRecvError::MultiplexError(multiplex_error) => {
+                write!(f, "TryRecvError::MultiplexError({})", multiplex_error)
+            },
+            TryRecvError::Empty => write!(f, "TryRecvError::Empty"),
+            TryRecvError::Handled => write!(f, "TryRecvError::Handled"),
+        }
+    }
+}
+
+impl IpcReceiverOrMultiReceiverSet {
+    #[instrument(level = "trace", ret)]
+    fn try_receive_timeout(&self, duration: Duration) -> Result<MultiMessage, TryRecvError> {
+        match self {
+            IpcReceiverOrMultiReceiverSet::IpcReceiver(ipc_receiver) => {
+                match ipc_receiver.try_recv_timeout(duration) {
+                    Ok(multi_message) => return Ok(multi_message),
+                    Err(ipc::TryRecvError::IpcError(ipc_error)) => {
+                        return Err(TryRecvError::MultiplexError(MultiplexError::IpcError(
+                            ipc_error,
+                        )));
+                    },
+                    Err(ipc::TryRecvError::Empty) => return Err(TryRecvError::Empty),
+                }
+            },
+            IpcReceiverOrMultiReceiverSet::MultiReceiverSet(multi_receiver_set) => {
+                // FIXME: select blocks until there is something to receive. To implement try_receive_timeout
+                // properly may require MultiReceiverSet::try_select_timeout to be implemented, which may
+                // require IpcReceiverSet::try_select_timeout to be implemented.
+                match MultiReceiverSet::select(multi_receiver_set) {
+                    Ok(_) => return Err(TryRecvError::Handled),
+                    Err(e) => return Err(TryRecvError::MultiplexError(e)),
+                }
+            },
+        }
+    }
+
+    #[instrument(level = "trace", ret)]
+    fn try_receive(&self) -> Result<MultiMessage, TryRecvError> {
+        match self {
+            IpcReceiverOrMultiReceiverSet::IpcReceiver(ipc_receiver) => {
+                match ipc_receiver.try_recv() {
+                    Ok(multi_message) => return Ok(multi_message),
+                    Err(ipc::TryRecvError::IpcError(ipc_error)) => {
+                        return Err(TryRecvError::MultiplexError(MultiplexError::IpcError(
+                            ipc_error,
+                        )));
+                    },
+                    Err(ipc::TryRecvError::Empty) => return Err(TryRecvError::Empty),
+                }
+            },
+            IpcReceiverOrMultiReceiverSet::MultiReceiverSet(_multi_receiver_set) => {
+                // select would block until there is something to receive, so return "empty" instead.
+                // FIXME: implement MultiReceiverSet::try_select, which may require IpcReceiverSet::try_select
+                // to be implemented.
+                return Err(TryRecvError::Empty);
+                // match MultiReceiverSet::select(multi_receiver_set) {
+                //     Ok(_) => return Err(TryRecvError::Handled),
+                //     Err(e) => return Err(TryRecvError::MultiplexError(e)),
+                // }
+            },
+        }
+    }
+
+    #[instrument(level = "trace", ret)]
+    fn receive(&self) -> Result<MultiMessage, MultiplexError> {
+        match self {
+            IpcReceiverOrMultiReceiverSet::IpcReceiver(ipc_receiver) => match ipc_receiver.recv() {
+                Ok(multi_message) => return Ok(multi_message),
+                Err(e) => return Err(MultiplexError::IpcError(e)),
+            },
+            IpcReceiverOrMultiReceiverSet::MultiReceiverSet(_) => {
+                panic!("IpcReceiver not set");
+            },
+        }
+    }
+
+    fn is_ipc_receiver(&self) -> bool {
+        match self {
+            IpcReceiverOrMultiReceiverSet::IpcReceiver(_) => true,
+            IpcReceiverOrMultiReceiverSet::MultiReceiverSet(_) => false,
+        }
+    }
+
+    fn swap(&mut self, mrs: Arc<Mutex<MultiReceiverSet>>) -> IpcReceiver<MultiMessage> {
+        let prev = std::mem::replace(self, IpcReceiverOrMultiReceiverSet::MultiReceiverSet(mrs));
+        match prev {
+            IpcReceiverOrMultiReceiverSet::IpcReceiver(ipc_receiver) => ipc_receiver,
+            IpcReceiverOrMultiReceiverSet::MultiReceiverSet(_) => panic!("already swapped"),
+        }
+    }
+}
+
 struct MultiReceiverMutator {
-    maybe_ipc_receiver: Option<IpcReceiver<MultiMessage>>,
+    maybe_ipc_receiver: IpcReceiverOrMultiReceiverSet, // FIXME: rename this field
     ipc_senders: HashMap<ClientId, IpcSender<MultiResponse>>,
     sub_channels: HashMap<
         SubChannelId,
@@ -763,24 +871,26 @@ impl MultiReceiver {
     fn receive(mr: &Arc<MultiReceiver>) -> Result<(), MultiplexError> {
         let msg = loop {
             let polling_interval = Duration::new(1, 0);
-            let result =
-                if let Some(receiver) = mr.mutator.lock().unwrap().maybe_ipc_receiver.as_ref() {
-                    receiver.try_recv_timeout(polling_interval)
-                } else {
-                    return Err(MultiplexError::InternalError(
-                        "IpcReceiver not present".to_string(),
-                    ));
-                };
+            let result = mr
+                .mutator
+                .lock()
+                .as_ref()
+                .unwrap()
+                .maybe_ipc_receiver
+                .try_receive_timeout(polling_interval);
             match result {
                 Ok(msg) => break Ok(msg),
-                Err(ipc_channel::ipc::TryRecvError::Empty) => {
+                Err(TryRecvError::Empty) => {
                     if mr.poll() {
                         // At least one probe failed, so return to caller.
                         return Ok(());
                     }
                 },
-                Err(ipc_channel::ipc::TryRecvError::IpcError(e)) => {
-                    break Err(MultiplexError::IpcError(e));
+                Err(TryRecvError::Handled) => {
+                    return Ok(());
+                },
+                Err(TryRecvError::MultiplexError(e)) => {
+                    break Err(e);
                 },
             }
         }?;
@@ -788,41 +898,39 @@ impl MultiReceiver {
     }
 
     #[instrument(level = "debug", err(level = "debug"))]
-    fn try_receive(mr: &Arc<MultiReceiver>) -> Result<(), MultiplexError> {
-        let result = if let Some(receiver) = mr.mutator.lock().unwrap().maybe_ipc_receiver.as_ref()
-        {
-            receiver.try_recv()
-        } else {
-            return Err(MultiplexError::InternalError(
-                "IpcReceiver not present".to_string(),
-            ));
+    fn try_receive(mr: &Arc<MultiReceiver>) -> Result<(), TryRecvError> {
+        let msg = {
+            let result = mr
+                .mutator
+                .lock()
+                .as_ref()
+                .unwrap()
+                .maybe_ipc_receiver
+                .try_receive();
+            match result {
+                Ok(msg) => msg,
+                Err(TryRecvError::Empty) => {
+                    return Err(TryRecvError::Empty);
+                },
+                Err(TryRecvError::Handled) => {
+                    return Ok(());
+                },
+                Err(e) => {
+                    return Err(e);
+                },
+            }
         };
-        let msg = match result {
-            Ok(msg) => Ok(msg),
-            Err(ipc_channel::ipc::TryRecvError::Empty) => {
-                return Ok(());
-            },
-            Err(ipc_channel::ipc::TryRecvError::IpcError(e)) => Err(MultiplexError::IpcError(e)),
-        }?;
-        Self::handle(Arc::clone(&mr), msg)
+        Self::handle(Arc::clone(&mr), msg).map_err(|e| TryRecvError::MultiplexError(e))?;
+        Err(TryRecvError::Handled)
     }
 
     #[instrument(level = "debug")]
     fn drain(mr: &Arc<MultiReceiver>) {
         loop {
-            let result =
-                if let Some(receiver) = mr.mutator.lock().unwrap().maybe_ipc_receiver.as_ref() {
-                    receiver.try_recv()
-                } else {
-                    return;
-                };
+            let result = Self::try_receive(mr);
             match result {
-                Ok(msg) => {
-                    let _ = Self::handle(Arc::clone(mr), msg);
-                },
-                _ => {
-                    break;
-                },
+                Ok(_) => {},
+                Err(_) => break,
             }
         }
     }
@@ -949,7 +1057,8 @@ impl MultiReceiver {
             IpcSenderAndOrId::IpcSenderId(id) => {
                 let uuid = Uuid::parse_str(&id).unwrap();
                 log::trace!("looking up MultiSender associated with {}", uuid);
-                let maybe_sender = mr.mutator.lock().unwrap().ipc_senders_by_id.look_up(uuid);
+                let maybe_sender: Option<Arc<Mutex<MultiSender>>> =
+                    mr.mutator.lock().unwrap().ipc_senders_by_id.look_up(uuid);
                 log::trace!("result of looking up MultiSender is {:?}", maybe_sender);
                 maybe_sender.unwrap()
             },
@@ -960,13 +1069,13 @@ impl MultiReceiver {
     fn receive_sub_channel(
         mr: &Arc<MultiReceiver>,
     ) -> Result<(SubChannelId, String), MultiplexError> {
-        let msg = if let Some(receiver) = mr.mutator.lock().unwrap().maybe_ipc_receiver.as_ref() {
-            receiver.recv()?
-        } else {
-            return Err(MultiplexError::InternalError(
-                "IpcReceiver not present".to_string(),
-            ));
-        };
+        let msg = mr
+            .mutator
+            .lock()
+            .as_ref()
+            .unwrap()
+            .maybe_ipc_receiver
+            .receive()?;
         match msg {
             MultiMessage::SubChannelId(sub_channel_id, name) => Ok((sub_channel_id, name)),
             m => Err(MultiplexError::InternalError(format!(
@@ -1489,7 +1598,7 @@ fn multi_channel() -> Result<(Arc<Mutex<MultiSender>>, Arc<MultiReceiver>), io::
     let multi_receiver = MultiReceiver {
         ipc_receiver_uuid: Uuid::new_v4(),
         mutator: Mutex::new(MultiReceiverMutator {
-            maybe_ipc_receiver: Some(ipc_receiver),
+            maybe_ipc_receiver: IpcReceiverOrMultiReceiverSet::IpcReceiver(ipc_receiver),
             ipc_senders: senders,
             sub_channels: HashMap::new(),
             disconnectors: WeakValueHashMap::new(),
@@ -1527,7 +1636,7 @@ impl OneShotMultiServer {
         let mr = MultiReceiver {
             ipc_receiver_uuid: Uuid::new_v4(),
             mutator: Mutex::new(MultiReceiverMutator {
-                maybe_ipc_receiver: Some(multi_receiver),
+                maybe_ipc_receiver: IpcReceiverOrMultiReceiverSet::IpcReceiver(multi_receiver),
                 ipc_senders: HashMap::new(),
                 sub_channels: HashMap::new(),
                 disconnectors: WeakValueHashMap::new(),
@@ -1588,6 +1697,7 @@ pub struct SubReceiverSet {
 /// Result for readable events returned from [SubReceiverSet::select].
 ///
 /// [SubReceiverSet::select]: struct.SubReceiverSet.html#method.select
+#[derive(Debug)]
 pub enum SubSelectionResult {
     /// A message received from the [`SubReceiver`] in the [`RawMessage`] form,
     /// identified by the `u64` value.
@@ -1599,6 +1709,7 @@ pub enum SubSelectionResult {
 }
 
 /// A message received on a subchannel prior to deserialisation.
+#[derive(Debug)]
 pub struct RawMessage {
     multi_receiver: Arc<MultiReceiver>,
     payload: Vec<u8>,
@@ -1663,7 +1774,7 @@ impl SubReceiverSet {
             .lock()
             .unwrap()
             .maybe_ipc_receiver
-            .is_some()
+            .is_ipc_receiver()
         {
             MultiReceiverSet::add(
                 &self.multi_receiver_set,
@@ -1697,7 +1808,7 @@ impl SubReceiverSet {
     /// Wait for a message to be received or the channel to be closed for any of the
     /// receivers in the set. The method may return multiple events. An event may be
     /// either a message received or a channel closed event.
-    #[instrument(level = "debug", err(level = "debug"))]
+    #[instrument(level = "debug", ret, err(level = "debug"))]
     pub fn select(&mut self) -> Result<Vec<SubSelectionResult>, MultiplexError> {
         // TODO: relax the current restriction of returning at most one SubSelectionResult.
         loop {
@@ -1769,19 +1880,13 @@ impl MultiReceiverSet {
             .lock()
             .unwrap()
             .maybe_ipc_receiver
-            .take();
-        if let Some(rec) = ipc_receiver {
-            let mut multi_receiver_set_mut = mrs.lock().unwrap();
-            let id = multi_receiver_set_mut.ipc_receiver_set.add(rec)?;
-            multi_receiver_set_mut
-                .multi_receivers
-                .insert(id, multi_receiver);
-            Ok(())
-        } else {
-            Err(MultiplexError::InternalError(
-                "MultiReceiver has already been added to a MultiReceiverSet".to_string(),
-            ))
-        }
+            .swap(Arc::clone(mrs));
+        let mut multi_receiver_set_mut = mrs.lock().unwrap();
+        let id = multi_receiver_set_mut.ipc_receiver_set.add(ipc_receiver)?;
+        multi_receiver_set_mut
+            .multi_receivers
+            .insert(id, multi_receiver);
+        Ok(())
     }
 
     fn select(mrs: &Arc<Mutex<MultiReceiverSet>>) -> Result<(), MultiplexError> {
