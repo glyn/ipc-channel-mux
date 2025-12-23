@@ -41,8 +41,8 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::Deref;
 use uuid::Uuid;
-use weak_table::traits::WeakElement;
 use weak_table::PtrWeakHashSet;
+use weak_table::traits::WeakElement;
 
 /// Source is where endpoints are transmitted from. It tracks endpoints,
 /// as they are sent, in a weak hashtable. Thus the hashtable does not

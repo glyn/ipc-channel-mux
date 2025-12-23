@@ -17,13 +17,16 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex};
 use std::thread;
 
-use crate::mux::{self, MultiplexError, OpaqueSubReceiver, RawMessage, SubReceiver, SubReceiverSet, SubSelectionResult, SubSender};
+use crate::mux::{
+    self, MultiplexError, OpaqueSubReceiver, RawMessage, SubReceiver, SubReceiverSet,
+    SubSelectionResult, SubSender,
+};
 use crossbeam_channel::{self, Receiver, Sender};
 use serde::{Deserialize, Serialize};
 
 /// Global object wrapping a `RouterProxy`.
-/// Add routes ([add_route](RouterProxy::add_route)), or convert IpcReceiver<T>
-/// to crossbeam channels (e.g. [route_ipc_receiver_to_new_crossbeam_receiver](RouterProxy::route_ipc_receiver_to_new_crossbeam_receiver))
+/// Add routes ([add_typed_route](RouterProxy::add_typed_route)), or convert `SubReceiver<T>`
+/// to crossbeam receivers (e.g. [route_subreceiver_to_new_crossbeam_receiver](RouterProxy::route_subreceiver_to_new_crossbeam_receiver)).
 pub static ROUTER: LazyLock<RouterProxy> = LazyLock::new(RouterProxy::new);
 
 /// A `RouterProxy` provides methods for establising and talking to the router.
@@ -61,8 +64,7 @@ impl RouterProxy {
     ///
     /// Consider using [add_typed_route](Self::add_typed_route) instead, which prevents
     /// mismatches between the receiver and callback types.
-    //#[deprecated(since = "0.19.0", note = "please use 'add_typed_route' instead")]
-    fn add_route(&self, receiver: OpaqueSubReceiver, callback: RouterHandler) {
+    fn add_route(&self, subreceiver: OpaqueSubReceiver, callback: RouterHandler) {
         let comm = self.comm.lock().unwrap();
 
         if comm.shutdown {
@@ -70,18 +72,19 @@ impl RouterProxy {
         }
 
         comm.msg_sender
-            .send(RouterMsg::AddRoute(receiver, callback))
+            .send(RouterMsg::AddRoute(subreceiver, callback))
             .unwrap();
         comm.wakeup_sender.send(()).unwrap();
     }
 
     /// Add a new `(receiver, callback)` pair to the router, and send a wakeup message
-    /// to the router.
-    ///
-    /// Unlike [add_route](Self::add_route) this method is strongly typed and guarantees
-    /// that the `receiver` and the `callback` use the same message type.
-    pub fn add_typed_route<T>(&self, receiver: SubReceiver<T>, mut callback: TypedRouterHandler<T>)
-    where
+    /// to the router. This method is strongly typed and guarantees
+    /// that `subreceiver` and `callback` use the same message type.
+    pub fn add_typed_route<T>(
+        &self,
+        subreceiver: SubReceiver<T>,
+        mut callback: TypedRouterHandler<T>,
+    ) where
         T: Serialize + for<'de> Deserialize<'de> + 'static,
     {
         // Before passing the message on to the callback, turn it into the appropriate type
@@ -91,10 +94,10 @@ impl RouterProxy {
         };
 
         #[allow(deprecated)]
-        self.add_route(receiver.to_opaque(), Box::new(modified_callback));
+        self.add_route(subreceiver.to_opaque(), Box::new(modified_callback));
     }
 
-    /// Send a shutdown message to the router containing a ACK sender,
+    /// Send a shutdown message to the router containing an ACK sender,
     /// send a wakeup message to the router, and block on the ACK.
     /// Calling it is idempotent,
     /// which can be useful when running a multi-process system in single-process mode.
@@ -132,17 +135,17 @@ impl RouterProxy {
         )
     }
 
-    /// A convenience function to route an `IpcReceiver<T>` to a `Receiver<T>`: the most common
+    /// A convenience function to route an `SubReceiver<T>` to a `Receiver<T>`: the most common
     /// use of a `Router`.
     pub fn route_subreceiver_to_new_crossbeam_receiver<T>(
         &self,
-        ipc_receiver: SubReceiver<T>,
+        subreceiver: SubReceiver<T>,
     ) -> Receiver<T>
     where
         T: for<'de> Deserialize<'de> + Serialize + Send + 'static,
     {
         let (crossbeam_sender, crossbeam_receiver) = crossbeam_channel::unbounded();
-        self.route_subreceiver_to_crossbeam_sender(ipc_receiver, crossbeam_sender);
+        self.route_subreceiver_to_crossbeam_sender(subreceiver, crossbeam_sender);
         crossbeam_receiver
     }
 }

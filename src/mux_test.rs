@@ -7,7 +7,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::mux::{self, SubOneShotServer, SubReceiver, SubSelectionResult, SubSender, subchannel_router::ROUTER};
+use crate::mux::{
+    self, SubOneShotServer, SubReceiver, SubSelectionResult, SubSender, subchannel_router::ROUTER,
+};
 use std::thread;
 use test_log::test;
 

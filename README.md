@@ -60,6 +60,13 @@ let (rx, data) = server.accept().unwrap();
 
 An advantage of creating a subchannel, rather than an IPC channel, using a one-shot server is that the subchannel can then be used to transmit subsenders.[^interop]
 
+### Routing
+
+The router routes messages from subreceivers to Crossbeam channels.
+This allows receiving code to utilise Crossbeam features.
+
+The router is in the `mux::subchannel_router` module.
+
 ## Semantic differences from Rust channels
 
 * Rust channels can be either unbounded or bounded whereas subchannels are always unbounded and `send()` never blocks.
@@ -210,8 +217,6 @@ Fortunately, a multireceiver will tend to drain messages when receiving on behal
 
 ## Major missing features
 
-* ROUTER - routing messages from subreceivers to crossbeam channels. This allows receiving code to utilise crossbeam features.
-* Receiver sets - monitoring multiple subreceivers with a single thread.
 * Non-blocking subreceivers.
 * Transmission of shared memory.
 * Each one-shot server accepts only one client connect request. This is fine if you simply want to use this API to split your application up into a fixed number of mutually untrusting processes, but it's not suitable for implementing a system service.
