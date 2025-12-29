@@ -149,6 +149,8 @@ To run the tests, issue:
 cargo test
 ~~~
 
+Linux is the _reference platform_ for `ipc-channel-mux`, meaning that bugs encountered on other platforms should be reproduced on Linux so that a complete regression test is available on Linux.
+
 ## Diagnostics
 
 `ipc-channel-mux` uses the `log` crate to produce log messages when logging is enabled for one or more processes.
