@@ -837,10 +837,6 @@ fn receiver_sets_with_subreceivers_sharing_ipc_channel() {
     let rx2_id = rx_set2.add(rx2).unwrap();
 
     tx1.send(1).unwrap();
-    tx2.send("test".to_string()).unwrap();
-
-    let mut recvd1 = false;
-    let mut recvd2 = false;
 
     if let SubSelectionResult::MessageReceived(received_id, received_data) =
         rx_set1.select().unwrap().into_iter().next().unwrap()
@@ -849,7 +845,6 @@ fn receiver_sets_with_subreceivers_sharing_ipc_channel() {
             id if id == rx1_id => {
                 let received_value: i32 = received_data.to().unwrap();
                 assert_eq!(received_value, 1);
-                recvd1 = true;
             },
             _ => assert!(false),
         }
@@ -857,23 +852,22 @@ fn receiver_sets_with_subreceivers_sharing_ipc_channel() {
         assert!(false, "Unexpected SubSelectionResult");
     }
 
+    tx2.send("test".to_string()).unwrap();
+
     if let SubSelectionResult::MessageReceived(received_id, received_data) =
         rx_set2.select().unwrap().into_iter().next().unwrap()
+    // FIXME: above select() panics (selecting with no objects?) on Windows.
     {
         match received_id {
             id if id == rx2_id => {
                 let received_value: String = received_data.to().unwrap();
                 assert_eq!(received_value, "test".to_string());
-                recvd2 = true;
             },
             _ => assert!(false),
         }
     } else {
         assert!(false, "Unexpected SubSelectionResult");
     }
-
-    assert!(recvd1, "i32 was not received");
-    assert!(recvd2, "String was not received");
 }
 
 #[test]

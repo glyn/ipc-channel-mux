@@ -763,6 +763,13 @@ impl IpcReceiverOrMultiReceiverSet {
             IpcReceiverOrMultiReceiverSet::MultiReceiverSet(_) => panic!("already swapped"),
         }
     }
+
+    fn multi_receiver_set(&self) -> Option<Arc<Mutex<MultiReceiverSet>>> {
+        match self {
+            IpcReceiverOrMultiReceiverSet::MultiReceiverSet(mrs) => Some(Arc::clone(mrs)),
+            IpcReceiverOrMultiReceiverSet::IpcReceiver(_) => None,
+        }
+    }
 }
 
 struct MultiReceiverMutator {
@@ -1751,7 +1758,7 @@ impl SubReceiverSet {
             next_id: 0,
             rxs: HashMap::new(),
             ids: HashMap::new(),
-            multi_receiver_set: Arc::new(Mutex::new(MultiReceiverSet::new()?)),
+            multi_receiver_set: Arc::new(Mutex::new(MultiReceiverSet::new()?)), // FIXME: distinct SubReceiverSets never share a MultiReceiverSet
             rx,
             tx,
         })
@@ -1769,6 +1776,7 @@ impl SubReceiverSet {
 
     /// Add an [OpaqueSubReceiver] to the set of subreceivers to be polled.
     /// [OpaqueSubReceiver]: struct.OpaqueSubReceiver.html
+    #[instrument(level = "debug", skip(receiver), ret, err(level = "debug"))]
     pub fn add_opaque(&mut self, receiver: OpaqueSubReceiver) -> Result<u64, MultiplexError> {
         if receiver
             .sub_channel_receiver
@@ -1783,6 +1791,40 @@ impl SubReceiverSet {
                 &self.multi_receiver_set,
                 Arc::clone(&receiver.sub_channel_receiver.multi_receiver),
             )?;
+        } else {
+            // The subreceiver being added is already associated with a non-empty MultiReceiverSet.
+            let incoming_multi_receiver_set = receiver
+                .sub_channel_receiver
+                .multi_receiver
+                .mutator
+                .lock()
+                .unwrap()
+                .maybe_ipc_receiver
+                .multi_receiver_set()
+                .unwrap();
+
+            // If this SubReceiverSet's MultiReceiverSet is the same as the MultiReceiverSet associated
+            // with the subreceiver being added, do nothing.
+            if Arc::ptr_eq(&self.multi_receiver_set, &incoming_multi_receiver_set) {
+            } else
+            // Otherwise, if this SubReceiverSet's MultiReceiverSet is empty, we can replace it with the incoming
+            // MultiReceiverSet. Otherwise, the add operation fails because we cannot merge non-empty
+            // MultiReceiverSets (since IpcReceiverSets cannot be merged).
+            if MultiReceiverSet::is_empty(&self.multi_receiver_set) {
+                self.multi_receiver_set = receiver
+                    .sub_channel_receiver
+                    .multi_receiver
+                    .mutator
+                    .lock()
+                    .unwrap()
+                    .maybe_ipc_receiver
+                    .multi_receiver_set()
+                    .unwrap();
+            } else {
+                return Err(MultiplexError::InternalError(
+                    "Cannot merge non-empty MultiReceiverSets".to_string(),
+                ));
+            }
         }
 
         // Modify MultiReceiver so that message for the subchannel are sent to the set.
@@ -1892,9 +1934,20 @@ impl MultiReceiverSet {
         Ok(())
     }
 
+    // Return true if and only if the MultiReceiverSet is empty.
+    fn is_empty(mrs: &Arc<Mutex<MultiReceiverSet>>) -> bool {
+        mrs.lock().unwrap().multi_receivers.is_empty()
+    }
+
+    // Obtain one or more incoming messages and handle them.
     fn select(mrs: &Arc<Mutex<MultiReceiverSet>>) -> Result<(), MultiplexError> {
         let mut mrs_mut = mrs.lock().unwrap();
+        // FIXME: the following sometimes panics on Windows because the set is empty.
         let results = mrs_mut.ipc_receiver_set.select()?;
+        log::trace!(
+            "MultiReceiverSet::select processing {} results",
+            results.len()
+        );
         for result in results {
             match result {
                 IpcSelectionResult::MessageReceived(id, ipc_message) => {
