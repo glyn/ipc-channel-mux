@@ -1430,6 +1430,9 @@ struct SubChannelReceiver {
     channel: Receiver<ResolvedMessageOrDisconnect>,
 }
 
+unsafe impl Send for SubChannelReceiver {}
+unsafe impl Sync for SubChannelReceiver {}
+
 impl Drop for SubChannelReceiver {
     fn drop(&mut self) {
         // Clear any messages in MultiReceiver (which could cause sending to block).
