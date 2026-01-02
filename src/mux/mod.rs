@@ -243,7 +243,7 @@ where
         let sub_channel_sender: SubChannelSender = MultiSender::new(Arc::clone(&multi_sender));
         MultiSender::notify_sub_channel(multi_sender, sub_channel_sender.sub_channel_id(), name)?;
         Ok(SubSender {
-            sub_channel_sender: sub_channel_sender,
+            sub_channel_sender,
             phantom: PhantomData,
         })
     }
@@ -406,7 +406,7 @@ where
         let (one_shot_multi_server, name) = OneShotMultiServer::new()?;
         Ok((
             SubOneShotServer {
-                one_shot_multi_server: one_shot_multi_server,
+                one_shot_multi_server,
                 name: name.to_string(),
                 phantom: PhantomData,
             },
@@ -592,11 +592,11 @@ impl<'a> MultiSender {
         let client_id = ClientId(Uuid::new_v4());
         sender.send(MultiMessage::Connect(response_sender, client_id))?;
         Ok(Arc::new(Mutex::new(MultiSender {
-            client_id: client_id,
+            client_id,
             ipc_sender: sender,
             uuid: ipc_sender_uuid,
             sender_id: Arc::new(Mutex::new(Source::new())),
-            response_receiver: response_receiver,
+            response_receiver,
             sub_receiver_proxies: Mutex::new(HashMap::new()),
         })))
     }
@@ -868,7 +868,7 @@ impl MultiReceiver {
         );
         SubChannelReceiver {
             multi_receiver: Arc::clone(mr),
-            sub_channel_id: sub_channel_id,
+            sub_channel_id,
             ipc_receiver_uuid: mr.ipc_receiver_uuid,
             channel: rx,
         }
@@ -964,8 +964,8 @@ impl MultiReceiver {
                 let result = if let Some(sm) = mr.mutator.lock().unwrap().sub_channels.get(&scid) {
                     sm.send(ResolvedMessageOrDisconnect::ResolvedMessage(
                         ResolvedMessage {
-                            scid: scid,
-                            payload: payload,
+                            scid,
+                            payload,
                             senders: srs,
                             multi_receiver: Some(mr_clone),
                         },
@@ -1290,7 +1290,7 @@ impl<'de> Deserialize<'de> for SubChannelSender {
             .ipc_sender
             .send(MultiMessage::Received {
                 scid: scsi.sub_channel_id,
-                via: via,
+                via,
                 new_source,
             })
             .unwrap();
@@ -1327,9 +1327,9 @@ impl<'de> Deserialize<'de> for SubChannelSender {
 
         Ok(SubChannelSender {
             sub_channel_id: scsi.sub_channel_id,
-            ipc_sender: ipc_sender,
+            ipc_sender,
             disconnector: disc,
-            ipc_sender_uuid: ipc_sender_uuid,
+            ipc_sender_uuid,
             sender_id: Arc::new(Mutex::new(Source::new())),
             multi_sender: multi_sender.1,
         })
