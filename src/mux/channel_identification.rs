@@ -87,7 +87,7 @@ pub struct Target<T> {
 
 impl<T> Target<T>
 where
-    T: Clone + ?Sized,
+    T: Clone,
 {
     /// new creates a new Target with an empty hashtable.
     pub fn new() -> Target<T> {
@@ -102,9 +102,7 @@ where
     /// UUID collision, the probability of this occurring is vanishingly small.
     pub fn add(&mut self, id: Uuid, e: &T) {
         let mut end_points = self.end_points.borrow_mut();
-        if !end_points.contains_key(&id) {
-            end_points.insert(id, e.clone());
-        }
+        end_points.entry(id).or_insert_with(|| e.clone());
     }
 
     /// lookup looks up the endpoint associated with the given UUID.
@@ -112,7 +110,7 @@ where
     /// associated with the UUID. Otherwise, there is no endpoint
     /// associated with the UUID, so return None.
     pub fn look_up(&self, id: Uuid) -> Option<T> {
-        self.end_points.borrow().get(&id).map(|e| e.clone())
+        self.end_points.borrow().get(&id).cloned()
     }
 }
 

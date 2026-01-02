@@ -62,7 +62,7 @@ impl SubReceiverProxy {
     }
 
     pub fn disconnected(&self) -> bool {
-        self.disconnected.lock().unwrap().clone()
+        *self.disconnected.lock().unwrap()
     }
 }
 
@@ -224,7 +224,7 @@ mod tests {
         let dropped = Mutex::new(false);
         let t = SubSenderTracker::new(Box::new(|| *dropped.lock().unwrap() = true));
         drop(t);
-        assert!(dropped.lock().unwrap().clone());
+        assert!(*dropped.lock().unwrap());
     }
 
     #[test]
@@ -479,7 +479,7 @@ mod tests {
         ssm.to_be_sent(
             "scid",
             Box::new(move || {
-                let mut c = count_clone.lock().unwrap().clone();
+                let mut c = *count_clone.lock().unwrap();
                 c += 1;
                 *count_clone.lock().unwrap() = c;
                 c < 2

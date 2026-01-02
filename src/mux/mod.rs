@@ -179,7 +179,7 @@ impl Channel {
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {
-        let scs = MultiSender::new(Arc::clone(&self.multi_sender));
+        let scs = SubChannelSender::new(Arc::clone(&self.multi_sender));
         let scid = scs.sub_channel_id();
         self.multi_sender
             .lock()
@@ -240,7 +240,7 @@ where
     #[instrument(level = "debug", err(level = "debug"))]
     pub fn connect(name: String) -> Result<SubSender<T>, MultiplexError> {
         let multi_sender: Arc<Mutex<MultiSender>> = MultiSender::connect(name.to_string())?;
-        let sub_channel_sender: SubChannelSender = MultiSender::new(Arc::clone(&multi_sender));
+        let sub_channel_sender: SubChannelSender = SubChannelSender::new(Arc::clone(&multi_sender));
         MultiSender::notify_sub_channel(multi_sender, sub_channel_sender.sub_channel_id(), name)?;
         Ok(SubSender {
             sub_channel_sender,
@@ -552,31 +552,7 @@ impl From<bincode::Error> for MultiplexError {
     }
 }
 
-impl<'a> MultiSender {
-    #[instrument(level = "debug", ret)]
-    fn new(raw_self: Arc<Mutex<MultiSender>>) -> SubChannelSender {
-        let locked_self = raw_self.lock().unwrap();
-        let scid = SubChannelId::new();
-        let sender_clone = locked_self.ipc_sender.clone();
-        let multi_sender_clone = raw_self.clone();
-        SubChannelSender {
-            sub_channel_id: scid,
-            ipc_sender: locked_self.ipc_sender.clone(),
-            disconnector: Arc::new(SubSenderTracker::new(Box::new(move || {
-                let d = SubChannelDisconnector {
-                    sub_channel_id: scid,
-                    ipc_sender: sender_clone.clone(),
-                    source: ORIGIN,
-                    multi_sender: multi_sender_clone.clone(),
-                };
-                d.dropped();
-            }))),
-            ipc_sender_uuid: locked_self.uuid,
-            sender_id: Arc::clone(&locked_self.sender_id),
-            multi_sender: Arc::clone(&raw_self),
-        }
-    }
-
+impl MultiSender {
     #[instrument(level = "debug", ret, err(level = "debug"))]
     fn connect(name: String) -> Result<Arc<Mutex<MultiSender>>, MultiplexError> {
         let sender = Arc::new(IpcSender::connect(name)?);
@@ -616,20 +592,17 @@ impl<'a> MultiSender {
 
     #[instrument(level = "trace", ret)]
     fn is_receiver_connected(&self, scid: SubChannelId) -> bool {
-        loop {
-            match self.response_receiver.try_recv() {
-                Ok(MultiResponse::SubReceiverDisconnected(disconnected_scid)) => {
-                    if let Some(proxy) = self
-                        .sub_receiver_proxies
-                        .lock()
-                        .unwrap()
-                        .get(&disconnected_scid)
-                    {
-                        proxy.disconnect();
-                    };
-                },
-                _ => break,
-            }
+        while let Ok(MultiResponse::SubReceiverDisconnected(disconnected_scid)) =
+            self.response_receiver.try_recv()
+        {
+            if let Some(proxy) = self
+                .sub_receiver_proxies
+                .lock()
+                .unwrap()
+                .get(&disconnected_scid)
+            {
+                proxy.disconnect();
+            };
         }
         if let Some(proxy) = self.sub_receiver_proxies.lock().unwrap().get(&scid) {
             !proxy.disconnected()
@@ -768,20 +741,19 @@ impl IpcReceiverOrMultiReceiverSet {
     }
 }
 
+type SubSenderStateMachine = subchannel_lifecycle::SubSenderStateMachine<
+    mpsc::Sender<ResolvedMessageOrDisconnect>,
+    ResolvedMessageOrDisconnect,
+    mpsc::SendError<ResolvedMessageOrDisconnect>,
+    Uuid,
+    SubChannelId,
+    dyn Fn() -> bool + Send,
+>;
+
 struct MultiReceiverMutator {
     ipc_receiver_or_multi_receiver_set: IpcReceiverOrMultiReceiverSet,
     ipc_senders: HashMap<ClientId, IpcSender<MultiResponse>>,
-    sub_channels: HashMap<
-        SubChannelId,
-        subchannel_lifecycle::SubSenderStateMachine<
-            mpsc::Sender<ResolvedMessageOrDisconnect>,
-            ResolvedMessageOrDisconnect,
-            mpsc::SendError<ResolvedMessageOrDisconnect>,
-            Uuid,
-            SubChannelId,
-            dyn Fn() -> bool + Send,
-        >,
-    >,
+    sub_channels: HashMap<SubChannelId, SubSenderStateMachine>,
     disconnectors: WeakValueHashMap<SubChannelId, Weak<SubSenderTracker<dyn Fn() + Send + Sync>>>,
     ipc_senders_by_id: Target<Arc<Mutex<MultiSender>>>,
 }
@@ -796,9 +768,9 @@ impl std::fmt::Debug for MultiReceiverMutator {
 }
 
 thread_local! {
-    static IPC_SENDERS_RECEIVED: Mutex<VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>)>> = Mutex::new(VecDeque::new());
-    static CURRENT_MULTI_RECEIVER: Mutex<Option<Arc<MultiReceiver>>> = Mutex::new(None);
-    static VIA: Mutex<SubChannelId> = Mutex::new(EMPTY_SUBCHANNEL_ID);
+    static IPC_SENDERS_RECEIVED: Mutex<VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>)>> = const { Mutex::new(VecDeque::new()) };
+    static CURRENT_MULTI_RECEIVER: Mutex<Option<Arc<MultiReceiver>>> = const { Mutex::new(None) };
+    static VIA: Mutex<SubChannelId> = const { Mutex::new(EMPTY_SUBCHANNEL_ID) };
 }
 
 fn establish_deserialization_context(
@@ -815,14 +787,14 @@ fn establish_deserialization_context(
     });
     VIA.with(|via_val| {
         let mut v = via_val.lock().unwrap();
-        *v = via.clone();
+        *v = via;
     });
 }
 
 fn clear_deserialization_context() {
     VIA.with(|via| {
         let mut v = via.lock().unwrap();
-        *v = EMPTY_SUBCHANNEL_ID.clone();
+        *v = EMPTY_SUBCHANNEL_ID;
     });
     CURRENT_MULTI_RECEIVER.with(|multi_receiver| {
         multi_receiver.lock().unwrap().take();
@@ -914,7 +886,7 @@ impl MultiReceiver {
                 },
             }
         }?;
-        Self::handle(Arc::clone(&mr), msg)
+        Self::handle(Arc::clone(mr), msg)
     }
 
     #[instrument(level = "debug", err(level = "debug"))]
@@ -940,7 +912,7 @@ impl MultiReceiver {
                 },
             }
         };
-        Self::handle(Arc::clone(&mr), msg).map_err(|e| TryRecvError::MultiplexError(e))?;
+        Self::handle(Arc::clone(mr), msg).map_err(TryRecvError::MultiplexError)?;
         Err(TryRecvError::Handled)
     }
 
@@ -971,7 +943,7 @@ impl MultiReceiver {
             MultiMessage::Data(scid, payload, ipc_senders) => {
                 let srs: VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>)> = ipc_senders
                     .iter()
-                    .map(|(scid, s)| (scid.clone(), Self::ipcsender_from_sender_and_or_id(&mr, s)))
+                    .map(|(scid, s)| (*scid, Self::ipcsender_from_sender_and_or_id(&mr, s)))
                     .collect();
 
                 let result = if let Some(sm) = mr.mutator.lock().unwrap().sub_channels.get(&scid) {
@@ -989,8 +961,8 @@ impl MultiReceiver {
                     srs.into_iter().for_each(|(recv_scid, recv_multi_sender)| {
                         let _ = recv_multi_sender.lock().unwrap().ipc_sender.send(
                             MultiMessage::ReceiveFailed {
-                                scid: recv_scid.clone(),
-                                via: scid.clone(),
+                                scid: recv_scid,
+                                via: scid,
                             },
                         );
                     });
@@ -1007,6 +979,7 @@ impl MultiReceiver {
                 }
             },
             MultiMessage::Disconnect(scid, source) => {
+                #[allow(clippy::collapsible_if)] // unstable in MRSV
                 if let Some(sm) = mr.mutator.lock().unwrap().sub_channels.get(&scid) {
                     if let Some(sender) = sm.disconnect(source) {
                         let _ = sender.send(ResolvedMessageOrDisconnect::Disconnect(scid));
@@ -1063,7 +1036,7 @@ impl MultiReceiver {
     ) -> Arc<Mutex<MultiSender>> {
         match s {
             IpcSenderAndOrId::IpcSender(s, id) => {
-                let uuid = Uuid::parse_str(&id).unwrap();
+                let uuid = Uuid::parse_str(id).unwrap();
                 let multi_sender = MultiSender::connect_sender(Arc::new(s.clone()), uuid).unwrap(); // return an error instead of panicking
                 log::trace!("associating {} with a MultiSender", uuid);
                 mr.mutator
@@ -1075,7 +1048,7 @@ impl MultiReceiver {
                 multi_sender
             },
             IpcSenderAndOrId::IpcSenderId(id) => {
-                let uuid = Uuid::parse_str(&id).unwrap();
+                let uuid = Uuid::parse_str(id).unwrap();
                 log::trace!("looking up MultiSender associated with {}", uuid);
                 let maybe_sender: Option<Arc<Mutex<MultiSender>>> =
                     mr.mutator.lock().unwrap().ipc_senders_by_id.look_up(uuid);
@@ -1117,6 +1090,7 @@ impl MultiReceiver {
                 }
             },
         );
+        #[allow(clippy::clone_on_copy)]
         let result = probe_failed.lock().unwrap().clone();
         result
     }
@@ -1173,6 +1147,30 @@ impl Clone for SubChannelSender {
 }
 
 impl SubChannelSender {
+    #[instrument(level = "debug", ret)]
+    fn new(raw_self: Arc<Mutex<MultiSender>>) -> Self {
+        let locked_self = raw_self.lock().unwrap();
+        let scid = SubChannelId::new();
+        let sender_clone = locked_self.ipc_sender.clone();
+        let multi_sender_clone = raw_self.clone();
+        SubChannelSender {
+            sub_channel_id: scid,
+            ipc_sender: locked_self.ipc_sender.clone(),
+            disconnector: Arc::new(SubSenderTracker::new(Box::new(move || {
+                let d = SubChannelDisconnector {
+                    sub_channel_id: scid,
+                    ipc_sender: sender_clone.clone(),
+                    source: ORIGIN,
+                    multi_sender: multi_sender_clone.clone(),
+                };
+                d.dropped();
+            }))),
+            ipc_sender_uuid: locked_self.uuid,
+            sender_id: Arc::clone(&locked_self.sender_id),
+            multi_sender: Arc::clone(&raw_self),
+        }
+    }
+
     #[instrument(level = "debug", skip(msg), err(level = "debug"))]
     fn send<T>(&self, msg: T) -> Result<(), MultiplexError>
     where
@@ -1202,12 +1200,12 @@ impl SubChannelSender {
             .iter()
             .for_each(|(subchannel_id, ipc_sender, sender_id)| {
                 let _ = ipc_sender.send(MultiMessage::Sending {
-                    scid: subchannel_id.clone(),
+                    scid: *subchannel_id,
                     via: self.sub_channel_id,
                     via_chan: Self::ipc_sender_and_or_uuid(
                         sender_id.clone(),
                         self.ipc_sender.clone(),
-                        self.ipc_sender_uuid.clone(),
+                        self.ipc_sender_uuid,
                     ),
                 });
             });
@@ -1216,7 +1214,7 @@ impl SubChannelSender {
             .iter()
             .map(|ipc_sender_and_uuid| {
                 (
-                    ipc_sender_and_uuid.0.clone(),
+                    ipc_sender_and_uuid.0,
                     Self::ipc_sender_and_or_uuid(
                         self.sender_id.clone(),
                         ipc_sender_and_uuid.2.clone(),
@@ -1294,7 +1292,7 @@ impl<'de> Deserialize<'de> for SubChannelSender {
                 .ipc_receiver_uuid
         });
 
-        let via = VIA.with(|via| via.lock().unwrap().clone());
+        let via = VIA.with(|via| *via.lock().unwrap());
 
         multi_sender
             .1
@@ -1349,7 +1347,7 @@ impl<'de> Deserialize<'de> for SubChannelSender {
     }
 }
 
-impl<'a> fmt::Debug for SubChannelSender {
+impl fmt::Debug for SubChannelSender {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SubChannelSender")
             .field("sub_channel_id", &self.sub_channel_id)
@@ -1358,10 +1356,18 @@ impl<'a> fmt::Debug for SubChannelSender {
     }
 }
 
+type SubChannelSenderSendDetails = (SubChannelId, Uuid, Arc<IpcSender<MultiMessage>>);
+
+type SubChannelSenderSerializedDetails = (
+    SubChannelId,
+    Arc<IpcSender<MultiMessage>>,
+    Arc<Mutex<Source<Weak<IpcSender<MultiMessage>>>>>,
+);
+
 // TODO: rationalise the following to avoid duplication of data
 thread_local! {
-    static IPC_SENDERS_TO_SEND: Mutex<Vec<(SubChannelId, Uuid, Arc<IpcSender<MultiMessage>>)>> = Mutex::new(vec!());
-    static SERIALIZED_SUBCHANNEL_SENDERS: Mutex<Vec<(SubChannelId, Arc<IpcSender<MultiMessage>>, Arc<Mutex<Source<Weak<IpcSender<MultiMessage>>>>>)>> = Mutex::new(vec!());
+    static IPC_SENDERS_TO_SEND: Mutex<Vec<SubChannelSenderSendDetails>> = const {Mutex::new(vec!()) };
+    static SERIALIZED_SUBCHANNEL_SENDERS: Mutex<Vec<SubChannelSenderSerializedDetails>> = const { Mutex::new(vec!()) };
 }
 
 fn clear_serialization_context() {
@@ -1375,12 +1381,8 @@ fn clear_serialization_context() {
 }
 
 fn take_serialization_context() -> (
-    Vec<(
-        SubChannelId,                 // SubChannelId of serialized SubChannelSender
-        Arc<IpcSender<MultiMessage>>, // IpcSender of the SubChannelSender
-        Arc<Mutex<Source<Weak<IpcSender<MultiMessage>>>>>, // sender_id the SubChannelSender
-    )>,
-    Vec<(SubChannelId, Uuid, Arc<IpcSender<MultiMessage>>)>, // SubChannelId, IPC sender UUID, and IpcSender of serialized SubChannelSenders
+    Vec<SubChannelSenderSerializedDetails>,
+    Vec<SubChannelSenderSendDetails>, // SubChannelId, IPC sender UUID, and IpcSender of serialized SubChannelSenders
 ) {
     let serialized_subchannel_senders = SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| {
         let empty = Mutex::new(vec![]);
@@ -1389,15 +1391,13 @@ fn take_serialization_context() -> (
         std::mem::replace(&mut v, w).to_vec()
     });
 
-    let ipc_senders_to_send: Vec<(SubChannelId, Uuid, Arc<IpcSender<MultiMessage>>)> =
-        IPC_SENDERS_TO_SEND.with(
-            |ipc_senders: &Mutex<Vec<(SubChannelId, Uuid, Arc<IpcSender<MultiMessage>>)>>| {
-                let empty = Mutex::new(vec![]);
-                let mut v = ipc_senders.lock().unwrap();
-                let w = empty.lock().unwrap();
-                std::mem::replace(&mut v, w).to_vec()
-            },
-        );
+    let ipc_senders_to_send: Vec<SubChannelSenderSendDetails> =
+        IPC_SENDERS_TO_SEND.with(|ipc_senders: &Mutex<Vec<SubChannelSenderSendDetails>>| {
+            let empty = Mutex::new(vec![]);
+            let mut v = ipc_senders.lock().unwrap();
+            let w = empty.lock().unwrap();
+            std::mem::replace(&mut v, w).to_vec()
+        });
 
     (serialized_subchannel_senders, ipc_senders_to_send)
 }
@@ -1483,33 +1483,24 @@ impl Drop for SubChannelReceiver {
 
         // Drain the SubChannelReceiver and mark any subsenders as "receive failed". This is equivalent to receiving and then dropping
         // the subsenders.
-        loop {
-            match self.channel.try_recv() {
-                Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
-                    scid: via,
-                    payload: _,
-                    senders: scids_and_multi_senders,
-                    multi_receiver: _,
-                })) => {
-                    log::trace!(
-                        "SubChannelReceiver::drop draining = {:#?}",
-                        scids_and_multi_senders
-                    );
-                    scids_and_multi_senders.iter().for_each(|(scid, ms)| {
-                        let _ = ms
-                            .lock()
-                            .unwrap()
-                            .ipc_sender
-                            .send(MultiMessage::ReceiveFailed {
-                                scid: scid.clone(),
-                                via,
-                            });
-                    });
-                },
-                _ => {
-                    break;
-                },
-            }
+        while let Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
+            scid: via,
+            payload: _,
+            senders: scids_and_multi_senders,
+            multi_receiver: _,
+        })) = self.channel.try_recv()
+        {
+            log::trace!(
+                "SubChannelReceiver::drop draining = {:#?}",
+                scids_and_multi_senders
+            );
+            scids_and_multi_senders.iter().for_each(|(scid, ms)| {
+                let _ = ms
+                    .lock()
+                    .unwrap()
+                    .ipc_sender
+                    .send(MultiMessage::ReceiveFailed { scid: *scid, via });
+            });
         }
     }
 }
@@ -1632,7 +1623,7 @@ fn multi_channel() -> Result<(Arc<Mutex<MultiSender>>, Arc<MultiReceiver>), io::
     };
     let multi_receiver_rc = Arc::new(multi_receiver);
     let multi_sender = MultiSender {
-        client_id: client_id,
+        client_id,
         ipc_sender: Arc::new(ipc_sender),
         uuid: Uuid::new_v4(),
         sender_id: Arc::new(Mutex::new(Source::new())),
@@ -1756,7 +1747,7 @@ impl RawMessage {
 
         clear_deserialization_context();
 
-        return result.map_err(From::from);
+        result.map_err(From::from)
     }
 }
 
