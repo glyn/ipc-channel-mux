@@ -878,6 +878,23 @@ impl MultiReceiver {
     fn receive(mr: &Arc<MultiReceiver>) -> Result<(), MultiplexError> {
         let msg = loop {
             let polling_interval = Duration::new(1, 0);
+            // The following is inlined to avoid deadlock.
+            let maybe_mrs = mr
+                .mutator
+                .lock()
+                .as_ref()
+                .unwrap()
+                .maybe_ipc_receiver
+                .multi_receiver_set();
+            if let Some(multi_receiver_set) = maybe_mrs {
+                // FIXME: select blocks until there is something to receive. To implement try_receive_timeout
+                // properly may require MultiReceiverSet::try_select_timeout to be implemented, which may
+                // require IpcReceiverSet::try_select_timeout to be implemented.
+                match MultiReceiverSet::select(&multi_receiver_set) {
+                    Ok(_) => return Ok(()),
+                    Err(e) => return Err(e),
+                }
+            }
             let result = mr
                 .mutator
                 .lock()
