@@ -738,8 +738,6 @@ fn receiver_set_homogeneous_with_freestanding_subreceiver() {
     let (tx2, rx2) = channel.sub_channel::<String>();
 
     tx1.send(1).unwrap();
-    tx2.send("test".to_string()).unwrap();
-
     if let SubSelectionResult::MessageReceived(received_id, received_data) =
         rx_set.select().unwrap().into_iter().next().unwrap()
     {
@@ -753,6 +751,8 @@ fn receiver_set_homogeneous_with_freestanding_subreceiver() {
     } else {
         assert!(false, "Unexpected SubSelectionResult");
     }
+
+    tx2.send("test".to_string()).unwrap();
     assert_eq!(rx2.recv().unwrap(), "test".to_string());
 }
 
