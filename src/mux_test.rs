@@ -856,7 +856,6 @@ fn receiver_sets_with_subreceivers_sharing_ipc_channel() {
 
     if let SubSelectionResult::MessageReceived(received_id, received_data) =
         rx_set2.select().unwrap().into_iter().next().unwrap()
-    // FIXME: above select() panics (selecting with no objects?) on Windows.
     {
         match received_id {
             id if id == rx2_id => {

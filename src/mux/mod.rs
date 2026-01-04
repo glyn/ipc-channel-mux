@@ -697,14 +697,10 @@ impl IpcReceiverOrMultiReceiverSet {
                     Err(ipc::TryRecvError::Empty) => return Err(TryRecvError::Empty),
                 }
             },
-            IpcReceiverOrMultiReceiverSet::MultiReceiverSet(multi_receiver_set) => {
-                // FIXME: select blocks until there is something to receive. To implement try_receive_timeout
-                // properly may require MultiReceiverSet::try_select_timeout to be implemented, which may
-                // require IpcReceiverSet::try_select_timeout to be implemented.
-                match MultiReceiverSet::select(multi_receiver_set) {
-                    Ok(_) => return Err(TryRecvError::Handled),
-                    Err(e) => return Err(TryRecvError::MultiplexError(e)),
-                }
+            IpcReceiverOrMultiReceiverSet::MultiReceiverSet(_multi_receiver_set) => {
+                unimplemented!(
+                    "calling this from a locked MultiReceiver mutator results in deadlock"
+                );
             },
         }
     }
@@ -773,7 +769,7 @@ impl IpcReceiverOrMultiReceiverSet {
 }
 
 struct MultiReceiverMutator {
-    maybe_ipc_receiver: IpcReceiverOrMultiReceiverSet, // FIXME: rename this field
+    ipc_receiver_or_multi_receiver_set: IpcReceiverOrMultiReceiverSet,
     ipc_senders: HashMap<ClientId, IpcSender<MultiResponse>>,
     sub_channels: HashMap<
         SubChannelId,
@@ -884,7 +880,7 @@ impl MultiReceiver {
                 .lock()
                 .as_ref()
                 .unwrap()
-                .maybe_ipc_receiver
+                .ipc_receiver_or_multi_receiver_set
                 .multi_receiver_set();
             if let Some(multi_receiver_set) = maybe_mrs {
                 // FIXME: select blocks until there is something to receive. To implement try_receive_timeout
@@ -900,7 +896,7 @@ impl MultiReceiver {
                 .lock()
                 .as_ref()
                 .unwrap()
-                .maybe_ipc_receiver
+                .ipc_receiver_or_multi_receiver_set
                 .try_receive_timeout(polling_interval);
             match result {
                 Ok(msg) => break Ok(msg),
@@ -929,7 +925,7 @@ impl MultiReceiver {
                 .lock()
                 .as_ref()
                 .unwrap()
-                .maybe_ipc_receiver
+                .ipc_receiver_or_multi_receiver_set
                 .try_receive();
             match result {
                 Ok(msg) => msg,
@@ -1098,7 +1094,7 @@ impl MultiReceiver {
             .lock()
             .as_ref()
             .unwrap()
-            .maybe_ipc_receiver
+            .ipc_receiver_or_multi_receiver_set
             .receive()?;
         match msg {
             MultiMessage::SubChannelId(sub_channel_id, name) => Ok((sub_channel_id, name)),
@@ -1625,7 +1621,9 @@ fn multi_channel() -> Result<(Arc<Mutex<MultiSender>>, Arc<MultiReceiver>), io::
     let multi_receiver = MultiReceiver {
         ipc_receiver_uuid: Uuid::new_v4(),
         mutator: Mutex::new(MultiReceiverMutator {
-            maybe_ipc_receiver: IpcReceiverOrMultiReceiverSet::IpcReceiver(ipc_receiver),
+            ipc_receiver_or_multi_receiver_set: IpcReceiverOrMultiReceiverSet::IpcReceiver(
+                ipc_receiver,
+            ),
             ipc_senders: senders,
             sub_channels: HashMap::new(),
             disconnectors: WeakValueHashMap::new(),
@@ -1663,7 +1661,9 @@ impl OneShotMultiServer {
         let mr = MultiReceiver {
             ipc_receiver_uuid: Uuid::new_v4(),
             mutator: Mutex::new(MultiReceiverMutator {
-                maybe_ipc_receiver: IpcReceiverOrMultiReceiverSet::IpcReceiver(multi_receiver),
+                ipc_receiver_or_multi_receiver_set: IpcReceiverOrMultiReceiverSet::IpcReceiver(
+                    multi_receiver,
+                ),
                 ipc_senders: HashMap::new(),
                 sub_channels: HashMap::new(),
                 disconnectors: WeakValueHashMap::new(),
@@ -1775,7 +1775,7 @@ impl SubReceiverSet {
             next_id: 0,
             rxs: HashMap::new(),
             ids: HashMap::new(),
-            multi_receiver_set: Arc::new(Mutex::new(MultiReceiverSet::new()?)), // FIXME: distinct SubReceiverSets never share a MultiReceiverSet
+            multi_receiver_set: Arc::new(Mutex::new(MultiReceiverSet::new()?)),
             rx,
             tx,
         })
@@ -1801,7 +1801,7 @@ impl SubReceiverSet {
             .mutator
             .lock()
             .unwrap()
-            .maybe_ipc_receiver
+            .ipc_receiver_or_multi_receiver_set
             .is_ipc_receiver()
         {
             MultiReceiverSet::add(
@@ -1816,7 +1816,7 @@ impl SubReceiverSet {
                 .mutator
                 .lock()
                 .unwrap()
-                .maybe_ipc_receiver
+                .ipc_receiver_or_multi_receiver_set
                 .multi_receiver_set()
                 .unwrap();
 
@@ -1834,7 +1834,7 @@ impl SubReceiverSet {
                     .mutator
                     .lock()
                     .unwrap()
-                    .maybe_ipc_receiver
+                    .ipc_receiver_or_multi_receiver_set
                     .multi_receiver_set()
                     .unwrap();
             } else {
@@ -1941,7 +1941,7 @@ impl MultiReceiverSet {
             .mutator
             .lock()
             .unwrap()
-            .maybe_ipc_receiver
+            .ipc_receiver_or_multi_receiver_set
             .swap(Arc::clone(mrs));
         let mut multi_receiver_set_mut = mrs.lock().unwrap();
         let id = multi_receiver_set_mut.ipc_receiver_set.add(ipc_receiver)?;
@@ -1959,7 +1959,6 @@ impl MultiReceiverSet {
     // Obtain one or more incoming messages and handle them.
     fn select(mrs: &Arc<Mutex<MultiReceiverSet>>) -> Result<(), MultiplexError> {
         let mut mrs_mut = mrs.lock().unwrap();
-        // FIXME: the following sometimes panics on Windows because the set is empty.
         let results = mrs_mut.ipc_receiver_set.select()?;
         log::trace!(
             "MultiReceiverSet::select processing {} results",
