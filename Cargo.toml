@@ -4,7 +4,7 @@ version = "0.0.4"
 description = "IPC channel multiplexer"
 authors = ["The Servo Project Developers"]
 license = "MIT OR Apache-2.0"
-repository = "https://codeberg.org/glyn/ipc-channel-mux"
+repository = "https://github.com/glyn/ipc-channel-mux"
 readme = "README.md"
 edition = "2024"
 # Keep this in sync with the msrv_build job in CI.
