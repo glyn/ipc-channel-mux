@@ -13,8 +13,9 @@
 //! message to a crossbeam `Sender<T>` or `Receiver<T>`. You should use the global `ROUTER` to
 //! access the `RouterProxy` methods (via `ROUTER`'s `Deref` for `RouterProxy`.
 
+use lazy_static::lazy_static;
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use std::sync::Mutex;
 use std::thread;
 
 use crate::mux::{
@@ -24,12 +25,14 @@ use crate::mux::{
 use crossbeam_channel::{self, Receiver, Sender};
 use serde::{Deserialize, Serialize};
 
-/// Global object wrapping a `RouterProxy`.
-/// Add routes ([add_typed_route](RouterProxy::add_typed_route)), or convert `SubReceiver<T>`
-/// to crossbeam receivers (e.g. [route_subreceiver_to_new_crossbeam_receiver](RouterProxy::route_subreceiver_to_new_crossbeam_receiver)).
-pub static ROUTER: LazyLock<RouterProxy> = LazyLock::new(RouterProxy::new);
+lazy_static! {
+    /// Global object wrapping a `RouterProxy`.
+    /// Add routes ([add_typed_route](RouterProxy::add_typed_route)), or convert `SubReceiver<T>`
+    /// to crossbeam receivers (e.g. [route_subreceiver_to_new_crossbeam_receiver](RouterProxy::route_subreceiver_to_new_crossbeam_receiver)).
+    pub static ref ROUTER: RouterProxy = RouterProxy::new();
+}
 
-/// A `RouterProxy` provides methods for establising and talking to the router.
+/// A `RouterProxy` provides methods for establishing and talking to the router.
 pub struct RouterProxy {
     comm: Mutex<RouterProxyComm>,
 }
@@ -46,10 +49,7 @@ impl RouterProxy {
         let (msg_sender, msg_receiver) = crossbeam_channel::unbounded();
         let chan = mux::Channel::new().unwrap();
         let (wakeup_sender, wakeup_receiver) = chan.sub_channel();
-        thread::Builder::new()
-            .name("router-proxy".to_string())
-            .spawn(move || Router::new(msg_receiver, wakeup_receiver).run())
-            .expect("Failed to spawn router proxy thread");
+        thread::spawn(move || Router::new(msg_receiver, wakeup_receiver).run());
         RouterProxy {
             comm: Mutex::new(RouterProxyComm {
                 msg_sender,
@@ -93,7 +93,6 @@ impl RouterProxy {
             callback(typed_message)
         };
 
-        #[allow(deprecated)]
         self.add_route(subreceiver.to_opaque(), Box::new(modified_callback));
     }
 

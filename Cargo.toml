@@ -16,6 +16,7 @@ futures-channel = { version = "0.3.31", optional = true }
 futures-core = { version = "0.3.31", optional = true }
 hashbag = "0.1.12"
 ipc-channel = "0.20.2"
+lazy_static = "1.5.0"
 libc = "0.2.162"
 log = "0.4.26"
 serde = { version = "1.0", features = ["derive", "rc"] }

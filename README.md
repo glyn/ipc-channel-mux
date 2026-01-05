@@ -78,8 +78,7 @@ The router is in the `mux::subchannel_router` module.
 
 IPC channels are provided by Servo's [ipc-channel](https://github.com/server/ipc-channel) crate which the implementation of `ipc-channel-mux` uses for IPC communication.
 
-* Subchannel creation requires the underlying IPC channel to have been created already.
-Reusing the underlying channel when creating multiple subchannels enables those subchannels to be multiplexed over the underlying channel.
+* Subchannel creation requires the underlying IPC channel to have been created already. Reusing the underlying channel when creating multiple subchannels enables those subchannels to be multiplexed over the underlying channel.
 * Subchannel receivers, or _subreceivers_, may not be sent or received.[^restriction] This is a consequence of the MPSC nature of the underlying IPC channel: sending a subreceiver would entail sending the underlying IPC receiver and this would break any other subreceivers using that IPC receiver.
 * IPC channel creation can fail, as can multiplexing IPC channel creation, but subchannel creation never fails.[^never]
 
@@ -92,8 +91,7 @@ We'll now explore when it's worth using `ipc-channel-mux` instead of `ipc-channe
 First, it's important to note some other differences between the two kinds of channel:
 
 * Subchannel senders, or _subsenders_, may be sent and received without consuming scarce operating system resources, such as file descriptors on Unix variants.[^dupsender] (Servo has encountered process crashes due to IPC channels consuming all the file descriptors for a process.)
-* In order to communicate subreceiver drop to all the subchannel senders, one additional IPC channel is needed per sender of the IPC channel underlying the subchannel.
-The additional IPC channel's consumption of scare operating system resources, such as file descriptors on Unix variants, is amortised across multiple subchannels which share the sender of the IPC channel underlying the original subchannel.
+* In order to communicate subreceiver drop to all the subchannel senders, one additional IPC channel is needed per sender of the IPC channel underlying the subchannel. The additional IPC channel's consumption of scare operating system resources, such as file descriptors on Unix variants, is amortised across multiple subchannels which share the sender of the IPC channel underlying the original subchannel.
 * Subchannels sharing the same underlying IPC channel could interfere with each other’s performance. For example, message latency on a subchannel sharing the same underlying IPC channel as a busy subchannel could be increased.
 
 [^dupsender]: On Unix variants, each time an IPC sender is received from an IPC channel, a file descriptor is consumed, _even when_ the same IPC sender is received multiple times.
@@ -122,8 +120,7 @@ This has the following advantages:
 * Tests run fast since the IPC channel tests are elsewhere.[^testspeed]
 * The dependencies of `ipc-channel-mux` are kept separate from those of IPC channel.
 * Implementing `ipc-channel-mux` using the public API of IPC channel makes the projects easier to understand than if they were combined.
-* If multiplexing proves useful and is applied to some IPC channel usecases in Servo, it will be possible to release a version of `ipc-channel-mux` and keep enhancing it and experimenting with applying it to other Servo usecases without giving it the (possibly misleading) status of being part of the IPC channel API.
-In particular, the multiplexing API can be changed as necessary without impacting backwards compatibility of IPC channel.
+* If multiplexing proves useful and is applied to some IPC channel usecases in Servo, it will be possible to release a version of `ipc-channel-mux` and keep enhancing it and experimenting with applying it to other Servo usecases without giving it the (possibly misleading) status of being part of the IPC channel API. In particular, the multiplexing API can be changed as necessary without impacting backwards compatibility of IPC channel.
 
 [^testspeed]: `cargo test` of `ipc-channel-mux` currently takes just over 2 seconds whereas it used to take over 8 seconds before the multiplexing code was split out of the `ipc-channel` repo.
 
@@ -225,8 +222,7 @@ Fortunately, a multireceiver will tend to drain messages when receiving on behal
 
 ## Related
 
-* [Rust channel](https://doc.rust-lang.org/std/sync/mpsc/index.html): MPSC (multi-producer, single-consumer) channels in the Rust standard library. The implementation
-consists of a single consumer wrapper of a port of Crossbeam channel.
+* [Rust channel](https://doc.rust-lang.org/std/sync/mpsc/index.html): MPSC (multi-producer, single-consumer) channels in the Rust standard library. The implementation consists of a single consumer wrapper of a port of Crossbeam channel.
 * [Crossbeam channel](https://github.com/crossbeam-rs/crossbeam/tree/master/crossbeam-channel): extends Rust channels to be more like their Go counterparts. Crossbeam channels are MPMC (multi-producer, multi-consumer).
 * [IPC channel](https://github.com/server/ipc-channel): the IPC channels which `ipc-channel-mux` is implemented on top of.
 * [Channels](https://docs.rs/channels/latest/channels/): provides Sender and Receiver types for communicating with a channel-like API across generic IO streams.
