@@ -621,6 +621,9 @@ struct MultiReceiver {
     mutator: Mutex<MultiReceiverMutator>,
 }
 
+unsafe impl Send for MultiReceiver {}
+unsafe impl Sync for MultiReceiver {}
+
 struct ResolvedMessage {
     scid: SubChannelId,
     payload: Vec<u8>,
@@ -1762,6 +1765,7 @@ impl SubReceiverSet {
     #[instrument(level = "debug", err(level = "debug"))]
     pub fn new() -> Result<SubReceiverSet, io::Error> {
         let (tx, rx) = mpsc::channel();
+        #[allow(clippy::arc_with_non_send_sync)]
         Ok(SubReceiverSet {
             next_id: 0,
             rxs: HashMap::new(),
