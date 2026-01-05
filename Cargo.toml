@@ -7,6 +7,9 @@ license = "MIT OR Apache-2.0"
 repository = "https://codeberg.org/glyn/ipc-channel-mux"
 readme = "README.md"
 edition = "2024"
+# Keep this in sync with the msrv_build job in CI.
+# This version may be `<=`, but not higher than the MSRV in the main servo project.
+rust-version = "1.86.0"
 
 [dependencies]
 bincode = "1"
