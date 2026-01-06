@@ -224,7 +224,7 @@ Fortunately, a multireceiver will tend to drain messages when receiving on behal
 
 * [Rust channel](https://doc.rust-lang.org/std/sync/mpsc/index.html): MPSC (multi-producer, single-consumer) channels in the Rust standard library. The implementation consists of a single consumer wrapper of a port of Crossbeam channel.
 * [Crossbeam channel](https://github.com/crossbeam-rs/crossbeam/tree/master/crossbeam-channel): extends Rust channels to be more like their Go counterparts. Crossbeam channels are MPMC (multi-producer, multi-consumer).
-* [IPC channel](https://github.com/server/ipc-channel): the IPC channels which `ipc-channel-mux` is implemented on top of.
+* [IPC channel](https://github.com/servo/ipc-channel): the IPC channels which `ipc-channel-mux` is implemented on top of.
 * [Channels](https://docs.rs/channels/latest/channels/): provides Sender and Receiver types for communicating with a channel-like API across generic IO streams.
 
 [^CSP]: Tony Hoare conceived Communicating Sequential Processes (CSP) as a concurrent programming language.
