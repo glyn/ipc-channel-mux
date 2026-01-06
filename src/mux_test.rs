@@ -117,6 +117,7 @@ fn embedded_multiplexed_two_senders() {
     let (super_tx, super_rx) = channel.sub_channel();
 
     super_tx.send(person_and_two_senders).unwrap();
+    #[allow(clippy::type_complexity)]
     let received_person_and_two_senders: (
         (String, i32),
         SubSender<(String, i32)>,
@@ -535,10 +536,10 @@ fn receiver_set_homogeneous() {
                     assert_eq!(received_value, "test".to_string());
                     recvd2 = true;
                 },
-                _ => assert!(false),
+                _ => panic!("unexpected id"),
             }
         } else {
-            assert!(false, "Unexpected SubSelectionResult");
+            panic!("Unexpected SubSelectionResult");
         }
     }
     assert!(recvd1, "i32 was not received");
@@ -580,10 +581,10 @@ fn receiver_set_heterogeneous() {
                     assert_eq!(received_value, "test".to_string());
                     recvd2 = true;
                 },
-                _ => assert!(false),
+                _ => panic!("unexpected id"),
             }
         } else {
-            assert!(false, "Unexpected SubSelectionResult");
+            panic!("Unexpected SubSelectionResult");
         }
     }
     assert!(recvd1, "i32 was not received");
@@ -604,7 +605,7 @@ fn receiver_set_disconnect() {
     {
         assert_eq!(received_id, rx_id);
     } else {
-        assert!(false);
+        panic!("unexpected result");
     }
 }
 
@@ -646,10 +647,10 @@ fn receiver_set_homogeneous_blocking() {
                         assert_eq!(received_value, 2);
                         recvd2 = true;
                     },
-                    _ => assert!(false),
+                    _ => panic!("unexpected id"),
                 }
             } else {
-                assert!(false, "Unexpected SubSelectionResult");
+                panic!("Unexpected SubSelectionResult");
             }
         }
         assert!(recvd1, "i32 was not received");
@@ -706,10 +707,10 @@ fn receiver_set_heterogeneous_blocking() {
                         assert_eq!(received_value, 2);
                         recvd2 = true;
                     },
-                    _ => assert!(false),
+                    _ => panic!("unexpected id"),
                 }
             } else {
-                assert!(false, "Unexpected SubSelectionResult");
+                panic!("Unexpected SubSelectionResult");
             }
         }
         assert!(recvd1, "i32 was not received");
@@ -746,10 +747,10 @@ fn receiver_set_homogeneous_with_freestanding_subreceiver() {
                 let received_value: i32 = received_data.to().unwrap();
                 assert_eq!(received_value, 1);
             },
-            _ => assert!(false),
+            _ => panic!("unexpected id"),
         }
     } else {
-        assert!(false, "Unexpected SubSelectionResult");
+        panic!("Unexpected SubSelectionResult");
     }
 
     tx2.send("test".to_string()).unwrap();
@@ -800,10 +801,10 @@ fn receiver_set_heterogeneous_with_freestanding_subreceiver() {
                         assert_eq!(received_value, 2);
                         recvd2 = true;
                     },
-                    _ => assert!(false),
+                    _ => panic!("unexpected id"),
                 }
             } else {
-                assert!(false, "Unexpected SubSelectionResult");
+                panic!("Unexpected SubSelectionResult");
             }
         }
         assert!(recvd1, "i32 was not received");
@@ -846,10 +847,10 @@ fn receiver_sets_with_subreceivers_sharing_ipc_channel() {
                 let received_value: i32 = received_data.to().unwrap();
                 assert_eq!(received_value, 1);
             },
-            _ => assert!(false),
+            _ => panic!("unexpected id"),
         }
     } else {
-        assert!(false, "Unexpected SubSelectionResult");
+        panic!("Unexpected SubSelectionResult");
     }
 
     tx2.send("test".to_string()).unwrap();
@@ -862,10 +863,10 @@ fn receiver_sets_with_subreceivers_sharing_ipc_channel() {
                 let received_value: String = received_data.to().unwrap();
                 assert_eq!(received_value, "test".to_string());
             },
-            _ => assert!(false),
+            _ => panic!("unexpected id"),
         }
     } else {
-        assert!(false, "Unexpected SubSelectionResult");
+        panic!("Unexpected SubSelectionResult");
     }
 }
 
@@ -877,7 +878,7 @@ fn router_simple_global() {
     let channel = mux::Channel::new().unwrap();
     let message: usize = 42;
     let (tx, rx) = channel.sub_channel();
-    tx.send(message.clone()).unwrap();
+    tx.send(message).unwrap();
 
     let (callback_fired_sender, callback_fired_receiver) = crossbeam_channel::unbounded::<usize>();
     ROUTER.add_typed_route(

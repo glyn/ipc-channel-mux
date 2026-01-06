@@ -246,7 +246,7 @@ mod tests {
     impl TestSender {
         fn new(sent: &Arc<Mutex<Vec<char>>>) -> Self {
             Self {
-                sent: Arc::clone(&sent),
+                sent: Arc::clone(sent),
                 err: None,
             }
         }

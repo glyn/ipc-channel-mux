@@ -22,7 +22,7 @@ fn muxing() {
     use ipc_channel_mux::mux;
     let channel = mux::Channel::new().unwrap();
     let (sub_sender, sub_receiver) = channel.sub_channel();
-    sub_sender.send(45 as u8).unwrap();
+    sub_sender.send(45_u8).unwrap();
 
     let data: u8 = sub_receiver.recv().unwrap();
     assert_eq!(data, 45);
