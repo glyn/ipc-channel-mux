@@ -13,28 +13,32 @@
 //! message to a crossbeam `Sender<T>` or `Receiver<T>`. You should use the global `ROUTER` to
 //! access the `RouterProxy` methods (via `ROUTER`'s `Deref` for `RouterProxy`.
 
-use lazy_static::lazy_static;
 use std::collections::HashMap;
-use std::sync::Mutex;
-use std::thread;
+use std::sync::{LazyLock, Mutex};
+use std::thread::{self, JoinHandle};
+
+use crossbeam_channel::{self, Receiver, Sender};
+use serde::{Deserialize, Serialize};
 
 use crate::mux::{
     self, MultiplexError, OpaqueSubReceiver, RawMessage, SubReceiver, SubReceiverSet,
     SubSelectionResult, SubSender,
 };
-use crossbeam_channel::{self, Receiver, Sender};
-use serde::{Deserialize, Serialize};
 
-lazy_static! {
-    /// Global object wrapping a `RouterProxy`.
-    /// Add routes ([add_typed_route](RouterProxy::add_typed_route)), or convert `SubReceiver<T>`
-    /// to crossbeam receivers (e.g. [route_subreceiver_to_new_crossbeam_receiver](RouterProxy::route_subreceiver_to_new_crossbeam_receiver)).
-    pub static ref ROUTER: RouterProxy = RouterProxy::new();
-}
+/// Global object wrapping a `RouterProxy`.
+/// Add routes ([add_typed_route](RouterProxy::add_typed_route)), or convert `SubReceiver<T>`
+/// to crossbeam receivers (e.g. [route_subreceiver_to_new_crossbeam_receiver](RouterProxy::route_subreceiver_to_new_crossbeam_receiver)).
+pub static ROUTER: LazyLock<RouterProxy> = LazyLock::new(RouterProxy::new);
 
 /// A `RouterProxy` provides methods for establishing and talking to the router.
 pub struct RouterProxy {
     comm: Mutex<RouterProxyComm>,
+}
+
+impl Drop for RouterProxy {
+    fn drop(&mut self) {
+        self.shutdown();
+    }
 }
 
 #[allow(clippy::new_without_default)]
@@ -49,12 +53,16 @@ impl RouterProxy {
         let (msg_sender, msg_receiver) = crossbeam_channel::unbounded();
         let chan = mux::Channel::new().unwrap();
         let (wakeup_sender, wakeup_receiver) = chan.sub_channel();
-        thread::spawn(move || Router::new(msg_receiver, wakeup_receiver).run());
+        let handle = thread::Builder::new()
+            .name("router-proxy".to_string())
+            .spawn(move || Router::new(msg_receiver, wakeup_receiver).run())
+            .expect("Failed to spawn router proxy thread");
         RouterProxy {
             comm: Mutex::new(RouterProxyComm {
                 msg_sender,
                 wakeup_sender,
                 shutdown: false,
+                handle: Some(handle),
             }),
         }
     }
@@ -118,6 +126,11 @@ impl RouterProxy {
                 ack_receiver.recv().unwrap();
             })
             .unwrap();
+        comm.handle
+            .take()
+            .expect("Should have a join handle at shutdown")
+            .join()
+            .expect("Failed to join on the router proxy thread");
     }
 
     /// A convenience function to route an `SubReceiver<T>` to an existing `Sender<T>`.
@@ -153,6 +166,7 @@ struct RouterProxyComm {
     msg_sender: Sender<RouterMsg>,
     wakeup_sender: SubSender<()>,
     shutdown: bool,
+    handle: Option<JoinHandle<()>>,
 }
 
 /// Router runs in its own thread listening for events. Adds events to its SubReceiverSet
@@ -212,7 +226,7 @@ impl Router {
                                 sender
                                     .send(())
                                     .expect("Failed to send comfirmation of shutdown.");
-                                break;
+                                return;
                             },
                         }
                     },
