@@ -1952,6 +1952,7 @@ impl MultiReceiverSet {
     }
 
     // Obtain one or more incoming messages and handle them.
+    #[instrument(level = "trace", ret, err(level = "trace"))]
     fn select(mrs: &Arc<Mutex<MultiReceiverSet>>) -> Result<(), MultiplexError> {
         let mut mrs_mut = mrs.lock().unwrap();
         let results = mrs_mut.ipc_receiver_set.select()?;

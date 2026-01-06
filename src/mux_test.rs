@@ -872,8 +872,9 @@ fn receiver_sets_with_subreceivers_sharing_ipc_channel() {
 
 #[test]
 fn router_simple_global() {
-    // Note: All ROUTER operation need to run in a single test,
-    // since the state of the router will carry across tests.
+    // Note: All ROUTER operations need to run in a single test,
+    // since tests running in the same process will share router
+    // state.
 
     let channel = mux::Channel::new().unwrap();
     let message: usize = 42;
