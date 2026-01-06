@@ -14,7 +14,6 @@ rust-version = "1.86.0"
 [dependencies]
 bincode = "1"
 crossbeam-channel = "0.5"
-fnv = "1.0.3"
 futures-channel = { version = "0.3.31", optional = true }
 futures-core = { version = "0.3.31", optional = true }
 hashbag = "0.1.12"
