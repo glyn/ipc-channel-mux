@@ -891,6 +891,14 @@ fn router_simple_global() {
     let received_message = callback_fired_receiver.recv().unwrap();
     assert_eq!(received_message, message);
 
+    // Check behaviour of associated subreceiver.
+    let message2: usize = 1729;
+    let (assoc_tx, assoc_rx) = channel.sub_channel();
+    assoc_tx.send(message2).unwrap();
+    // FIXME: the following hangs
+    log::trace!("ABOUT TO RECEIVE ON ASSOCIATED RECEIVER");
+    assert_eq!(assoc_rx.recv().unwrap(), message2);
+
     // Now shut down the router.
     ROUTER.shutdown();
 
