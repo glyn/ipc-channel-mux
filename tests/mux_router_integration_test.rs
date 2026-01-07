@@ -7,6 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use crossbeam_channel::Receiver;
 use ipc_channel_mux::mux::subchannel_router::ROUTER;
 use ipc_channel_mux::mux::{Channel, MultiplexError, SubOneShotServer, SubReceiver, SubSender};
 use std::{env, process};
@@ -165,6 +166,34 @@ fn router_associated_subsender_drop_inflight() {
         Err(MultiplexError::Disconnected) => {},
         result => panic!("unexpected result {:?}", result),
     }
+
+    // Now shut down the router.
+    ROUTER.shutdown();
+}
+
+/// Test router associated behaviour when a SubSender is dropped.
+#[test]
+//#[ignore = "https://github.com/glyn/ipc-channel-mux/issues/4"]
+fn router_associated_subsender_drop() {
+    let d = Channel::new().unwrap();
+    let (tx, rx) = d.sub_channel::<()>();
+
+    // Ensure that the "sending" message is received so that polling occurs.
+    let (extra_tx, extra_rx) = d.sub_channel();
+
+    // Add extra_rx to the router, so that rx is associated with the router.
+    let callback_fired_receiver: Receiver<()> =
+        ROUTER.route_subreceiver_to_new_crossbeam_receiver(extra_rx);
+
+    extra_tx.send(()).unwrap();
+    callback_fired_receiver.recv().unwrap();
+
+    tx.send(()).unwrap();
+    log::trace!("ABOUT TO RECEIVE ON ASSOCIATED");
+    rx.recv().unwrap();
+
+    log::trace!("ABOUT TO DROP SUBSENDER");
+    drop(extra_tx);
 
     // Now shut down the router.
     ROUTER.shutdown();

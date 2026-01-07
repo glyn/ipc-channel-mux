@@ -700,15 +700,15 @@ impl IpcReceiverOrMultiReceiverSet {
                     Err(ipc_channel::TryRecvError::Empty) => return Err(TryRecvError::Empty),
                 }
             },
-            IpcReceiverOrMultiReceiverSet::MultiReceiverSet(_multi_receiver_set) => {
+            IpcReceiverOrMultiReceiverSet::MultiReceiverSet(multi_receiver_set) => {
                 // select would block until there is something to receive, so return "empty" instead.
                 // FIXME: implement MultiReceiverSet::try_select, which may require IpcReceiverSet::try_select
                 // to be implemented.
-                return Err(TryRecvError::Empty);
-                // match MultiReceiverSet::select(multi_receiver_set) {
-                //     Ok(_) => return Err(TryRecvError::Handled),
-                //     Err(e) => return Err(TryRecvError::MultiplexError(e)),
-                // }
+                // return Err(TryRecvError::Empty);
+                match MultiReceiverSet::select(multi_receiver_set) {
+                    Ok(_) => return Err(TryRecvError::Handled),
+                    Err(e) => return Err(TryRecvError::MultiplexError(e)),
+                }
             },
         }
     }
@@ -866,6 +866,7 @@ impl MultiReceiver {
                 // FIXME: select blocks until there is something to receive. To implement try_receive_timeout
                 // properly may require MultiReceiverSet::try_select_timeout to be implemented, which may
                 // require IpcReceiverSet::try_select_timeout to be implemented.
+                log::trace!("BINGO>>>>>");
                 match MultiReceiverSet::select(&multi_receiver_set) {
                     Ok(_) => return Ok(()),
                     Err(e) => return Err(e),
