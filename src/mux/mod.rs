@@ -130,8 +130,9 @@
 
 use bincode;
 use channel_identification::{Source, Target};
+use ipc_channel::IpcError;
 use ipc_channel::ipc::{
-    self, IpcError, IpcOneShotServer, IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender,
+    self, IpcOneShotServer, IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender,
 };
 use log;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
@@ -546,9 +547,13 @@ impl From<std::io::Error> for MultiplexError {
     }
 }
 
+// FIXME: the following is a temporary implementation until ipc-channel-mux switches
+// from bincode to postcard.
 impl From<bincode::Error> for MultiplexError {
-    fn from(err: bincode::Error) -> MultiplexError {
-        MultiplexError::IpcError(IpcError::Bincode(err))
+    fn from(_err: bincode::Error) -> MultiplexError {
+        MultiplexError::IpcError(IpcError::SerializationError(
+            postcard::Error::NotYetImplemented.into(),
+        ))
     }
 }
 
@@ -665,12 +670,12 @@ impl IpcReceiverOrMultiReceiverSet {
             IpcReceiverOrMultiReceiverSet::IpcReceiver(ipc_receiver) => {
                 match ipc_receiver.try_recv_timeout(duration) {
                     Ok(multi_message) => return Ok(multi_message),
-                    Err(ipc::TryRecvError::IpcError(ipc_error)) => {
+                    Err(ipc_channel::TryRecvError::IpcError(ipc_error)) => {
                         return Err(TryRecvError::MultiplexError(MultiplexError::IpcError(
                             ipc_error,
                         )));
                     },
-                    Err(ipc::TryRecvError::Empty) => return Err(TryRecvError::Empty),
+                    Err(ipc_channel::TryRecvError::Empty) => return Err(TryRecvError::Empty),
                 }
             },
             IpcReceiverOrMultiReceiverSet::MultiReceiverSet(_multi_receiver_set) => {
@@ -687,12 +692,12 @@ impl IpcReceiverOrMultiReceiverSet {
             IpcReceiverOrMultiReceiverSet::IpcReceiver(ipc_receiver) => {
                 match ipc_receiver.try_recv() {
                     Ok(multi_message) => return Ok(multi_message),
-                    Err(ipc::TryRecvError::IpcError(ipc_error)) => {
+                    Err(ipc_channel::TryRecvError::IpcError(ipc_error)) => {
                         return Err(TryRecvError::MultiplexError(MultiplexError::IpcError(
                             ipc_error,
                         )));
                     },
-                    Err(ipc::TryRecvError::Empty) => return Err(TryRecvError::Empty),
+                    Err(ipc_channel::TryRecvError::Empty) => return Err(TryRecvError::Empty),
                 }
             },
             IpcReceiverOrMultiReceiverSet::MultiReceiverSet(_multi_receiver_set) => {
@@ -1964,7 +1969,16 @@ impl MultiReceiverSet {
             match result {
                 IpcSelectionResult::MessageReceived(id, ipc_message) => {
                     if let Some(multi_receiver) = mrs_mut.multi_receivers.get(&id) {
-                        MultiReceiver::handle(Arc::clone(multi_receiver), ipc_message.to()?)?;
+                        MultiReceiver::handle(
+                            Arc::clone(multi_receiver),
+                            // FIXME: the following is a temporary implementation until ipc-channel-mux switches
+                            // from bincode to postcard.
+                            ipc_message.to().map_err(|_e| {
+                                MultiplexError::IpcError(IpcError::SerializationError(
+                                    postcard::Error::NotYetImplemented.into(),
+                                ))
+                            })?,
+                        )?;
                     }
                 },
                 IpcSelectionResult::ChannelClosed(id) => {
