@@ -7,8 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crossbeam_channel::Receiver;
-use ipc_channel_mux::mux::subchannel_router::ROUTER;
+use ipc_channel_mux::mux::subchannel_router::{ROUTER, RouterProxy};
 use ipc_channel_mux::mux::{Channel, MultiplexError, SubOneShotServer, SubReceiver, SubSender};
 use std::{env, process};
 use test_log::test;
@@ -87,15 +86,10 @@ fn router_subsender_drop_inflight() {
     let (_rx, (data, control)): (SubReceiver<ChannelPair>, ChannelPair) =
         server.accept().expect("accept failed");
 
-    let d = Channel::new().unwrap();
-    let (transmit_tx, transmit_rx) = d.sub_channel();
+    let channel = RouterProxy::new_router_channel(ROUTER.clone()).unwrap();
+    let (transmit_tx, callback_fired_receiver) = channel.route_to_new_crossbeam_receiver::<bool>().unwrap();
 
     data.send(transmit_tx).expect("subsender send failed");
-
-    // Ensure that the "sending" message is received so that polling occurs.
-    let (extra_tx, extra_rx) = d.sub_channel();
-    extra_tx.send(()).unwrap();
-    extra_rx.recv().unwrap(); // uses the same IpcReceiver as transmit_rx
 
     control.send(()).expect("control send failed");
     let result = child.wait().expect("wait for child process failed");
@@ -104,8 +98,6 @@ fn router_subsender_drop_inflight() {
         1,
         "child process did not terminate with exit status code 1"
     );
-
-    let callback_fired_receiver = ROUTER.route_subreceiver_to_new_crossbeam_receiver(transmit_rx);
 
     assert!(
         callback_fired_receiver.recv().is_err(),

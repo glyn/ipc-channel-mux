@@ -8,7 +8,7 @@
 // except according to those terms.
 
 use crate::mux::{
-    self, SubOneShotServer, SubReceiver, SubSelectionResult, SubSender, subchannel_router::ROUTER,
+    self, SubOneShotServer, SubReceiver, SubSelectionResult, SubSender, subchannel_router::{ROUTER, RouterError, RouterProxy},
 };
 use std::thread;
 use test_log::test;
@@ -876,18 +876,18 @@ fn router_simple_global() {
     // since tests running in the same process will share router
     // state.
 
-    let channel = mux::Channel::new().unwrap();
-    let message: usize = 42;
-    let (tx, rx) = channel.sub_channel();
-    tx.send(message).unwrap();
+    let channel = RouterProxy::new_router_channel(ROUTER.clone()).unwrap();
 
     let (callback_fired_sender, callback_fired_receiver) = crossbeam_channel::unbounded::<usize>();
-    ROUTER.add_typed_route(
-        rx,
+    let tx = channel.add_typed_route(
         Box::new(move |message| {
             callback_fired_sender.send(message.unwrap()).unwrap();
         }),
-    );
+    ).unwrap();
+        
+    let message: usize = 42;
+    tx.send(message).unwrap();
+
     let received_message = callback_fired_receiver.recv().unwrap();
     assert_eq!(received_message, message);
 
@@ -895,21 +895,17 @@ fn router_simple_global() {
     ROUTER.shutdown();
 
     // Use router after shutdown.
-    let person = ("Patrick Walton".to_owned(), 29);
-    let (tx, rx) = channel.sub_channel();
-    tx.send(person.clone()).unwrap();
-
-    let (callback_fired_sender, callback_fired_receiver) = crossbeam_channel::unbounded::<Person>();
-    ROUTER.add_typed_route(
-        rx,
+    let (callback_fired_sender, _callback_fired_receiver) = crossbeam_channel::unbounded::<Person>();
+    if let Err(RouterError::ShuttingDown) = channel.add_typed_route(
         Box::new(move |person| {
             callback_fired_sender.send(person.unwrap()).unwrap();
         }),
-    );
+    ) {} else {
+        panic!("router did not return ShuttingDown error");
+    }
 
     // The sender should have been dropped.
-    let received_person = callback_fired_receiver.recv();
-    assert!(received_person.is_err());
+    assert!(tx.send(43).is_err());
 
     // Shutdown the router, again (should be a no-op).
     ROUTER.shutdown();

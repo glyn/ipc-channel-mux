@@ -14,7 +14,7 @@
 //! access the `RouterProxy` methods (via `ROUTER`'s `Deref` for `RouterProxy`.
 
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::{self, Receiver, Sender};
@@ -26,9 +26,9 @@ use crate::mux::{
 };
 
 /// Global object wrapping a `RouterProxy`.
-/// Add routes ([add_typed_route](RouterProxy::add_typed_route)), or convert `SubReceiver<T>`
-/// to crossbeam receivers (e.g. [route_subreceiver_to_new_crossbeam_receiver](RouterProxy::route_subreceiver_to_new_crossbeam_receiver)).
-pub static ROUTER: LazyLock<RouterProxy> = LazyLock::new(RouterProxy::new);
+/// Add routes ([add_typed_route](RouterChannel::add_typed_route)), or route
+/// to crossbeam receivers (e.g. [route_subreceiver_to_new_crossbeam_receiver](RouterChannel::route_subreceiver_to_new_crossbeam_receiver)).
+pub static ROUTER: LazyLock<Arc<RouterProxy>> = LazyLock::new(RouterProxy::new);
 
 /// A `RouterProxy` provides methods for establishing and talking to the router.
 pub struct RouterProxy {
@@ -46,7 +46,7 @@ impl RouterProxy {
     /// Spawn a router thread which waits for events on its registered `SubReceiver<T>`s.
     /// The `RouterProxy`'s methods communicate with the running router thread to
     /// register new `SubReceiver<T>`'s.
-    pub fn new() -> RouterProxy {
+    pub fn new() -> Arc<RouterProxy> {
         // Router acts like a receiver, running in its own thread with both
         // receiver ends.
         // Router proxy takes both sending ends.
@@ -57,14 +57,22 @@ impl RouterProxy {
             .name("router-proxy".to_string())
             .spawn(move || Router::new(msg_receiver, wakeup_receiver).run())
             .expect("Failed to spawn router proxy thread");
-        RouterProxy {
+        Arc::new(RouterProxy {
             comm: Mutex::new(RouterProxyComm {
                 msg_sender,
                 wakeup_sender,
                 shutdown: false,
                 handle: Some(handle),
             }),
-        }
+        })
+    }
+
+    /// Create a new `RouterChannel`.
+    pub fn new_router_channel(proxy: Arc<RouterProxy>) -> Result<RouterChannel, MultiplexError> {
+        Ok(RouterChannel {
+            chan: mux::Channel::new()?,
+            proxy: proxy.clone(),
+        })
     }
 
     /// Add a new (receiver, callback) pair to the router, and send a wakeup message
@@ -72,27 +80,33 @@ impl RouterProxy {
     ///
     /// Consider using [add_typed_route](Self::add_typed_route) instead, which prevents
     /// mismatches between the receiver and callback types.
-    fn add_route(&self, subreceiver: OpaqueSubReceiver, callback: RouterHandler) {
+    fn add_route(
+        &self,
+        subreceiver: OpaqueSubReceiver,
+        callback: RouterHandler,
+    ) -> Result<(), RouterError> {
         let comm = self.comm.lock().unwrap();
 
         if comm.shutdown {
-            return;
+            return Err(RouterError::ShuttingDown);
         }
 
         comm.msg_sender
             .send(RouterMsg::AddRoute(subreceiver, callback))
             .unwrap();
         comm.wakeup_sender.send(()).unwrap();
+        Ok(())
     }
 
     /// Add a new `(receiver, callback)` pair to the router, and send a wakeup message
     /// to the router. This method is strongly typed and guarantees
     /// that `subreceiver` and `callback` use the same message type.
-    pub fn add_typed_route<T>(
+    fn add_typed_route<T>(
         &self,
         subreceiver: SubReceiver<T>,
         mut callback: TypedRouterHandler<T>,
-    ) where
+    ) -> Result<(), RouterError>
+    where
         T: Serialize + for<'de> Deserialize<'de> + 'static,
     {
         // Before passing the message on to the callback, turn it into the appropriate type
@@ -101,7 +115,36 @@ impl RouterProxy {
             callback(typed_message)
         };
 
-        self.add_route(subreceiver.to_opaque(), Box::new(modified_callback));
+        self.add_route(subreceiver.to_opaque(), Box::new(modified_callback))
+    }
+
+    /// A convenience function to route an `SubReceiver<T>` to an existing `Sender<T>`.
+    fn route_subreceiver_to_crossbeam_sender<T>(
+        &self,
+        subreceiver: SubReceiver<T>,
+        crossbeam_sender: Sender<T>,
+    ) -> Result<(), RouterError>
+    where
+        T: for<'de> Deserialize<'de> + Serialize + Send + 'static,
+    {
+        self.add_typed_route(
+            subreceiver,
+            Box::new(move |message| drop(crossbeam_sender.send(message.unwrap()))),
+        )
+    }
+
+    /// A convenience function to route an `SubReceiver<T>` to a `Receiver<T>`: the most common
+    /// use of a `Router`.
+    fn route_subreceiver_to_new_crossbeam_receiver<T>(
+        &self,
+        subreceiver: SubReceiver<T>,
+    ) -> Result<Receiver<T>, RouterError>
+    where
+        T: for<'de> Deserialize<'de> + Serialize + Send + 'static,
+    {
+        let (crossbeam_sender, crossbeam_receiver) = crossbeam_channel::unbounded();
+        self.route_subreceiver_to_crossbeam_sender(subreceiver, crossbeam_sender)?;
+        Ok(crossbeam_receiver)
     }
 
     /// Send a shutdown message to the router containing an ACK sender,
@@ -132,33 +175,67 @@ impl RouterProxy {
             .join()
             .expect("Failed to join on the router proxy thread");
     }
+}
 
-    /// A convenience function to route an `SubReceiver<T>` to an existing `Sender<T>`.
-    pub fn route_subreceiver_to_crossbeam_sender<T>(
+/// A RouterChannel is analogous to [mux::Channel] but can only be used to construct router subchannels.
+/// This prevents the creation of non-routed subchannels sharing an underlying IPC channel with routed
+/// subchannels - a source of liveness and fairness issues.
+pub struct RouterChannel {
+    chan: mux::Channel,
+    proxy: Arc<RouterProxy>,
+}
+
+/// RouterError describes errors related to routing.
+#[derive(Debug)]
+pub enum RouterError {
+    /// The router is shutting down.
+    ShuttingDown,
+}
+
+impl RouterChannel {
+    /// Add a new `(receiver, callback)` pair to the router, and send a wakeup message
+    /// to the router. This method is strongly typed and guarantees
+    /// that `subreceiver` and `callback` use the same message type.
+    pub fn add_typed_route<T>(
         &self,
-        subreceiver: SubReceiver<T>,
-        crossbeam_sender: Sender<T>,
-    ) where
-        T: for<'de> Deserialize<'de> + Serialize + Send + 'static,
+        callback: TypedRouterHandler<T>,
+    ) -> Result<SubSender<T>, RouterError>
+    where
+        T: Serialize + for<'de> Deserialize<'de> + 'static,
     {
-        self.add_typed_route(
-            subreceiver,
-            Box::new(move |message| drop(crossbeam_sender.send(message.unwrap()))),
-        )
+        let (tx, rx) = self.chan.sub_channel::<T>();
+        self.proxy.add_typed_route(rx, callback)?;
+        Ok(tx)
     }
 
-    /// A convenience function to route an `SubReceiver<T>` to a `Receiver<T>`: the most common
-    /// use of a `Router`.
-    pub fn route_subreceiver_to_new_crossbeam_receiver<T>(
+    /// A convenience function to route a new `SubReceiver<T>` to an existing `Sender<T>`
+    /// and return the `SubSender<T>` associated with the `SubReceiver<T>`.
+    pub fn route_to_crossbeam_sender<T>(
         &self,
-        subreceiver: SubReceiver<T>,
-    ) -> Receiver<T>
+        crossbeam_sender: Sender<T>,
+    ) -> Result<SubSender<T>, RouterError>
     where
         T: for<'de> Deserialize<'de> + Serialize + Send + 'static,
     {
-        let (crossbeam_sender, crossbeam_receiver) = crossbeam_channel::unbounded();
-        self.route_subreceiver_to_crossbeam_sender(subreceiver, crossbeam_sender);
-        crossbeam_receiver
+        let (tx, rx) = self.chan.sub_channel::<T>();
+        self.proxy
+            .route_subreceiver_to_crossbeam_sender(rx, crossbeam_sender)?;
+        Ok(tx)
+    }
+
+    /// A convenience function to route a new `SubReceiver<T>` to a `Receiver<T>`: the most common
+    /// use of a `Router`. Returns the `SubSender<T>` associated with the `SubReceiver<T>`.
+    pub fn route_to_new_crossbeam_receiver<T>(
+        &self,
+    ) -> Result<(SubSender<T>, Receiver<T>), RouterError>
+    where
+        T: for<'de> Deserialize<'de> + Serialize + Send + 'static,
+    {
+        let (tx, rx) = self.chan.sub_channel::<T>();
+        Ok((
+            tx,
+            self.proxy.route_subreceiver_to_new_crossbeam_receiver(rx)?,
+        ))
     }
 }
 
