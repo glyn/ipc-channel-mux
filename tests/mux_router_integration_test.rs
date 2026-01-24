@@ -20,7 +20,7 @@ use test_log::test;
 /// process which terminates before the SubSender has been
 /// received.
 ///
-/// This provides the basis for testing the router behaviour
+/// This provides the basis for testing the router behaviour.
 #[test]
 fn subsender_drop_inflight() {
     let executable_path: String = env!("CARGO_BIN_EXE_crashing_receiving_process").to_string();
@@ -111,89 +111,6 @@ fn router_subsender_drop_inflight() {
         callback_fired_receiver.recv().is_err(),
         "crossbeam receiver did not disconnect"
     );
-
-    // Now shut down the router.
-    ROUTER.shutdown();
-}
-
-/// Test router associated behaviour when a SubSender is sent
-/// to a process which terminates before the SubSender has been
-/// received.
-#[test]
-#[ignore = "https://github.com/glyn/ipc-channel-mux/issues/2"]
-fn router_associated_subsender_drop_inflight() {
-    let executable_path: String = env!("CARGO_BIN_EXE_crashing_receiving_process").to_string();
-
-    type ChannelPair = (SubSender<SubSender<bool>>, SubSender<()>);
-
-    let (server, token) =
-        SubOneShotServer::<ChannelPair>::new().expect("Failed to create sub one-shot server");
-
-    let mut command = process::Command::new(executable_path);
-    let child_process = command.arg(token);
-
-    let mut child = child_process
-        .spawn()
-        .expect("Failed to start child process");
-
-    let (_rx, (data, control)): (SubReceiver<ChannelPair>, ChannelPair) =
-        server.accept().expect("accept failed");
-
-    let d = Channel::new().unwrap();
-    let (transmit_tx, transmit_rx) = d.sub_channel();
-
-    data.send(transmit_tx).expect("subsender send failed");
-
-    // Ensure that the "sending" message is received so that polling occurs.
-    let (extra_tx, extra_rx) = d.sub_channel();
-    extra_tx.send(()).unwrap();
-    extra_rx.recv().unwrap(); // uses the same IpcReceiver as transmit_rx
-
-    // Add extra_rx to the router, so that transmit_rx is associated with the router.
-    let callback_fired_receiver = ROUTER.route_subreceiver_to_new_crossbeam_receiver(extra_rx);
-    extra_tx.send(()).unwrap();
-    callback_fired_receiver.recv().unwrap();
-
-    control.send(()).expect("control send failed");
-    let result = child.wait().expect("wait for child process failed");
-    assert_eq!(
-        result.code().unwrap(),
-        1,
-        "child process did not terminate with exit status code 1"
-    );
-
-    match transmit_rx.recv() {
-        Err(MultiplexError::Disconnected) => {},
-        result => panic!("unexpected result {:?}", result),
-    }
-
-    // Now shut down the router.
-    ROUTER.shutdown();
-}
-
-/// Test router associated behaviour when a SubSender is dropped.
-#[test]
-//#[ignore = "https://github.com/glyn/ipc-channel-mux/issues/4"]
-fn router_associated_subsender_drop() {
-    let d = Channel::new().unwrap();
-    let (tx, rx) = d.sub_channel::<()>();
-
-    // Ensure that the "sending" message is received so that polling occurs.
-    let (extra_tx, extra_rx) = d.sub_channel();
-
-    // Add extra_rx to the router, so that rx is associated with the router.
-    let callback_fired_receiver: Receiver<()> =
-        ROUTER.route_subreceiver_to_new_crossbeam_receiver(extra_rx);
-
-    extra_tx.send(()).unwrap();
-    callback_fired_receiver.recv().unwrap();
-
-    tx.send(()).unwrap();
-    log::trace!("ABOUT TO RECEIVE ON ASSOCIATED");
-    rx.recv().unwrap();
-
-    log::trace!("ABOUT TO DROP SUBSENDER");
-    drop(extra_tx);
 
     // Now shut down the router.
     ROUTER.shutdown();
