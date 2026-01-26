@@ -8,7 +8,8 @@
 // except according to those terms.
 
 use crate::mux::{
-    self, SubOneShotServer, SubReceiver, SubSelectionResult, SubSender, subchannel_router::{ROUTER, RouterError, RouterProxy},
+    self, SubOneShotServer, SubReceiver, SubSelectionResult, SubSender,
+    subchannel_router::{ROUTER, RouterError, RouterProxy},
 };
 use std::thread;
 use test_log::test;
@@ -879,12 +880,12 @@ fn router_simple_global() {
     let channel = RouterProxy::new_router_channel(ROUTER.clone()).unwrap();
 
     let (callback_fired_sender, callback_fired_receiver) = crossbeam_channel::unbounded::<usize>();
-    let tx = channel.add_typed_route(
-        Box::new(move |message| {
+    let tx = channel
+        .add_typed_route(Box::new(move |message| {
             callback_fired_sender.send(message.unwrap()).unwrap();
-        }),
-    ).unwrap();
-        
+        }))
+        .unwrap();
+
     let message: usize = 42;
     tx.send(message).unwrap();
 
@@ -895,12 +896,12 @@ fn router_simple_global() {
     ROUTER.shutdown();
 
     // Use router after shutdown.
-    let (callback_fired_sender, _callback_fired_receiver) = crossbeam_channel::unbounded::<Person>();
-    if let Err(RouterError::ShuttingDown) = channel.add_typed_route(
-        Box::new(move |person| {
-            callback_fired_sender.send(person.unwrap()).unwrap();
-        }),
-    ) {} else {
+    let (callback_fired_sender, _callback_fired_receiver) =
+        crossbeam_channel::unbounded::<Person>();
+    if let Err(RouterError::ShuttingDown) = channel.add_typed_route(Box::new(move |person| {
+        callback_fired_sender.send(person.unwrap()).unwrap();
+    })) {
+    } else {
         panic!("router did not return ShuttingDown error");
     }
 

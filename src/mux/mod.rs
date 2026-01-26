@@ -130,10 +130,10 @@
 
 use bincode;
 use channel_identification::{Source, Target};
+use ipc_channel::IpcError;
 use ipc_channel::ipc::{
     self, IpcOneShotServer, IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender,
 };
-use ipc_channel::IpcError;
 use log;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{HashMap, VecDeque};

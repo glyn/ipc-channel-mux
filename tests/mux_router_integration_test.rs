@@ -87,7 +87,8 @@ fn router_subsender_drop_inflight() {
         server.accept().expect("accept failed");
 
     let channel = RouterProxy::new_router_channel(ROUTER.clone()).unwrap();
-    let (transmit_tx, callback_fired_receiver) = channel.route_to_new_crossbeam_receiver::<bool>().unwrap();
+    let (transmit_tx, callback_fired_receiver) =
+        channel.route_to_new_crossbeam_receiver::<bool>().unwrap();
 
     data.send(transmit_tx).expect("subsender send failed");
 
