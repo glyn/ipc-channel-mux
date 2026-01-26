@@ -729,100 +729,43 @@ fn receiver_set_heterogeneous_blocking() {
 }
 
 #[test]
-// Test homogeneous SubReceiverSet with a "freestanding" SubReceiver not in the set.
-fn receiver_set_homogeneous_with_freestanding_subreceiver() {
+// Test a SubReceiverSet with a "freestanding" SubReceiver not in the set.
+fn freestanding_subreceiver_associated_with_subreceiverset_cannot_receive() {
     let channel = mux::Channel::new().unwrap();
-    let (tx1, rx1) = channel.sub_channel::<i32>();
+    let (_tx1, rx1) = channel.sub_channel::<i32>();
 
     let mut rx_set = mux::SubReceiverSet::new().unwrap();
-    let rx1_id = rx_set.add(rx1).unwrap();
+    let _rx1_id = rx_set.add(rx1).unwrap();
 
-    let (tx2, rx2) = channel.sub_channel::<String>();
-
-    tx1.send(1).unwrap();
-    if let SubSelectionResult::MessageReceived(received_id, received_data) =
-        rx_set.select().unwrap().into_iter().next().unwrap()
-    {
-        match received_id {
-            id if id == rx1_id => {
-                let received_value: i32 = received_data.to().unwrap();
-                assert_eq!(received_value, 1);
-            },
-            _ => panic!("unexpected id"),
-        }
-    } else {
-        panic!("Unexpected SubSelectionResult");
-    }
-
-    tx2.send("test".to_string()).unwrap();
-    assert_eq!(rx2.recv().unwrap(), "test".to_string());
+    let (_tx2, rx2) = channel.sub_channel::<String>();
+    assert_eq!(
+        format!("{:?}", rx2.recv()),
+        "Err(InternalError(\"SubReceiver sharing an IPC channel with another SubReceiver in a SubReceiverSet cannot receive\"))"
+    );
 }
 
 #[test]
-// Test heterogeneous SubReceiverSet with a "freestanding" SubReceiver not in the set.
-fn receiver_set_heterogeneous_with_freestanding_subreceiver() {
-    // this will be used to receive from the spawned thread
-    let (bootstrap_server, bootstrap_token) = SubOneShotServer::new().unwrap();
+// Test SubReceivers sharing an IPC channel belonging to distinct SubReceiverSets with distinct IpcReceiverSets.
+fn subreceivers_sharing_ipc_channel_cannot_belong_to_distinct_subreceiversets_with_distinct_ipcreceiversets()
+ {
+    let channel = mux::Channel::new().unwrap();
+    let (_tx1, rx1) = channel.sub_channel::<i32>();
+    let (_tx2, rx2) = channel.sub_channel::<i32>();
 
-    let thread = thread::spawn(move || {
-        let bootstrap_sub_sender: SubSender<SubSender<i32>> =
-            SubSender::connect(bootstrap_token).unwrap();
+    let mut rx_set1 = mux::SubReceiverSet::new().unwrap();
+    let _rx1_id = rx_set1.add(rx1).unwrap();
 
-        let channel1 = mux::Channel::new().unwrap();
-        let (tx1, rx1) = channel1.sub_channel();
-        bootstrap_sub_sender.send(tx1).unwrap();
+    let mut rx_set2 = mux::SubReceiverSet::new().unwrap();
 
-        let channel2 = mux::Channel::new().unwrap();
-        let (tx2, rx2) = channel2.sub_channel();
-        bootstrap_sub_sender.send(tx2).unwrap();
+    // Ensure rx_set2 has a non-empty IpcReceiverSet.
+    let channel2 = mux::Channel::new().unwrap();
+    let (_tx3, rx3) = channel2.sub_channel::<i32>();
+    let _rx3_id = rx_set2.add(rx3).unwrap();
 
-        let mut rx_set = mux::SubReceiverSet::new().unwrap();
-        let rx1_id = rx_set.add(rx1).unwrap();
-        let rx2_id = rx_set.add(rx2).unwrap();
-
-        let (tx3, rx3) = channel2.sub_channel();
-        bootstrap_sub_sender.send(tx3).unwrap();
-
-        let mut recvd1 = false;
-        let mut recvd2 = false;
-        for _ in 1..3 {
-            if let SubSelectionResult::MessageReceived(received_id, received_data) =
-                rx_set.select().unwrap().into_iter().next().unwrap()
-            {
-                match received_id {
-                    id if id == rx1_id => {
-                        assert!(!recvd1, "1 received twice");
-                        let received_value: i32 = received_data.to().unwrap();
-                        assert_eq!(received_value, 1);
-                        recvd1 = true;
-                    },
-                    id if id == rx2_id => {
-                        assert!(!recvd2, "2 received twice");
-                        let received_value: i32 = received_data.to().unwrap();
-                        assert_eq!(received_value, 2);
-                        recvd2 = true;
-                    },
-                    _ => panic!("unexpected id"),
-                }
-            } else {
-                panic!("Unexpected SubSelectionResult");
-            }
-        }
-        assert!(recvd1, "i32 was not received");
-        assert!(recvd2, "String was not received");
-        assert_eq!(rx3.recv().unwrap(), 3);
-    });
-
-    let (bootstrap_sub_receiver, tx1): (SubReceiver<SubSender<i32>>, SubSender<i32>) =
-        bootstrap_server.accept().unwrap();
-
-    let tx2 = bootstrap_sub_receiver.recv().unwrap();
-    let tx3 = bootstrap_sub_receiver.recv().unwrap();
-    tx1.send(1).unwrap();
-    tx2.send(2).unwrap();
-    tx3.send(3).unwrap();
-
-    thread.join().expect("the spawned thread panicked");
+    assert_eq!(
+        format!("{:?}", rx_set2.add(rx2)),
+        "Err(InternalError(\"Cannot merge non-empty MultiReceiverSets\"))"
+    );
 }
 
 #[test]

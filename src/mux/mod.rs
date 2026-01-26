@@ -858,15 +858,8 @@ impl MultiReceiver {
                 .unwrap()
                 .ipc_receiver_or_multi_receiver_set
                 .multi_receiver_set();
-            if let Some(multi_receiver_set) = maybe_mrs {
-                // FIXME: select blocks until there is something to receive. To implement try_receive_timeout
-                // properly may require MultiReceiverSet::try_select_timeout to be implemented, which may
-                // require IpcReceiverSet::try_select_timeout to be implemented.
-                log::trace!("BINGO>>>>>");
-                match MultiReceiverSet::select(&multi_receiver_set) {
-                    Ok(_) => return Ok(()),
-                    Err(e) => return Err(e),
-                }
+            if maybe_mrs.is_some() {
+                return Err(MultiplexError::InternalError("SubReceiver sharing an IPC channel with another SubReceiver in a SubReceiverSet cannot receive".to_string()));
             }
             let result = mr
                 .mutator
@@ -1795,7 +1788,17 @@ impl SubReceiverSet {
     }
 
     /// Add and move the given [SubReceiver] into the set of subreceivers to be polled.
+    ///
+    /// Restrictions:
+    /// * A [SubReceiver] sharing an IPC channel with another [SubReceiver]
+    ///   in a SubReceiverSet cannot receive.
+    /// * No two [SubReceiver]s sharing an IPC channel may belong to distinct
+    ///   [SubReceiverSet]s with distinct IpcReceiverSets.
+    ///
+    /// Because of these restrictions, [SubReceiverSet] is not part of the crate API.
+    ///
     /// [SubReceiver]: struct.SubReceiver.html
+    /// [SubReceiverSet]: struct.SubReceiverSet.html
     #[instrument(level = "debug", skip(subreceiver), err(level = "debug"))]
     pub fn add<T>(&mut self, subreceiver: SubReceiver<T>) -> Result<u64, MultiplexError>
     where
@@ -1857,7 +1860,7 @@ impl SubReceiverSet {
             }
         }
 
-        // Modify MultiReceiver so that message for the subchannel are sent to the set.
+        // Modify MultiReceiver so that messages for the subchannel are sent to the set.
         {
             let mut multi_receiver_mutator = receiver
                 .sub_channel_receiver

@@ -79,8 +79,9 @@ The router is in the `mux::subchannel_router` module.
 IPC channels are provided by Servo's [ipc-channel](https://github.com/server/ipc-channel) crate which the implementation of `ipc-channel-mux` uses for IPC communication.
 
 * Subchannel creation requires the underlying IPC channel to have been created already. Reusing the underlying channel when creating multiple subchannels enables those subchannels to be multiplexed over the underlying channel.
-* Subchannel receivers, or _subreceivers_, may not be sent or received.[^restriction] This is a consequence of the MPSC nature of the underlying IPC channel: sending a subreceiver would entail sending the underlying IPC receiver and this would break any other subreceivers using that IPC receiver.
+* Subchannel receivers, or _subreceivers_, may not be sent or received. This is a consequence of the MPSC nature of the underlying IPC channel: sending a subreceiver would entail sending the underlying IPC receiver and this would break any other subreceivers using that IPC receiver.
 * IPC channel creation can fail, as can multiplexing IPC channel creation, but subchannel creation never fails.[^never]
+* IPC receivers can be moved into an `IpcReceiverSet` and then monitored together using a "select" operation. There is no corresponding feature in the `ipc-channel-mux` API since certain scenarios involving subreceivers sharing an underlying IPC channel, some of which are in one set, some in another, and some not in a set give rise to liveness and fairness difficulties without much practical benefit. The main practical use of `IpcReceiverSet` is in implementing routing, which is implemented in `ipc-channel-mux` without adding a subreceiver set construct to the API.
 
 ## When is multiplexing beneficial?
 
@@ -128,8 +129,6 @@ One possible disadvantage is that `ipc-channel-mux` cannot use IPC channel inter
 
 Another disadvantage is that Servo will require an additional dependency.
 However, it would be feasible to merge `ipc-channel-mux` into the IPC channel repository later.
-
-[^restriction]: Since subreceivers cannot be transmitted between processes, we expect a subsender created using a `mux::Channel` instance to be moved or transmitted to another process.
 
 [^never]: Creating a subchannel could exhaust the memory of a process, but memory allocation is treated as infallible in Rust as [Handling memory exhaustion – State of the art?](https://users.rust-lang.org/t/handling-memory-exhaustion-state-of-the-art/87375) explores.
 Essentially, if memory allocation fails, the program will panic or, more likely (at least on Linux), be killed by the Out of Memory killer.
