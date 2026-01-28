@@ -64,7 +64,6 @@ fn spawn_sub_one_shot_server_client() {
 /// Test behaviour when a SubSender is sent to a process which
 /// terminates before the "sending" message has been received.
 #[test]
-#[ignore = "https://github.com/glyn/ipc-channel-mux/issues/3"]
 fn subsender_drop_inflight_early() {
     let executable_path: String = env!("CARGO_BIN_EXE_crashing_receiving_process").to_string();
 

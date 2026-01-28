@@ -827,6 +827,13 @@ enum ResolvedMessageOrDisconnect {
     Disconnect(SubChannelId),
 }
 
+type IdSenders = VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>)>;
+
+type IdSenderResults = VecDeque<(
+    SubChannelId,
+    Result<Arc<Mutex<MultiSender>>, MultiplexError>,
+)>;
+
 impl MultiReceiver {
     #[instrument(level = "debug", ret)]
     fn attach(mr: &Arc<MultiReceiver>, sub_channel_id: SubChannelId) -> SubChannelReceiver {
@@ -939,6 +946,14 @@ impl MultiReceiver {
         }
     }
 
+    fn process_results(results: IdSenderResults) -> Result<IdSenders, MultiplexError> {
+        let mut srs: VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>)> = VecDeque::new();
+        for (scid, res) in results {
+            srs.push_back((scid, res?))
+        }
+        Ok(srs)
+    }
+
     #[instrument(level = "debug", ret, err(level = "debug"))]
     fn handle(mr: Arc<MultiReceiver>, msg: MultiMessage) -> Result<(), MultiplexError> {
         let mr_clone = Arc::clone(&mr);
@@ -953,36 +968,39 @@ impl MultiReceiver {
             },
 
             MultiMessage::Data(scid, payload, ipc_senders) => {
-                let srs: VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>)> = ipc_senders
-                    .iter()
-                    .map(|(scid, s)| (*scid, Self::ipcsender_from_sender_and_or_id(&mr, s)))
-                    .collect();
+                let srs: IdSenders = Self::process_results(
+                    ipc_senders
+                        .iter()
+                        .map(|(scid, s)| (*scid, Self::ipcsender_from_sender_and_or_id(&mr, s)))
+                        .collect(),
+                )?;
 
-                let result = if let Some(sm) = mr.mutator.lock().unwrap().sub_channels.get(&scid) {
-                    sm.send(ResolvedMessageOrDisconnect::ResolvedMessage(
-                        ResolvedMessage {
-                            scid,
-                            payload,
-                            senders: srs,
-                            multi_receiver: Some(mr_clone),
-                        },
-                    ))
-                } else {
-                    // Send ReceiveFailed to members of srs
-                    // TODO: Need to test this path
-                    srs.into_iter().for_each(|(recv_scid, recv_multi_sender)| {
-                        let _ = recv_multi_sender.lock().unwrap().ipc_sender.send(
-                            MultiMessage::ReceiveFailed {
-                                scid: recv_scid,
-                                via: scid,
+                let result: Option<Result<(), mpsc::SendError<ResolvedMessageOrDisconnect>>> =
+                    if let Some(sm) = mr.mutator.lock().unwrap().sub_channels.get(&scid) {
+                        sm.send(ResolvedMessageOrDisconnect::ResolvedMessage(
+                            ResolvedMessage {
+                                scid,
+                                payload,
+                                senders: srs,
+                                multi_receiver: Some(mr_clone),
                             },
-                        );
-                    });
-                    Err(MultiplexError::InternalError(format!(
-                        "invalid subchannel id {}",
-                        scid
-                    )))?
-                };
+                        ))
+                    } else {
+                        // Send ReceiveFailed to members of srs
+                        // TODO: Need to test this path
+                        srs.into_iter().for_each(|(recv_scid, recv_multi_sender)| {
+                            let _ = recv_multi_sender.lock().unwrap().ipc_sender.send(
+                                MultiMessage::ReceiveFailed {
+                                    scid: recv_scid,
+                                    via: scid,
+                                },
+                            );
+                        });
+                        Err(MultiplexError::InternalError(format!(
+                            "invalid subchannel id {}",
+                            scid
+                        )))?
+                    };
 
                 if let Some(Ok(())) = result {
                     Ok(())
@@ -1010,10 +1028,19 @@ impl MultiReceiver {
                 let ipc_sender = Self::ipcsender_from_sender_and_or_id(&mr, &via_chan);
 
                 if let Some(sm) = mr.mutator.lock().unwrap().sub_channels.get(&scid) {
-                    sm.to_be_sent(
-                        via,
-                        Box::new(move || probe(ipc_sender.lock().unwrap().ipc_sender.clone())),
-                    );
+                    if let Ok(ipc_sender) = ipc_sender {
+                        sm.to_be_sent(
+                            via,
+                            Box::new(move || probe(ipc_sender.lock().unwrap().ipc_sender.clone())),
+                        );
+                    } else {
+                        log::trace!(
+                            "Error processing Sending message: {:?}",
+                            ipc_sender.err().unwrap()
+                        );
+                        sm.to_be_sent(via, Box::new(|| false));
+                        sm.receive_failed(via);
+                    }
                 }
 
                 Ok(())
@@ -1047,11 +1074,11 @@ impl MultiReceiver {
     fn ipcsender_from_sender_and_or_id(
         mr: &Arc<MultiReceiver>,
         s: &IpcSenderAndOrId,
-    ) -> Arc<Mutex<MultiSender>> {
+    ) -> Result<Arc<Mutex<MultiSender>>, MultiplexError> {
         match s {
             IpcSenderAndOrId::IpcSender(s, id) => {
                 let uuid = Uuid::parse_str(id).unwrap();
-                let multi_sender = MultiSender::connect_sender(Arc::new(s.clone()), uuid).unwrap(); // return an error instead of panicking
+                let multi_sender = MultiSender::connect_sender(Arc::new(s.clone()), uuid)?;
                 log::trace!("associating {} with a MultiSender", uuid);
                 mr.mutator
                     .lock()
@@ -1059,7 +1086,7 @@ impl MultiReceiver {
                     .ipc_senders_by_id
                     .add(uuid, &multi_sender);
                 log::trace!("association complete");
-                multi_sender
+                Ok(multi_sender)
             },
             IpcSenderAndOrId::IpcSenderId(id) => {
                 let uuid = Uuid::parse_str(id).unwrap();
@@ -1067,7 +1094,11 @@ impl MultiReceiver {
                 let maybe_sender: Option<Arc<Mutex<MultiSender>>> =
                     mr.mutator.lock().unwrap().ipc_senders_by_id.look_up(uuid);
                 log::trace!("result of looking up MultiSender is {:?}", maybe_sender);
-                maybe_sender.unwrap()
+                if let Some(sender) = maybe_sender {
+                    Ok(sender)
+                } else {
+                    Err(MultiplexError::Disconnected)
+                }
             },
         }
     }
