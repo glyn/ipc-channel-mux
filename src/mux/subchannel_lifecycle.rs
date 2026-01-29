@@ -167,7 +167,8 @@ where
     }
 
     // poll returns false if the state machine is disconnected
-    pub fn poll(&self) -> bool {
+    #[instrument(level = "trace", ret)]
+    pub fn poll(&self) -> (bool, Option<T>) {
         // Determine Vias (which correspond to channels) which are disconnected.
         let disconnected: Vec<Via> = self
             .probes
@@ -202,10 +203,9 @@ where
         });
 
         if self.sources.lock().unwrap().is_empty() && in_flight.is_empty() {
-            self.maybe.lock().unwrap().take();
-            false
+            (false, self.maybe.lock().unwrap().take())
         } else {
-            true
+            (true, None)
         }
     }
 

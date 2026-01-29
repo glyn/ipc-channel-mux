@@ -67,7 +67,6 @@ fn subsender_drop_inflight() {
 /// process which terminates before the SubSender has been
 /// received.
 #[test]
-#[ignore = "https://github.com/glyn/ipc-channel-mux/issues/2"]
 fn router_subsender_drop_inflight() {
     let executable_path: String = env!("CARGO_BIN_EXE_crashing_receiving_process").to_string();
 
