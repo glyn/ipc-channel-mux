@@ -88,8 +88,15 @@ fn router_subsender_drop_inflight() {
     let channel = RouterProxy::new_router_channel(ROUTER.clone()).unwrap();
     let (transmit_tx, callback_fired_receiver) =
         channel.route_to_new_crossbeam_receiver::<bool>().unwrap();
-
     data.send(transmit_tx).expect("subsender send failed");
+    let (transmit_tx2, callback_fired_receiver2) =
+        channel.route_to_new_crossbeam_receiver::<bool>().unwrap();
+    data.send(transmit_tx2).expect("subsender send failed");
+
+    let channel2 = RouterProxy::new_router_channel(ROUTER.clone()).unwrap();
+    let (transmit_tx3, callback_fired_receiver3) =
+        channel2.route_to_new_crossbeam_receiver::<bool>().unwrap();
+    data.send(transmit_tx3).expect("subsender send failed");
 
     control.send(()).expect("control send failed");
     let result = child.wait().expect("wait for child process failed");
@@ -102,6 +109,16 @@ fn router_subsender_drop_inflight() {
     assert!(
         callback_fired_receiver.recv().is_err(),
         "crossbeam receiver did not disconnect"
+    );
+
+    assert!(
+        callback_fired_receiver2.recv().is_err(),
+        "crossbeam receiver2 did not disconnect"
+    );
+
+    assert!(
+        callback_fired_receiver3.recv().is_err(),
+        "crossbeam receiver3 did not disconnect"
     );
 
     // Now shut down the router.

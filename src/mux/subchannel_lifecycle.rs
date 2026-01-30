@@ -170,6 +170,11 @@ where
     // if the state machine is disconnected. Otherwise poll returns (true, None).
     #[instrument(level = "trace", ret)]
     pub fn poll(&self) -> (bool, Option<T>) {
+        // Skip polling if polling has already failed.
+        if self.maybe.lock().unwrap().is_none() {
+            return (true, None);
+        }
+
         // Determine Vias (which correspond to channels) which are disconnected.
         let disconnected: Vec<Via> = self
             .probes

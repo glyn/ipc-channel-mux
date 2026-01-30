@@ -2037,11 +2037,15 @@ impl MultiReceiverSet {
                     break;
                 },
                 Err(ipc_channel::TrySelectError::Empty) => {
+                    let mut probe_failed = false;
                     for mr in mrs_mut.multi_receivers.values() {
                         if mr.poll() {
-                            // At least one probe failed, so return to caller.
-                            return Ok(());
+                            probe_failed = true;
                         }
+                    }
+                    if probe_failed {
+                        // At least one probe failed, so return to caller.
+                        return Ok(());
                     }
                 },
                 Err(ipc_channel::TrySelectError::IoError(e)) => {
