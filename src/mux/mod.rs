@@ -847,85 +847,67 @@ impl MultiReceiver {
     }
 
     #[instrument(level = "debug", err(level = "debug"))]
-    fn recv(mr: &Arc<MultiReceiver>) -> Result<(), MuxError> {
-        let msg = loop {
-            let polling_interval = Duration::new(1, 0);
-            // The following is inlined to avoid deadlock.
-            let maybe_mrs = mr
-                .mutator
-                .lock()
-                .as_ref()
-                .unwrap()
-                .ipc_receiver_or_multi_receiver_set
-                .multi_receiver_set();
-            if maybe_mrs.is_some() {
-                return Err(MuxError::InternalError("SubReceiver sharing an IPC channel with another SubReceiver in a SubReceiverSet cannot receive".to_string()));
+    fn try_recv(mr: &Arc<MultiReceiver>) -> Result<(), TryRecvError> {
+        // The following is inlined to avoid deadlock.
+        let maybe_mrs = mr
+            .mutator
+            .lock()
+            .as_ref()
+            .unwrap()
+            .ipc_receiver_or_multi_receiver_set
+            .multi_receiver_set();
+        if let Some(multi_receiver_set) = maybe_mrs {
+            match MultiReceiverSet::try_select(&multi_receiver_set) {
+                Ok(_) => return Ok(()),
+                Err(e) => return Err(e),
             }
-            let result = mr
-                .mutator
-                .lock()
-                .as_ref()
-                .unwrap()
-                .ipc_receiver_or_multi_receiver_set
-                .try_recv_timeout(polling_interval);
-            match result {
-                Ok(msg) => break Ok(msg),
-                Err(TryRecvError::Empty) => {
-                    if mr.poll() {
-                        // At least one probe failed, so return to caller.
-                        return Ok(());
-                    }
-                },
-                Err(TryRecvError::Handled) => {
-                    return Ok(());
-                },
-                Err(TryRecvError::MuxError(e)) => {
-                    break Err(e);
-                },
-            }
-        }?;
-        Self::handle(Arc::clone(mr), msg)
+        }
+        let result = mr
+            .mutator
+            .lock()
+            .as_ref()
+            .unwrap()
+            .ipc_receiver_or_multi_receiver_set
+            .try_recv();
+        match result {
+            Ok(msg) => {
+                Self::handle(Arc::clone(mr), msg).map_err(TryRecvError::MuxError)?;
+                Err(TryRecvError::Handled)
+            },
+            Err(TryRecvError::Handled) => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
     #[instrument(level = "debug", err(level = "debug"))]
-    fn try_recv(mr: &Arc<MultiReceiver>) -> Result<(), TryRecvError> {
-        let msg = {
-            // The following is inlined to avoid deadlock.
-            let maybe_mrs = mr
-                .mutator
-                .lock()
-                .as_ref()
-                .unwrap()
-                .ipc_receiver_or_multi_receiver_set
-                .multi_receiver_set();
-            if let Some(multi_receiver_set) = maybe_mrs {
-                match MultiReceiverSet::try_select(&multi_receiver_set) {
-                    Ok(_) => return Ok(()),
-                    Err(e) => return Err(e),
-                }
-            }
-            let result = mr
-                .mutator
-                .lock()
-                .as_ref()
-                .unwrap()
-                .ipc_receiver_or_multi_receiver_set
-                .try_recv();
-            match result {
-                Ok(msg) => msg,
-                Err(TryRecvError::Empty) => {
-                    return Err(TryRecvError::Empty);
-                },
-                Err(TryRecvError::Handled) => {
-                    return Ok(());
-                },
-                Err(e) => {
-                    return Err(e);
-                },
-            }
-        };
-        Self::handle(Arc::clone(mr), msg).map_err(TryRecvError::MuxError)?;
-        Err(TryRecvError::Handled)
+    fn try_recv_timeout(mr: &Arc<MultiReceiver>, duration: Duration) -> Result<(), TryRecvError> {
+        // The following is inlined to avoid deadlock.
+        let maybe_mrs = mr
+            .mutator
+            .lock()
+            .as_ref()
+            .unwrap()
+            .ipc_receiver_or_multi_receiver_set
+            .multi_receiver_set();
+        if maybe_mrs.is_some() {
+            return Err(TryRecvError::MuxError(MuxError::InternalError("SubReceiver sharing an IPC channel with another SubReceiver in a SubReceiverSet cannot receive".to_string())));
+        }
+        let result = mr
+            .mutator
+            .lock()
+            .as_ref()
+            .unwrap()
+            .ipc_receiver_or_multi_receiver_set
+            .try_recv_timeout(duration);
+        match result {
+            Ok(msg) => Self::handle(Arc::clone(mr), msg).map_err(TryRecvError::MuxError),
+            Err(TryRecvError::Empty) => {
+                mr.poll();
+                Ok(())
+            },
+            Err(TryRecvError::Handled) => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
     #[instrument(level = "debug")]
@@ -1032,7 +1014,9 @@ impl MultiReceiver {
                             ipc_sender.err().unwrap()
                         );
                         sm.to_be_sent(via, Box::new(|| false));
-                        sm.receive_failed(via);
+                        if let Some(sender) = sm.receive_failed(via) {
+                            let _ = sender.send(ResolvedMessageOrDisconnect::Disconnect(scid));
+                        }
                     }
                 }
 
@@ -1040,7 +1024,9 @@ impl MultiReceiver {
             },
             MultiMessage::ReceiveFailed { scid, via } => {
                 if let Some(sm) = mr.mutator.lock().unwrap().sub_channels.get(&scid) {
-                    sm.receive_failed(via);
+                    if let Some(sender) = sm.receive_failed(via) {
+                        let _ = sender.send(ResolvedMessageOrDisconnect::Disconnect(scid));
+                    }
                 }
 
                 Ok(())
@@ -1560,6 +1546,7 @@ impl SubChannelReceiver {
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {
+        let polling_interval = Duration::new(1, 0);
         loop {
             match self.channel.try_recv() {
                 Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
@@ -1580,12 +1567,18 @@ impl SubChannelReceiver {
                 },
                 Err(mpsc::TryRecvError::Empty) => {
                     // receive another message, possibly for another subchannel
-                    let multi_receiver_result = MultiReceiver::recv(&self.multi_receiver);
+                    let multi_receiver_result =
+                        MultiReceiver::try_recv_timeout(&self.multi_receiver, polling_interval);
                     log::trace!(
                         "SubChannelReceiver::recv multi_receiver_result = {:#?}",
                         multi_receiver_result.as_ref()
                     );
-                    multi_receiver_result?;
+                    match multi_receiver_result {
+                        Ok(_) => {},
+                        Err(TryRecvError::Empty) => {},
+                        Err(TryRecvError::Handled) => {},
+                        Err(TryRecvError::MuxError(e)) => return Err(e),
+                    }
                 },
                 _ => {
                     return Err(MuxError::Disconnected);
