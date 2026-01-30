@@ -166,7 +166,8 @@ where
         }
     }
 
-    // poll returns false if the state machine is disconnected
+    // poll returns (false, Some(s)), where s is the sender for the state machine,
+    // if the state machine is disconnected. Otherwise poll returns (true, None).
     #[instrument(level = "trace", ret)]
     pub fn poll(&self) -> (bool, Option<T>) {
         // Determine Vias (which correspond to channels) which are disconnected.
