@@ -25,7 +25,7 @@ fn multiplex_simple() {
 
     drop(tx);
     match rx.recv().unwrap_err() {
-        mux::MultiplexError::Disconnected => (),
+        mux::MuxError::Disconnected => (),
         e => panic!("expected disconnected error, got {:?}", e),
     }
 }
@@ -274,7 +274,7 @@ fn sender_transmission_dropped_in_flight() {
     drop(super_rx);
 
     match sub_rx.recv().unwrap_err() {
-        mux::MultiplexError::Disconnected => (),
+        mux::MuxError::Disconnected => (),
         e => panic!("expected disconnected error, got {:?}", e),
     }
 }
@@ -287,7 +287,7 @@ fn multiplex_drop_only_subsender_for_dropped_channel() {
 
     drop(tx);
     match rx.recv().unwrap_err() {
-        mux::MultiplexError::Disconnected => (),
+        mux::MuxError::Disconnected => (),
         e => panic!("expected send error, got {:?}", e),
     }
 }
@@ -299,7 +299,7 @@ fn multiplex_drop_only_subsender_for_channel() {
 
     drop(tx);
     match rx.recv().unwrap_err() {
-        mux::MultiplexError::Disconnected => (),
+        mux::MuxError::Disconnected => (),
         e => panic!("expected disconnected error, got {:?}", e),
     }
 }
@@ -312,7 +312,7 @@ fn multiplex_drop_only_subsender_for_subchannel_of_dropped_channel() {
 
     drop(tx1);
     match rx1.recv().unwrap_err() {
-        mux::MultiplexError::Disconnected => (),
+        mux::MuxError::Disconnected => (),
         e => panic!("expected disconnected error, got {:?}", e),
     }
 
@@ -340,7 +340,7 @@ fn multiplex_drop_only_subsender_for_subchannel() {
 
     drop(tx1);
     match rx1.recv().unwrap_err() {
-        mux::MultiplexError::Disconnected => (),
+        mux::MuxError::Disconnected => (),
         e => panic!("expected disconnected error, got {:?}", e),
     }
 
@@ -359,7 +359,7 @@ fn drop_transmitted_subsender() {
     drop(received_sub_tx);
 
     match sub_rx.recv().unwrap_err() {
-        mux::MultiplexError::Disconnected => (),
+        mux::MuxError::Disconnected => (),
         e => panic!("expected Disconnected, got {:?}", e),
     }
 }
@@ -459,7 +459,7 @@ fn compare_base_transmission_failure() {
     drop(via_rx);
 
     match rx.recv().unwrap_err() {
-        mux::MultiplexError::Disconnected => (),
+        mux::MuxError::Disconnected => (),
         e => panic!("expected Disconnected, got {:?}", e),
     }
 }

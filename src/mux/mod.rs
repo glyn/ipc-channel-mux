@@ -38,7 +38,7 @@
 //! Simple usage:
 //! ```
 //! # use ipc_channel_mux::mux;
-//! # fn main() -> Result<(), mux::MultiplexError> {
+//! # fn main() -> Result<(), mux::MuxError> {
 //!    let channel = mux::Channel::new().unwrap();
 //!
 //!    let (tx, rx) = channel.sub_channel();
@@ -57,7 +57,7 @@
 //! ```
 //! # use ipc_channel_mux::mux;
 //! # use std::thread;
-//! # fn main() -> Result<(), mux::MultiplexError> {
+//! # fn main() -> Result<(), mux::MuxError> {
 //!    let (server, name) = mux::SubOneShotServer::<i32>::new().unwrap();
 //!
 //!    thread::spawn(move || {
@@ -76,7 +76,7 @@
 //! Subchannel sender transmission:
 //! ```
 //! # use ipc_channel_mux::mux;
-//! # fn main() -> Result<(), mux::MultiplexError> {
+//! # fn main() -> Result<(), mux::MuxError> {
 //!    let channel = mux::Channel::new().unwrap();
 //!    let (tx, rx) = channel.sub_channel();
 //!
@@ -93,7 +93,7 @@
 //! Subchannel sender transmission failure:
 //! ```
 //! # use ipc_channel_mux::mux;
-//! # fn main() -> Result<(), mux::MultiplexError> {
+//! # fn main() -> Result<(), mux::MuxError> {
 //!    let channel = mux::Channel::new().unwrap();
 //!    let (tx, rx) = channel.sub_channel::<i32>();
 //!
@@ -103,7 +103,7 @@
 //!    drop(receiver);
 //!    
 //!    match rx.recv().unwrap_err() {
-//!        mux::MultiplexError::Disconnected => (),
+//!        mux::MuxError::Disconnected => (),
 //!        e => panic!("unexpected error"),
 //!    }
 //! #  Ok(())
@@ -113,7 +113,7 @@
 //! Opaque subchannel sender:
 //! ```
 //! # use ipc_channel_mux::mux;
-//! # fn main() -> Result<(), mux::MultiplexError> {
+//! # fn main() -> Result<(), mux::MuxError> {
 //! let channel = mux::Channel::new().unwrap();
 //! let (tx, rx) = channel.sub_channel::<i32>();
 //!
@@ -165,7 +165,7 @@ pub struct Channel {
 impl Channel {
     /// Construct a new [Channel].
     #[instrument(level = "debug", err(level = "debug"))]
-    pub fn new() -> Result<Channel, MultiplexError> {
+    pub fn new() -> Result<Channel, MuxError> {
         let (ms, mr) = multi_channel()?;
         Ok(Channel {
             multi_sender: ms,
@@ -239,7 +239,7 @@ where
     ///
     /// [new]: crate::mux::SubOneShotServer::new
     #[instrument(level = "debug", err(level = "debug"))]
-    pub fn connect(name: String) -> Result<SubSender<T>, MultiplexError> {
+    pub fn connect(name: String) -> Result<SubSender<T>, MuxError> {
         let multi_sender: Arc<Mutex<MultiSender>> = MultiSender::connect(name.to_string())?;
         let sub_channel_sender: SubChannelSender = SubChannelSender::new(Arc::clone(&multi_sender));
         MultiSender::notify_sub_channel(multi_sender, sub_channel_sender.sub_channel_id(), name)?;
@@ -263,7 +263,7 @@ where
     ///
     /// [recv]: crate::mux::SubReceiver::recv
     #[instrument(level = "debug", skip(self, data), err(level = "debug"))]
-    pub fn send(&self, data: T) -> Result<(), MultiplexError> {
+    pub fn send(&self, data: T) -> Result<(), MuxError> {
         self.sub_channel_sender.send(data)
     }
 
@@ -324,7 +324,7 @@ where
     /// and return Err to indicate that no more messages can ever be received on this subchannel. However, since
     /// subchannels are buffered, messages sent before the [SubSender]s disconnect can still be properly received.
     #[instrument(level = "debug", skip(self), err(level = "debug"))]
-    pub fn recv(&self) -> Result<T, MultiplexError> {
+    pub fn recv(&self) -> Result<T, MuxError> {
         self.sub_channel_receiver.recv()
     }
 
@@ -403,7 +403,7 @@ where
     ///
     /// Call connect passing the server name to obtain the subchannel sender.
     #[instrument(level = "debug", ret, err(level = "debug"))]
-    pub fn new() -> Result<(SubOneShotServer<T>, String), MultiplexError> {
+    pub fn new() -> Result<(SubOneShotServer<T>, String), MuxError> {
         let (one_shot_multi_server, name) = OneShotMultiServer::new()?;
         Ok((
             SubOneShotServer {
@@ -417,12 +417,12 @@ where
 
     /// Obtain a [SubReceiver] from a server and receive the first message.
     #[instrument(level = "debug", err(level = "debug"))]
-    pub fn accept(self) -> Result<(SubReceiver<T>, T), MultiplexError> {
+    pub fn accept(self) -> Result<(SubReceiver<T>, T), MuxError> {
         let multi_receiver = self.one_shot_multi_server.accept()?;
         let (subchannel_id, name) = MultiReceiver::receive_sub_channel(&multi_receiver)
             .expect("receive sub channel failed");
         if name != self.name {
-            return Err(MultiplexError::InternalError(format!(
+            return Err(MuxError::InternalError(format!(
                 "unexpected sub channel name {}",
                 name
             )));
@@ -503,7 +503,7 @@ impl fmt::Debug for MultiSender {
 ///
 /// [mux]: crate::mux
 #[derive(Debug)]
-pub enum MultiplexError {
+pub enum MuxError {
     /// An error has occurred while receiving a message from the IPC channel underlying a subchannel.
     IpcError(IpcError),
     /// No more messages may be received.
@@ -522,36 +522,36 @@ pub enum MultiplexError {
     InternalError(String),
 }
 
-impl fmt::Display for MultiplexError {
+impl fmt::Display for MuxError {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            MultiplexError::IpcError(err) => write!(fmt, "IPC error: {}", err),
-            MultiplexError::Disconnected => write!(fmt, "disconnected"),
-            MultiplexError::InternalError(s) => write!(fmt, "internal logic error: {s}"),
+            MuxError::IpcError(err) => write!(fmt, "IPC error: {}", err),
+            MuxError::Disconnected => write!(fmt, "disconnected"),
+            MuxError::InternalError(s) => write!(fmt, "internal logic error: {s}"),
         }
     }
 }
 
-impl From<IpcError> for MultiplexError {
-    fn from(err: IpcError) -> MultiplexError {
+impl From<IpcError> for MuxError {
+    fn from(err: IpcError) -> MuxError {
         match err {
-            IpcError::Disconnected => MultiplexError::Disconnected,
-            _ => MultiplexError::IpcError(err),
+            IpcError::Disconnected => MuxError::Disconnected,
+            _ => MuxError::IpcError(err),
         }
     }
 }
 
-impl From<std::io::Error> for MultiplexError {
-    fn from(err: std::io::Error) -> MultiplexError {
-        MultiplexError::IpcError(IpcError::Io(err))
+impl From<std::io::Error> for MuxError {
+    fn from(err: std::io::Error) -> MuxError {
+        MuxError::IpcError(IpcError::Io(err))
     }
 }
 
 // FIXME: the following is a temporary implementation until ipc-channel-mux switches
 // from bincode to postcard.
-impl From<bincode::Error> for MultiplexError {
-    fn from(_err: bincode::Error) -> MultiplexError {
-        MultiplexError::IpcError(IpcError::SerializationError(
+impl From<bincode::Error> for MuxError {
+    fn from(_err: bincode::Error) -> MuxError {
+        MuxError::IpcError(IpcError::SerializationError(
             postcard::Error::NotYetImplemented.into(),
         ))
     }
@@ -559,7 +559,7 @@ impl From<bincode::Error> for MultiplexError {
 
 impl MultiSender {
     #[instrument(level = "debug", ret, err(level = "debug"))]
-    fn connect(name: String) -> Result<Arc<Mutex<MultiSender>>, MultiplexError> {
+    fn connect(name: String) -> Result<Arc<Mutex<MultiSender>>, MuxError> {
         let sender = Arc::new(IpcSender::connect(name)?);
         Self::connect_sender(sender, Uuid::new_v4())
     }
@@ -568,7 +568,7 @@ impl MultiSender {
     fn connect_sender(
         sender: Arc<IpcSender<MultiMessage>>,
         ipc_sender_uuid: Uuid,
-    ) -> Result<Arc<Mutex<MultiSender>>, MultiplexError> {
+    ) -> Result<Arc<Mutex<MultiSender>>, MuxError> {
         let (response_sender, response_receiver) = ipc::channel()?;
         let client_id = ClientId(Uuid::new_v4());
         sender.send(MultiMessage::Connect(response_sender, client_id))?;
@@ -587,7 +587,7 @@ impl MultiSender {
         raw_self: Arc<Mutex<MultiSender>>,
         sub_channel_id: SubChannelId,
         name: String,
-    ) -> Result<(), MultiplexError> {
+    ) -> Result<(), MuxError> {
         Ok(raw_self
             .lock()
             .unwrap()
@@ -646,7 +646,7 @@ enum IpcReceiverOrMultiReceiverSet {
 
 #[derive(Debug)]
 enum TryRecvError {
-    MultiplexError(MultiplexError),
+    MuxError(MuxError),
     Empty,
     Handled,
 }
@@ -654,8 +654,8 @@ enum TryRecvError {
 impl fmt::Display for TryRecvError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TryRecvError::MultiplexError(multiplex_error) => {
-                write!(f, "TryRecvError::MultiplexError({})", multiplex_error)
+            TryRecvError::MuxError(multiplex_error) => {
+                write!(f, "TryRecvError::MuxError({})", multiplex_error)
             },
             TryRecvError::Empty => write!(f, "TryRecvError::Empty"),
             TryRecvError::Handled => write!(f, "TryRecvError::Handled"),
@@ -671,9 +671,7 @@ impl IpcReceiverOrMultiReceiverSet {
                 match ipc_receiver.try_recv_timeout(duration) {
                     Ok(multi_message) => return Ok(multi_message),
                     Err(ipc_channel::TryRecvError::IpcError(ipc_error)) => {
-                        return Err(TryRecvError::MultiplexError(MultiplexError::IpcError(
-                            ipc_error,
-                        )));
+                        return Err(TryRecvError::MuxError(MuxError::IpcError(ipc_error)));
                     },
                     Err(ipc_channel::TryRecvError::Empty) => return Err(TryRecvError::Empty),
                 }
@@ -693,9 +691,7 @@ impl IpcReceiverOrMultiReceiverSet {
                 match ipc_receiver.try_recv() {
                     Ok(multi_message) => return Ok(multi_message),
                     Err(ipc_channel::TryRecvError::IpcError(ipc_error)) => {
-                        return Err(TryRecvError::MultiplexError(MultiplexError::IpcError(
-                            ipc_error,
-                        )));
+                        return Err(TryRecvError::MuxError(MuxError::IpcError(ipc_error)));
                     },
                     Err(ipc_channel::TryRecvError::Empty) => return Err(TryRecvError::Empty),
                 }
@@ -710,11 +706,11 @@ impl IpcReceiverOrMultiReceiverSet {
     }
 
     #[instrument(level = "trace", ret)]
-    fn recv(&self) -> Result<MultiMessage, MultiplexError> {
+    fn recv(&self) -> Result<MultiMessage, MuxError> {
         match self {
             IpcReceiverOrMultiReceiverSet::IpcReceiver(ipc_receiver) => match ipc_receiver.recv() {
                 Ok(multi_message) => return Ok(multi_message),
-                Err(e) => return Err(MultiplexError::IpcError(e)),
+                Err(e) => return Err(MuxError::IpcError(e)),
             },
             IpcReceiverOrMultiReceiverSet::MultiReceiverSet(_) => {
                 panic!("IpcReceiver not set");
@@ -829,10 +825,7 @@ enum ResolvedMessageOrDisconnect {
 
 type IdSenders = VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>)>;
 
-type IdSenderResults = VecDeque<(
-    SubChannelId,
-    Result<Arc<Mutex<MultiSender>>, MultiplexError>,
-)>;
+type IdSenderResults = VecDeque<(SubChannelId, Result<Arc<Mutex<MultiSender>>, MuxError>)>;
 
 impl MultiReceiver {
     #[instrument(level = "debug", ret)]
@@ -854,7 +847,7 @@ impl MultiReceiver {
     }
 
     #[instrument(level = "debug", err(level = "debug"))]
-    fn recv(mr: &Arc<MultiReceiver>) -> Result<(), MultiplexError> {
+    fn recv(mr: &Arc<MultiReceiver>) -> Result<(), MuxError> {
         let msg = loop {
             let polling_interval = Duration::new(1, 0);
             // The following is inlined to avoid deadlock.
@@ -866,7 +859,7 @@ impl MultiReceiver {
                 .ipc_receiver_or_multi_receiver_set
                 .multi_receiver_set();
             if maybe_mrs.is_some() {
-                return Err(MultiplexError::InternalError("SubReceiver sharing an IPC channel with another SubReceiver in a SubReceiverSet cannot receive".to_string()));
+                return Err(MuxError::InternalError("SubReceiver sharing an IPC channel with another SubReceiver in a SubReceiverSet cannot receive".to_string()));
             }
             let result = mr
                 .mutator
@@ -886,7 +879,7 @@ impl MultiReceiver {
                 Err(TryRecvError::Handled) => {
                     return Ok(());
                 },
-                Err(TryRecvError::MultiplexError(e)) => {
+                Err(TryRecvError::MuxError(e)) => {
                     break Err(e);
                 },
             }
@@ -931,7 +924,7 @@ impl MultiReceiver {
                 },
             }
         };
-        Self::handle(Arc::clone(mr), msg).map_err(TryRecvError::MultiplexError)?;
+        Self::handle(Arc::clone(mr), msg).map_err(TryRecvError::MuxError)?;
         Err(TryRecvError::Handled)
     }
 
@@ -946,7 +939,7 @@ impl MultiReceiver {
         }
     }
 
-    fn process_results(results: IdSenderResults) -> Result<IdSenders, MultiplexError> {
+    fn process_results(results: IdSenderResults) -> Result<IdSenders, MuxError> {
         let mut srs: VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>)> = VecDeque::new();
         for (scid, res) in results {
             srs.push_back((scid, res?))
@@ -955,7 +948,7 @@ impl MultiReceiver {
     }
 
     #[instrument(level = "debug", ret, err(level = "debug"))]
-    fn handle(mr: Arc<MultiReceiver>, msg: MultiMessage) -> Result<(), MultiplexError> {
+    fn handle(mr: Arc<MultiReceiver>, msg: MultiMessage) -> Result<(), MuxError> {
         let mr_clone = Arc::clone(&mr);
         match msg {
             MultiMessage::Connect(sender, client_id) => {
@@ -996,7 +989,7 @@ impl MultiReceiver {
                                 },
                             );
                         });
-                        Err(MultiplexError::InternalError(format!(
+                        Err(MuxError::InternalError(format!(
                             "invalid subchannel id {}",
                             scid
                         )))?
@@ -1005,7 +998,7 @@ impl MultiReceiver {
                 if let Some(Ok(())) = result {
                     Ok(())
                 } else {
-                    Err(MultiplexError::Disconnected)
+                    Err(MuxError::Disconnected)
                 }
             },
             MultiMessage::Disconnect(scid, source) => {
@@ -1064,7 +1057,7 @@ impl MultiReceiver {
                 Ok(())
             },
             MultiMessage::Probe() => Ok(()), // ignore probe messages
-            m => Err(MultiplexError::InternalError(format!(
+            m => Err(MuxError::InternalError(format!(
                 "unexpected multi message {:?}",
                 m
             ))),
@@ -1074,7 +1067,7 @@ impl MultiReceiver {
     fn ipcsender_from_sender_and_or_id(
         mr: &Arc<MultiReceiver>,
         s: &IpcSenderAndOrId,
-    ) -> Result<Arc<Mutex<MultiSender>>, MultiplexError> {
+    ) -> Result<Arc<Mutex<MultiSender>>, MuxError> {
         match s {
             IpcSenderAndOrId::IpcSender(s, id) => {
                 let uuid = Uuid::parse_str(id).unwrap();
@@ -1097,16 +1090,14 @@ impl MultiReceiver {
                 if let Some(sender) = maybe_sender {
                     Ok(sender)
                 } else {
-                    Err(MultiplexError::Disconnected)
+                    Err(MuxError::Disconnected)
                 }
             },
         }
     }
 
     #[instrument(level = "debug", ret, err(level = "debug"))]
-    fn receive_sub_channel(
-        mr: &Arc<MultiReceiver>,
-    ) -> Result<(SubChannelId, String), MultiplexError> {
+    fn receive_sub_channel(mr: &Arc<MultiReceiver>) -> Result<(SubChannelId, String), MuxError> {
         let msg = mr
             .mutator
             .lock()
@@ -1116,7 +1107,7 @@ impl MultiReceiver {
             .recv()?;
         match msg {
             MultiMessage::SubChannelId(sub_channel_id, name) => Ok((sub_channel_id, name)),
-            m => Err(MultiplexError::InternalError(format!(
+            m => Err(MuxError::InternalError(format!(
                 "unexpected multi message {:?}",
                 m
             ))),
@@ -1221,7 +1212,7 @@ impl SubChannelSender {
     }
 
     #[instrument(level = "debug", skip(msg), err(level = "debug"))]
-    fn send<T>(&self, msg: T) -> Result<(), MultiplexError>
+    fn send<T>(&self, msg: T) -> Result<(), MuxError>
     where
         T: Serialize,
     {
@@ -1232,7 +1223,7 @@ impl SubChannelSender {
             .unwrap()
             .is_receiver_connected(self.sub_channel_id)
         {
-            return Err(MultiplexError::Disconnected);
+            return Err(MuxError::Disconnected);
         }
         clear_serialization_context();
 
@@ -1324,13 +1315,13 @@ impl<'de> Deserialize<'de> for SubChannelSender {
                 let mut binding = senders.lock().unwrap();
                 let result = binding
                     .pop_front()
-                    .ok_or(MultiplexError::InternalError(
+                    .ok_or(MuxError::InternalError(
                         "IpcSender missing from message".to_string(),
                     ))?
                     .clone();
                 Ok(result)
             })
-            .map_err(serde::de::Error::custom::<MultiplexError>)?;
+            .map_err(serde::de::Error::custom::<MuxError>)?;
 
         let new_source = CURRENT_MULTI_RECEIVER.with(|maybe_mr| {
             maybe_mr
@@ -1565,7 +1556,7 @@ impl fmt::Debug for SubChannelReceiver {
 
 impl SubChannelReceiver {
     #[instrument(level = "debug", err(level = "debug"))]
-    fn recv<T>(&self) -> Result<T, MultiplexError>
+    fn recv<T>(&self) -> Result<T, MuxError>
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {
@@ -1597,7 +1588,7 @@ impl SubChannelReceiver {
                     multi_receiver_result?;
                 },
                 _ => {
-                    return Err(MultiplexError::Disconnected);
+                    return Err(MuxError::Disconnected);
                 },
             }
         }
@@ -1694,7 +1685,7 @@ impl OneShotMultiServer {
     }
 
     #[instrument(level = "debug", skip(self), ret, err(level = "debug"))]
-    fn accept(self) -> Result<Arc<MultiReceiver>, MultiplexError> {
+    fn accept(self) -> Result<Arc<MultiReceiver>, MuxError> {
         let (multi_receiver, multi_message): (IpcReceiver<MultiMessage>, MultiMessage) =
             self.multi_server.accept()?;
 
@@ -1786,7 +1777,7 @@ pub struct RawMessage {
 
 impl RawMessage {
     /// Deserialise the raw message into the inferred type.
-    pub fn to<T>(self) -> Result<T, MultiplexError>
+    pub fn to<T>(self) -> Result<T, MuxError>
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {
@@ -1835,7 +1826,7 @@ impl SubReceiverSet {
     /// [SubReceiver]: struct.SubReceiver.html
     /// [SubReceiverSet]: struct.SubReceiverSet.html
     #[instrument(level = "debug", skip(subreceiver), err(level = "debug"))]
-    pub fn add<T>(&mut self, subreceiver: SubReceiver<T>) -> Result<u64, MultiplexError>
+    pub fn add<T>(&mut self, subreceiver: SubReceiver<T>) -> Result<u64, MuxError>
     where
         T: for<'x> Deserialize<'x> + Serialize,
     {
@@ -1845,7 +1836,7 @@ impl SubReceiverSet {
     /// Add an [OpaqueSubReceiver] to the set of subreceivers to be polled.
     /// [OpaqueSubReceiver]: struct.OpaqueSubReceiver.html
     #[instrument(level = "debug", skip(receiver), ret, err(level = "debug"))]
-    pub fn add_opaque(&mut self, receiver: OpaqueSubReceiver) -> Result<u64, MultiplexError> {
+    pub fn add_opaque(&mut self, receiver: OpaqueSubReceiver) -> Result<u64, MuxError> {
         if receiver
             .sub_channel_receiver
             .multi_receiver
@@ -1889,7 +1880,7 @@ impl SubReceiverSet {
                     .multi_receiver_set()
                     .unwrap();
             } else {
-                return Err(MultiplexError::InternalError(
+                return Err(MuxError::InternalError(
                     "Cannot merge non-empty MultiReceiverSets".to_string(),
                 ));
             }
@@ -1922,7 +1913,7 @@ impl SubReceiverSet {
     /// receivers in the set. The method may return multiple events. An event may be
     /// either a message received or a channel closed event.
     #[instrument(level = "debug", ret, err(level = "debug"))]
-    pub fn select(&mut self) -> Result<Vec<SubSelectionResult>, MultiplexError> {
+    pub fn select(&mut self) -> Result<Vec<SubSelectionResult>, MuxError> {
         // TODO: relax the current restriction of returning at most one SubSelectionResult.
         loop {
             match self.rx.try_recv() {
@@ -1952,7 +1943,7 @@ impl SubReceiverSet {
                     MultiReceiverSet::select(&self.multi_receiver_set)?;
                 },
                 Err(_) => {
-                    return Err(MultiplexError::Disconnected);
+                    return Err(MuxError::Disconnected);
                 },
             }
         }
@@ -1987,7 +1978,7 @@ impl MultiReceiverSet {
     fn add(
         mrs: &Arc<Mutex<MultiReceiverSet>>,
         multi_receiver: Arc<MultiReceiver>,
-    ) -> Result<(), MultiplexError> {
+    ) -> Result<(), MuxError> {
         let ipc_receiver = multi_receiver
             .mutator
             .lock()
@@ -2009,7 +2000,7 @@ impl MultiReceiverSet {
 
     // Obtain one or more incoming messages and handle them.
     #[instrument(level = "trace", ret, err(level = "trace"))]
-    fn select(mrs: &Arc<Mutex<MultiReceiverSet>>) -> Result<(), MultiplexError> {
+    fn select(mrs: &Arc<Mutex<MultiReceiverSet>>) -> Result<(), MuxError> {
         let polling_interval = Duration::new(1, 0);
         let mut mrs_mut = mrs.lock().unwrap();
         loop {
@@ -2031,7 +2022,7 @@ impl MultiReceiverSet {
                                         // FIXME: the following is a temporary implementation until ipc-channel-mux switches
                                         // from bincode to postcard.
                                         ipc_message.to().map_err(|_e| {
-                                            MultiplexError::IpcError(IpcError::SerializationError(
+                                            MuxError::IpcError(IpcError::SerializationError(
                                                 postcard::Error::NotYetImplemented.into(),
                                             ))
                                         })?,
@@ -2067,7 +2058,7 @@ impl MultiReceiverSet {
         let mut mrs_mut = mrs.lock().unwrap();
         let results = mrs_mut.ipc_receiver_set.try_select().map_err(|e| match e {
             ipc_channel::TrySelectError::Empty => TryRecvError::Empty,
-            ipc_channel::TrySelectError::IoError(e) => TryRecvError::MultiplexError(e.into()),
+            ipc_channel::TrySelectError::IoError(e) => TryRecvError::MuxError(e.into()),
         })?;
         log::trace!(
             "MultiReceiverSet::select processing {} results",
@@ -2084,13 +2075,13 @@ impl MultiReceiverSet {
                             ipc_message
                                 .to()
                                 .map_err(|_e| {
-                                    MultiplexError::IpcError(IpcError::SerializationError(
+                                    MuxError::IpcError(IpcError::SerializationError(
                                         postcard::Error::NotYetImplemented.into(),
                                     ))
                                 })
-                                .map_err(TryRecvError::MultiplexError)?,
+                                .map_err(TryRecvError::MuxError)?,
                         )
-                        .map_err(TryRecvError::MultiplexError)?;
+                        .map_err(TryRecvError::MuxError)?;
                     }
                 },
                 IpcSelectionResult::ChannelClosed(id) => {

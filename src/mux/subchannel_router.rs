@@ -21,8 +21,8 @@ use crossbeam_channel::{self, Receiver, Sender};
 use serde::{Deserialize, Serialize};
 
 use crate::mux::{
-    self, MultiplexError, OpaqueSubReceiver, RawMessage, SubReceiver, SubReceiverSet,
-    SubSelectionResult, SubSender,
+    self, MuxError, OpaqueSubReceiver, RawMessage, SubReceiver, SubReceiverSet, SubSelectionResult,
+    SubSender,
 };
 
 /// Global object wrapping a `RouterProxy`.
@@ -68,7 +68,7 @@ impl RouterProxy {
     }
 
     /// Create a new `RouterChannel`.
-    pub fn new_router_channel(proxy: Arc<RouterProxy>) -> Result<RouterChannel, MultiplexError> {
+    pub fn new_router_channel(proxy: Arc<RouterProxy>) -> Result<RouterChannel, MuxError> {
         Ok(RouterChannel {
             chan: mux::Channel::new()?,
             proxy: proxy.clone(),
@@ -332,4 +332,4 @@ enum RouterMsg {
 pub type RouterHandler = Box<dyn FnMut(RawMessage) + Send>;
 
 /// Like [RouterHandler] but includes the type that will be passed to the callback
-pub type TypedRouterHandler<T> = Box<dyn FnMut(Result<T, MultiplexError>) + Send>;
+pub type TypedRouterHandler<T> = Box<dyn FnMut(Result<T, MuxError>) + Send>;

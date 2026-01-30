@@ -8,7 +8,7 @@
 // except according to those terms.
 
 use ipc_channel_mux::mux::subchannel_router::{ROUTER, RouterProxy};
-use ipc_channel_mux::mux::{Channel, MultiplexError, SubOneShotServer, SubReceiver, SubSender};
+use ipc_channel_mux::mux::{Channel, MuxError, SubOneShotServer, SubReceiver, SubSender};
 use std::{env, process};
 use test_log::test;
 
@@ -58,7 +58,7 @@ fn subsender_drop_inflight() {
     );
 
     match transmit_rx.recv() {
-        Err(MultiplexError::Disconnected) => {},
+        Err(MuxError::Disconnected) => {},
         result => panic!("unexpected result {:?}", result),
     }
 }
