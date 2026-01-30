@@ -2100,44 +2100,4 @@ impl MultiReceiverSet {
         }
         Ok(())
     }
-
-    // Obtain zero or more incoming messages and handle them.
-    #[instrument(level = "trace", ret, err(level = "trace"))]
-    fn try_select_timeout(mrs: &Arc<Mutex<MultiReceiverSet>>) -> Result<(), TryRecvError> {
-        let mut mrs_mut = mrs.lock().unwrap();
-        let results = mrs_mut.ipc_receiver_set.try_select().map_err(|e| match e {
-            ipc_channel::TrySelectError::Empty => TryRecvError::Empty,
-            ipc_channel::TrySelectError::IoError(e) => TryRecvError::MultiplexError(e.into()),
-        })?;
-        log::trace!(
-            "MultiReceiverSet::select processing {} results",
-            results.len()
-        );
-        for result in results {
-            match result {
-                IpcSelectionResult::MessageReceived(id, ipc_message) => {
-                    if let Some(multi_receiver) = mrs_mut.multi_receivers.get(&id) {
-                        MultiReceiver::handle(
-                            Arc::clone(multi_receiver),
-                            // FIXME: the following is a temporary implementation until ipc-channel-mux switches
-                            // from bincode to postcard.
-                            ipc_message
-                                .to()
-                                .map_err(|_e| {
-                                    MultiplexError::IpcError(IpcError::SerializationError(
-                                        postcard::Error::NotYetImplemented.into(),
-                                    ))
-                                })
-                                .map_err(TryRecvError::MultiplexError)?,
-                        )
-                        .map_err(TryRecvError::MultiplexError)?;
-                    }
-                },
-                IpcSelectionResult::ChannelClosed(id) => {
-                    mrs_mut.multi_receivers.remove(&id);
-                },
-            }
-        }
-        Ok(())
-    }
 }
