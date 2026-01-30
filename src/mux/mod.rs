@@ -665,7 +665,7 @@ impl fmt::Display for TryRecvError {
 
 impl IpcReceiverOrMultiReceiverSet {
     #[instrument(level = "trace", ret)]
-    fn try_receive_timeout(&self, duration: Duration) -> Result<MultiMessage, TryRecvError> {
+    fn try_recv_timeout(&self, duration: Duration) -> Result<MultiMessage, TryRecvError> {
         match self {
             IpcReceiverOrMultiReceiverSet::IpcReceiver(ipc_receiver) => {
                 match ipc_receiver.try_recv_timeout(duration) {
@@ -687,7 +687,7 @@ impl IpcReceiverOrMultiReceiverSet {
     }
 
     #[instrument(level = "trace", ret)]
-    fn try_receive(&self) -> Result<MultiMessage, TryRecvError> {
+    fn try_recv(&self) -> Result<MultiMessage, TryRecvError> {
         match self {
             IpcReceiverOrMultiReceiverSet::IpcReceiver(ipc_receiver) => {
                 match ipc_receiver.try_recv() {
@@ -710,7 +710,7 @@ impl IpcReceiverOrMultiReceiverSet {
     }
 
     #[instrument(level = "trace", ret)]
-    fn receive(&self) -> Result<MultiMessage, MultiplexError> {
+    fn recv(&self) -> Result<MultiMessage, MultiplexError> {
         match self {
             IpcReceiverOrMultiReceiverSet::IpcReceiver(ipc_receiver) => match ipc_receiver.recv() {
                 Ok(multi_message) => return Ok(multi_message),
@@ -854,7 +854,7 @@ impl MultiReceiver {
     }
 
     #[instrument(level = "debug", err(level = "debug"))]
-    fn receive(mr: &Arc<MultiReceiver>) -> Result<(), MultiplexError> {
+    fn recv(mr: &Arc<MultiReceiver>) -> Result<(), MultiplexError> {
         let msg = loop {
             let polling_interval = Duration::new(1, 0);
             // The following is inlined to avoid deadlock.
@@ -874,7 +874,7 @@ impl MultiReceiver {
                 .as_ref()
                 .unwrap()
                 .ipc_receiver_or_multi_receiver_set
-                .try_receive_timeout(polling_interval);
+                .try_recv_timeout(polling_interval);
             match result {
                 Ok(msg) => break Ok(msg),
                 Err(TryRecvError::Empty) => {
@@ -895,7 +895,7 @@ impl MultiReceiver {
     }
 
     #[instrument(level = "debug", err(level = "debug"))]
-    fn try_receive(mr: &Arc<MultiReceiver>) -> Result<(), TryRecvError> {
+    fn try_recv(mr: &Arc<MultiReceiver>) -> Result<(), TryRecvError> {
         let msg = {
             // The following is inlined to avoid deadlock.
             let maybe_mrs = mr
@@ -917,7 +917,7 @@ impl MultiReceiver {
                 .as_ref()
                 .unwrap()
                 .ipc_receiver_or_multi_receiver_set
-                .try_receive();
+                .try_recv();
             match result {
                 Ok(msg) => msg,
                 Err(TryRecvError::Empty) => {
@@ -938,7 +938,7 @@ impl MultiReceiver {
     #[instrument(level = "debug")]
     fn drain(mr: &Arc<MultiReceiver>) {
         loop {
-            let result = Self::try_receive(mr);
+            let result = Self::try_recv(mr);
             match result {
                 Ok(_) => {},
                 Err(_) => break,
@@ -1113,7 +1113,7 @@ impl MultiReceiver {
             .as_ref()
             .unwrap()
             .ipc_receiver_or_multi_receiver_set
-            .receive()?;
+            .recv()?;
         match msg {
             MultiMessage::SubChannelId(sub_channel_id, name) => Ok((sub_channel_id, name)),
             m => Err(MultiplexError::InternalError(format!(
@@ -1505,7 +1505,7 @@ unsafe impl Sync for SubChannelReceiver {}
 impl Drop for SubChannelReceiver {
     fn drop(&mut self) {
         // Clear any messages in MultiReceiver (which could cause sending to block).
-        let _ = MultiReceiver::try_receive(&self.multi_receiver);
+        let _ = MultiReceiver::try_recv(&self.multi_receiver);
 
         // Broadcast disconnection to all MultiSenders connected to the MultiReceiver for this SubChannelReceiver.
         // Note: This may be overkill as not all MultiSenders will have a SubChannelSender corresponding to this
@@ -1589,7 +1589,7 @@ impl SubChannelReceiver {
                 },
                 Err(mpsc::TryRecvError::Empty) => {
                     // receive another message, possibly for another subchannel
-                    let multi_receiver_result = MultiReceiver::receive(&self.multi_receiver);
+                    let multi_receiver_result = MultiReceiver::recv(&self.multi_receiver);
                     log::trace!(
                         "SubChannelReceiver::recv multi_receiver_result = {:#?}",
                         multi_receiver_result.as_ref()
