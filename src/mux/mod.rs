@@ -1834,6 +1834,13 @@ impl SubReceiverSet {
     }
 
     /// Add an [OpaqueSubReceiver] to the set of subreceivers to be polled.
+    ///
+    /// Note: this function is not part of the crate API and is only called by
+    /// the router with a freshly constructed receiver whose sender has not been
+    /// used. Consequently, no messages are present on the internal channel for
+    /// the receiver and it is not necessary to return these as events from the
+    /// SubReceiverSet.
+    ///
     /// [OpaqueSubReceiver]: struct.OpaqueSubReceiver.html
     #[instrument(level = "debug", skip(receiver), ret, err(level = "debug"))]
     pub fn add_opaque(&mut self, receiver: OpaqueSubReceiver) -> Result<u64, MuxError> {
