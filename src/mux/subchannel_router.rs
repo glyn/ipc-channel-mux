@@ -27,7 +27,7 @@ use crate::mux::{
 
 /// Global object wrapping a `RouterProxy`.
 /// Add routes ([add_typed_route](RouterChannel::add_typed_route)), or route
-/// to crossbeam receivers (e.g. [route_subreceiver_to_new_crossbeam_receiver](RouterChannel::route_subreceiver_to_new_crossbeam_receiver)).
+/// to crossbeam receivers (e.g. [route_to_new_crossbeam_receiver](RouterChannel::route_to_new_crossbeam_receiver)).
 pub static ROUTER: LazyLock<Arc<RouterProxy>> = LazyLock::new(RouterProxy::new);
 
 /// A `RouterProxy` provides methods for establishing and talking to the router.
