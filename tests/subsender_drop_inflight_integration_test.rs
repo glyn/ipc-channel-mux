@@ -66,51 +66,64 @@ fn subsender_drop_inflight() {
 /// SubReceiver corresponding to the transmitted SubSender.
 #[test]
 fn subsender_drop_inflight_subreceiver_receiving() {
-    let executable_path: String = env!("CARGO_BIN_EXE_crashing_receiving_process").to_string();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::TRACE)
+        .with_thread_ids(true)
+        .finish();
+    tracing::subscriber::with_default(subscriber, || {
+        log::trace!("bingo");
+        let executable_path: String = env!("CARGO_BIN_EXE_crashing_receiving_process").to_string();
 
-    type ChannelPair = (SubSender<SubSender<bool>>, SubSender<()>);
+        type ChannelPair = (SubSender<SubSender<bool>>, SubSender<()>);
 
-    let (server, token) =
-        SubOneShotServer::<ChannelPair>::new().expect("Failed to create sub one-shot server");
+        let (server, token) =
+            SubOneShotServer::<ChannelPair>::new().expect("Failed to create sub one-shot server");
 
-    let mut command = process::Command::new(executable_path);
-    let child_process = command.arg(token);
+        let mut command = process::Command::new(executable_path);
+        let child_process = command.arg(token);
 
-    let mut child = child_process
-        .spawn()
-        .expect("Failed to start child process");
+        let mut child = child_process
+            .spawn()
+            .expect("Failed to start child process");
 
-    let (_rx, (data, control)): (SubReceiver<ChannelPair>, ChannelPair) =
-        server.accept().expect("accept failed");
+        let (_rx, (data, control)): (SubReceiver<ChannelPair>, ChannelPair) =
+            server.accept().expect("accept failed");
 
-    let d = Channel::new().unwrap();
-    let (transmit_tx, transmit_rx) = d.sub_channel();
+        let d = Channel::new().unwrap();
+        let (transmit_tx, transmit_rx) = d.sub_channel();
 
-    let join_handle = thread::spawn(move || match transmit_rx.recv() {
-        Err(MuxError::Disconnected) => 42,
-        result => panic!("unexpected result {:?}", result),
+        let join_handle = thread::spawn(move || {
+            let subscriber = tracing_subscriber::fmt()
+                .with_max_level(tracing::Level::TRACE)
+                .with_thread_ids(true)
+                .finish();
+            tracing::subscriber::with_default(subscriber, || match transmit_rx.recv() {
+                Err(MuxError::Disconnected) => 42,
+                result => panic!("unexpected result {:?}", result),
+            })
+        });
+
+        // Give the spawned thread time to block. Although this isn't guaranteed,
+        // it's more likely than not.
+        thread::yield_now();
+        thread::sleep(Duration::from_millis(100));
+
+        data.send(transmit_tx).expect("subsender send failed");
+
+        // Ensure that the "sending" message is received so that polling occurs.
+        let (extra_tx, extra_rx) = d.sub_channel();
+        extra_tx.send(()).unwrap();
+        extra_rx.recv().unwrap(); // uses the same IpcReceiver as transmit_rx
+
+        control.send(()).expect("control send failed");
+        let result = child.wait().expect("wait for child process failed");
+        assert_eq!(
+            result.code().unwrap(),
+            1,
+            "child process did not terminate with exit status code 1"
+        );
+
+        let result = join_handle.join();
+        assert_eq!(result.unwrap(), 42);
     });
-
-    // Give the spawned thread time to block. Although this isn't guaranteed,
-    // it's more likely than not.
-    thread::yield_now();
-    thread::sleep(Duration::from_millis(1000));
-
-    data.send(transmit_tx).expect("subsender send failed");
-
-    // Ensure that the "sending" message is received so that polling occurs.
-    let (extra_tx, extra_rx) = d.sub_channel();
-    extra_tx.send(()).unwrap();
-    extra_rx.recv().unwrap(); // uses the same IpcReceiver as transmit_rx
-
-    control.send(()).expect("control send failed");
-    let result = child.wait().expect("wait for child process failed");
-    assert_eq!(
-        result.code().unwrap(),
-        1,
-        "child process did not terminate with exit status code 1"
-    );
-
-    let result = join_handle.join();
-    assert_eq!(result.unwrap(), 42);
 }
