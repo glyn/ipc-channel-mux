@@ -1546,7 +1546,8 @@ impl SubChannelReceiver {
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {
-        let polling_interval = Duration::new(1, 0);
+        const POLLING_INTERVAL: Duration = Duration::from_millis(100);
+        const CONTENTED_WAIT_INTERVAL: Duration = Duration::from_millis(10);
         loop {
             match self.channel.try_recv() {
                 Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
@@ -1566,18 +1567,40 @@ impl SubChannelReceiver {
                     return result.map_err(From::from);
                 },
                 Err(mpsc::TryRecvError::Empty) => {
+                    // If the mutex is locked, wait on the local channel.
+                    if self.multi_receiver.mutator.try_lock().is_err() {
+                        match self.channel.recv_timeout(CONTENTED_WAIT_INTERVAL) {
+                            Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
+                                scid,
+                                payload,
+                                senders: multi_senders,
+                                multi_receiver: _,
+                            })) => {
+                                log::trace!("SubChannelReceiver::recv received = {:#?}", payload);
+                                establish_deserialization_context(
+                                    &self.multi_receiver,
+                                    multi_senders,
+                                    scid,
+                                );
+                                let result = bincode::deserialize::<T>(payload.as_slice());
+                                clear_deserialization_context();
+                                return result.map_err(From::from);
+                            },
+                            Err(mpsc::RecvTimeoutError::Timeout) => {},
+                            _ => {
+                                return Err(MuxError::Disconnected);
+                            },
+                        }
+                    }
                     // receive another message, possibly for another subchannel
                     let multi_receiver_result =
-                        MultiReceiver::try_recv_timeout(&self.multi_receiver, polling_interval);
+                        MultiReceiver::try_recv_timeout(&self.multi_receiver, POLLING_INTERVAL);
                     log::trace!(
                         "SubChannelReceiver::recv multi_receiver_result = {:#?}",
                         multi_receiver_result.as_ref()
                     );
-                    match multi_receiver_result {
-                        Ok(_) => {},
-                        Err(TryRecvError::Empty) => {},
-                        Err(TryRecvError::Handled) => {},
-                        Err(TryRecvError::MuxError(e)) => return Err(e),
+                    if let Err(TryRecvError::MuxError(e)) = multi_receiver_result {
+                        return Err(e);
                     }
                 },
                 _ => {
