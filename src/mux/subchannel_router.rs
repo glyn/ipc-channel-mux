@@ -67,7 +67,7 @@ impl RouterProxy {
         })
     }
 
-    /// Create a new `RouterChannel`.
+    /// Create a new `RouterChannel`, which is used to construct routed subchannels.
     pub fn new_router_channel(proxy: Arc<RouterProxy>) -> Result<RouterChannel, MuxError> {
         Ok(RouterChannel {
             chan: mux::Channel::new()?,
@@ -177,9 +177,12 @@ impl RouterProxy {
     }
 }
 
-/// A RouterChannel is analogous to [mux::Channel] but can only be used to construct router subchannels.
-/// This prevents the creation of non-routed subchannels sharing an underlying IPC channel with routed
-/// subchannels - a source of liveness and fairness issues.
+/// A RouterChannel is analogous to [mux::Channel], but is used to construct routed subchannels.
+/// All SubChannels created using a given RouterChannel share an underlying IPC channel.
+///
+/// RouterChannel is the only way to construct routed subchannels and avoids routed subchannels
+/// sharing an underlying IPC channel with non-routed subchannels, which would give rise to
+/// liveness and fairness issues.
 pub struct RouterChannel {
     chan: mux::Channel,
     proxy: Arc<RouterProxy>,
