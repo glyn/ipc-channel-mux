@@ -39,3 +39,7 @@ harness = false
 [[bench]]
 name = "uncontended_recv"
 harness = false
+
+[[bench]]
+name = "ipc_channel_recv"
+harness = false
