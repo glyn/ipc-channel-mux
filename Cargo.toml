@@ -29,5 +29,10 @@ uuid = { version = "1", features = ["v4", "serde"] }
 weak-table = "0.3.2"
 
 [dev-dependencies]
+criterion = { version = "0.8", features = ["html_reports"] }
 crossbeam-utils = "0.8"
 test-log = "0.2.17"
+
+[[bench]]
+name = "contended_recv"
+harness = false
