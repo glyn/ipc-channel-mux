@@ -41,6 +41,10 @@ name = "ipc_channel_recv"
 harness = false
 
 [[bench]]
+name = "routed_ipc_channel_recv"
+harness = false
+
+[[bench]]
 name = "routed_recv"
 harness = false
 

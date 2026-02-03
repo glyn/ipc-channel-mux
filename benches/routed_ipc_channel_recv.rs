@@ -7,23 +7,21 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 use criterion::{Criterion, criterion_group, criterion_main};
-use ipc_channel_mux::mux::subchannel_router::ROUTER;
+use ipc_channel::{ipc, router::ROUTER};
 use std::{thread, time::Duration};
 
-fn routed_recv(c: &mut Criterion) {
+fn routed_ipc_channel_recv(c: &mut Criterion) {
     let mut group = c.benchmark_group("smaller sample size");
     group
         .sample_size(20)
         .measurement_time(Duration::from_secs(30));
-    let router_proxy = ipc_channel_mux::mux::subchannel_router::RouterProxy::new();
-    let data =
-        ipc_channel_mux::mux::subchannel_router::RouterProxy::new_router_channel(router_proxy)
-            .unwrap();
-    group.bench_function("routed_recv", |b| {
+    group.bench_function("routed_ipc_channel_recv", |b| {
         b.iter(|| {
             const SENDS: u32 = 50;
 
-            let (main_tx, main_rx) = data.route_to_new_crossbeam_receiver().unwrap();
+            let (main_tx, rx) = ipc::channel().unwrap();
+
+            let main_rx = ROUTER.route_ipc_receiver_to_new_crossbeam_receiver(rx);
 
             let join_handle = thread::spawn(move || {
                 loop {
@@ -46,5 +44,5 @@ fn routed_recv(c: &mut Criterion) {
     ROUTER.shutdown();
 }
 
-criterion_group!(benches, routed_recv);
+criterion_group!(benches, routed_ipc_channel_recv);
 criterion_main!(benches);
