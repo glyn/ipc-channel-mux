@@ -36,3 +36,7 @@ test-log = "0.2.17"
 [[bench]]
 name = "contended_recv"
 harness = false
+
+[[bench]]
+name = "uncontended_recv"
+harness = false
