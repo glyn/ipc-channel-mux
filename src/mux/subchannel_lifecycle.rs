@@ -159,10 +159,12 @@ where
 
     // Remove the given inflight value and disconnect it.
     #[instrument(level = "debug", skip(self))]
-    pub fn receive_failed(&self, via: Via) {
+    pub fn receive_failed(&self, via: Via) -> Option<T> {
         self.in_flight.lock().unwrap().remove(&via);
         if self.sources.lock().unwrap().is_empty() && self.in_flight.lock().unwrap().is_empty() {
-            self.maybe.lock().unwrap().take();
+            self.maybe.lock().unwrap().take()
+        } else {
+            None
         }
     }
 
