@@ -37,9 +37,13 @@ name = "contended_recv"
 harness = false
 
 [[bench]]
-name = "uncontended_recv"
+name = "ipc_channel_recv"
 harness = false
 
 [[bench]]
-name = "ipc_channel_recv"
+name = "routed_recv"
+harness = false
+
+[[bench]]
+name = "uncontended_recv"
 harness = false
