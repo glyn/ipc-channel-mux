@@ -1547,9 +1547,18 @@ impl SubChannelReceiver {
         T: for<'de> Deserialize<'de> + Serialize,
     {
         const POLLING_INTERVAL: Duration = Duration::from_millis(100);
-        const CONTENTED_WAIT_INTERVAL: Duration = Duration::from_millis(10);
+        const CONTENDED_WAIT_INTERVAL: Duration = Duration::from_micros(100);
+        let mut wait_interval: Option<Duration> = None;
         loop {
-            match self.channel.try_recv() {
+            let result = if let Some(interval) = wait_interval {
+                self.channel.recv_timeout(interval).map_err(|e| match e {
+                    mpsc::RecvTimeoutError::Timeout => mpsc::TryRecvError::Empty,
+                    mpsc::RecvTimeoutError::Disconnected => mpsc::TryRecvError::Disconnected,
+                })
+            } else {
+                self.channel.try_recv()
+            };
+            match result {
                 Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
                     scid,
                     payload,
@@ -1569,29 +1578,10 @@ impl SubChannelReceiver {
                 Err(mpsc::TryRecvError::Empty) => {
                     // If the mutex is locked, wait on the local channel.
                     if self.multi_receiver.mutator.try_lock().is_err() {
-                        match self.channel.recv_timeout(CONTENTED_WAIT_INTERVAL) {
-                            Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
-                                scid,
-                                payload,
-                                senders: multi_senders,
-                                multi_receiver: _,
-                            })) => {
-                                log::trace!("SubChannelReceiver::recv received = {:#?}", payload);
-                                establish_deserialization_context(
-                                    &self.multi_receiver,
-                                    multi_senders,
-                                    scid,
-                                );
-                                let result = bincode::deserialize::<T>(payload.as_slice());
-                                clear_deserialization_context();
-                                return result.map_err(From::from);
-                            },
-                            Err(mpsc::RecvTimeoutError::Timeout) => {},
-                            _ => {
-                                return Err(MuxError::Disconnected);
-                            },
-                        }
+                        wait_interval = Some(CONTENDED_WAIT_INTERVAL);
+                        continue;
                     }
+                    wait_interval = None;
                     // receive another message, possibly for another subchannel
                     let multi_receiver_result =
                         MultiReceiver::try_recv_timeout(&self.multi_receiver, POLLING_INTERVAL);
