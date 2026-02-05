@@ -18,7 +18,7 @@ fn router_throughput(c: &mut Criterion) {
     group.measurement_time(Duration::from_secs(40));
     let router_proxy = ipc_channel_mux::mux::subchannel_router::RouterProxy::new();
     let data =
-        ipc_channel_mux::mux::subchannel_router::RouterProxy::new_router_channel(router_proxy)
+        ipc_channel_mux::mux::subchannel_router::RouterProxy::new_router_channel(&router_proxy)
             .unwrap();
     group.bench_function("ipc_channel_router", |b| {
         b.iter(|| {
@@ -32,7 +32,7 @@ fn router_throughput(c: &mut Criterion) {
             let join_handle = thread::spawn(move || {
                 loop {
                     match main_rx.recv() {
-                        Ok(_) => {},
+                        Ok(()) => {},
                         _ => break 42,
                     }
                 }
@@ -44,7 +44,7 @@ fn router_throughput(c: &mut Criterion) {
 
             drop(main_tx);
             assert_eq!(join_handle.join().unwrap(), 42);
-        })
+        });
     });
 
     group.bench_function("subchannel_router", |b| {
@@ -56,7 +56,7 @@ fn router_throughput(c: &mut Criterion) {
             let join_handle = thread::spawn(move || {
                 loop {
                     match main_rx.recv() {
-                        Ok(_) => {},
+                        Ok(()) => {},
                         _ => break 42,
                     }
                 }
@@ -68,7 +68,7 @@ fn router_throughput(c: &mut Criterion) {
 
             drop(main_tx);
             assert_eq!(join_handle.join().unwrap(), 42);
-        })
+        });
     });
     group.finish();
     ROUTER.shutdown();

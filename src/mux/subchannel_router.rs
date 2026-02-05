@@ -69,7 +69,7 @@ impl RouterProxy {
     }
 
     /// Create a new `RouterChannel`, which is used to construct routed subchannels.
-    pub fn new_router_channel(proxy: Arc<RouterProxy>) -> Result<RouterChannel, MuxError> {
+    pub fn new_router_channel(proxy: &Arc<RouterProxy>) -> Result<RouterChannel, MuxError> {
         Ok(RouterChannel {
             chan: mux::Channel::new()?,
             proxy: proxy.clone(),
@@ -113,7 +113,7 @@ impl RouterProxy {
         // Before passing the message on to the callback, turn it into the appropriate type
         let modified_callback = move |msg: RawMessage| {
             let typed_message = msg.to::<T>();
-            callback(typed_message)
+            callback(typed_message);
         };
 
         self.add_route(subreceiver.to_opaque(), Box::new(modified_callback))
@@ -163,7 +163,7 @@ impl RouterProxy {
         let (ack_sender, ack_receiver) = crossbeam_channel::unbounded();
         comm.wakeup_sender
             .send(())
-            .map(|_| {
+            .map(|()| {
                 comm.msg_sender
                     .send(RouterMsg::Shutdown(ack_sender))
                     .unwrap();
@@ -287,13 +287,12 @@ impl Router {
         loop {
             // Wait for events to come from our select() new channels are added to
             // our ReceiverSet below.
-            let results = match self.subreceiver_set.select() {
-                Ok(results) => results,
-                Err(_) => break,
+            let Ok(results) = self.subreceiver_set.select() else {
+                break;
             };
 
             // Iterate over numerous events that were ready at this time.
-            for result in results.into_iter() {
+            for result in results {
                 match result {
                     // Message came from the RouterProxy. Listen on our `msg_receiver`
                     // channel.
@@ -314,7 +313,7 @@ impl Router {
                     },
                     // Event from one of our registered receivers, call callback.
                     SubSelectionResult::MessageReceived(id, message) => {
-                        self.handlers.get_mut(&id).unwrap()(message)
+                        self.handlers.get_mut(&id).unwrap()(message);
                     },
                     SubSelectionResult::ChannelClosed(id) => {
                         let _ = self.handlers.remove(&id).unwrap();

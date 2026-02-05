@@ -133,10 +133,10 @@ where
 
     #[instrument(level = "debug", skip(self))]
     // Record the receipt of an inflight value.
-    pub fn received(&self, via: Via, received_at_source: Source) {
-        self.in_flight.lock().unwrap().remove(&via);
+    pub fn received(&self, via: &Via, received_at_source: Source) {
+        self.in_flight.lock().unwrap().remove(via);
         self.sources.lock().unwrap().insert(received_at_source);
-        self.probes.lock().unwrap().remove(&via);
+        self.probes.lock().unwrap().remove(via);
     }
 
     // Disconnect from the given source. Once the subsender has been disconnected
@@ -159,8 +159,8 @@ where
 
     // Remove the given inflight value and disconnect it.
     #[instrument(level = "debug", skip(self))]
-    pub fn receive_failed(&self, via: Via) -> Option<T> {
-        self.in_flight.lock().unwrap().remove(&via);
+    pub fn receive_failed(&self, via: &Via) -> Option<T> {
+        self.in_flight.lock().unwrap().remove(via);
         if self.sources.lock().unwrap().is_empty() && self.in_flight.lock().unwrap().is_empty() {
             self.maybe.lock().unwrap().take()
         } else {
@@ -345,7 +345,7 @@ mod tests {
         > = SubSenderStateMachine::new(TestSender::new(&sent), "x");
 
         ssm.to_be_sent("scid", Box::new(|| true));
-        ssm.received("scid", "y");
+        ssm.received(&"scid", "y");
         let disc = ssm.disconnect("y");
         assert!(disc.is_none());
         assert_eq!(ssm.send('a'), Some(Ok(())));
@@ -368,7 +368,7 @@ mod tests {
         > = SubSenderStateMachine::new(TestSender::new(&sent), "x");
 
         ssm.to_be_sent("scid", Box::new(|| true));
-        ssm.received("scid", "y");
+        ssm.received(&"scid", "y");
 
         // Disconnecting the original source should have no effect.
         let disc = ssm.disconnect("x");
@@ -415,11 +415,11 @@ mod tests {
         let disc = ssm.disconnect("x");
         assert!(disc.is_none());
 
-        ssm.received("scid", "y");
+        ssm.received(&"scid", "y");
         let disc = ssm.disconnect("y");
         assert!(disc.is_none());
 
-        ssm.received("scid", "y");
+        ssm.received(&"scid", "y");
         assert_eq!(ssm.send('a'), Some(Ok(())));
         assert_eq!(sent.lock().unwrap().clone(), vec!['a']);
     }
@@ -526,7 +526,7 @@ mod tests {
         assert!(disc.is_none());
         assert_eq!(ssm.send('a'), Some(Ok(())));
 
-        ssm.receive_failed("scid");
+        ssm.receive_failed(&"scid");
         assert_eq!(ssm.send('a'), None);
     }
 
@@ -543,7 +543,7 @@ mod tests {
         > = SubSenderStateMachine::new(TestSender::new(&sent), "x");
 
         ssm.to_be_sent("scid", Box::new(|| panic!("probe should not be run")));
-        ssm.received("scid", "y");
+        ssm.received(&"scid", "y");
         ssm.poll();
     }
 }

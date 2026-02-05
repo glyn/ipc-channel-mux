@@ -180,6 +180,8 @@ mod tests {
     #[test]
     fn test_source_with_target() {
         type SourceTable = Source<Weak<u32>>;
+        type TargetTable = Target<Rc<u32>>;
+
         let mut source_map = SourceTable::new();
 
         // The first time a given endpoint is sent from source to target, it is
@@ -191,7 +193,6 @@ mod tests {
         let already_sent = source_map.insert(Rc::clone(&a));
         assert!(!already_sent);
 
-        type TargetTable = Target<Rc<u32>>;
         let mut target_map = TargetTable::new();
 
         target_map.add(id, &a);

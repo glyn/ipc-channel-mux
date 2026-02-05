@@ -17,7 +17,7 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let token = args.get(1).expect("missing argument");
 
-    let tx: SubSender<String> = SubSender::connect(token.to_string()).expect("connect failed");
+    let tx: SubSender<String> = SubSender::connect(token.clone()).expect("connect failed");
     tx.send("test message".to_string()).expect("send failed");
 
     process::exit(0);

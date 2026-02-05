@@ -804,7 +804,7 @@ fn router_simple_global() {
     // since tests running in the same process will share router
     // state.
 
-    let channel = RouterProxy::new_router_channel(ROUTER.clone()).unwrap();
+    let channel = RouterProxy::new_router_channel(&ROUTER).unwrap();
 
     let (callback_fired_sender, callback_fired_receiver) = crossbeam_channel::unbounded::<usize>();
     let tx = channel

@@ -28,7 +28,7 @@ fn main() {
         .expect("missing argument")
         .clone();
     let tx: SubSender<(SubSender<SubSender<bool>>, SubSender<()>)> =
-        SubSender::connect(token.to_string()).expect("connect failed");
+        SubSender::connect(token.clone()).expect("connect failed");
 
     let d = Channel::new().unwrap();
     let (data_tx, _data_rx) = d.sub_channel();

@@ -20,9 +20,9 @@ use test_log::test;
 /// received.
 #[test]
 fn router_subsender_drop_inflight() {
-    let executable_path: String = env!("CARGO_BIN_EXE_crashing_receiving_process").to_string();
-
     type ChannelPair = (SubSender<SubSender<bool>>, SubSender<()>);
+
+    let executable_path: String = env!("CARGO_BIN_EXE_crashing_receiving_process").to_string();
 
     let (server, token) =
         SubOneShotServer::<ChannelPair>::new().expect("Failed to create sub one-shot server");
@@ -37,7 +37,7 @@ fn router_subsender_drop_inflight() {
     let (_rx, (data, control)): (SubReceiver<ChannelPair>, ChannelPair) =
         server.accept().expect("accept failed");
 
-    let channel = RouterProxy::new_router_channel(ROUTER.clone()).unwrap();
+    let channel = RouterProxy::new_router_channel(&ROUTER).unwrap();
     let (transmit_tx, callback_fired_receiver) =
         channel.route_to_new_crossbeam_receiver::<bool>().unwrap();
     data.send(transmit_tx).expect("subsender send failed");
@@ -45,7 +45,7 @@ fn router_subsender_drop_inflight() {
         channel.route_to_new_crossbeam_receiver::<bool>().unwrap();
     data.send(transmit_tx2).expect("subsender send failed");
 
-    let channel2 = RouterProxy::new_router_channel(ROUTER.clone()).unwrap();
+    let channel2 = RouterProxy::new_router_channel(&ROUTER).unwrap();
     let (transmit_tx3, callback_fired_receiver3) =
         channel2.route_to_new_crossbeam_receiver::<bool>().unwrap();
     data.send(transmit_tx3).expect("subsender send failed");

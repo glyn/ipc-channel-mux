@@ -19,9 +19,9 @@ use test_log::test;
 /// received.
 #[test]
 fn subsender_drop_inflight() {
-    let executable_path: String = env!("CARGO_BIN_EXE_crashing_receiving_process").to_string();
-
     type ChannelPair = (SubSender<SubSender<bool>>, SubSender<()>);
+
+    let executable_path: String = env!("CARGO_BIN_EXE_crashing_receiving_process").to_string();
 
     let (server, token) =
         SubOneShotServer::<ChannelPair>::new().expect("Failed to create sub one-shot server");
@@ -66,9 +66,9 @@ fn subsender_drop_inflight() {
 /// SubReceiver corresponding to the transmitted SubSender.
 #[test]
 fn subsender_drop_inflight_subreceiver_receiving() {
-    let executable_path: String = env!("CARGO_BIN_EXE_crashing_receiving_process").to_string();
-
     type ChannelPair = (SubSender<SubSender<bool>>, SubSender<()>);
+
+    let executable_path: String = env!("CARGO_BIN_EXE_crashing_receiving_process").to_string();
 
     let (server, token) =
         SubOneShotServer::<ChannelPair>::new().expect("Failed to create sub one-shot server");

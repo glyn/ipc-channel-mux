@@ -65,9 +65,9 @@ fn spawn_sub_one_shot_server_client() {
 /// terminates before the "sending" message has been received.
 #[test]
 fn subsender_drop_inflight_early() {
-    let executable_path: String = env!("CARGO_BIN_EXE_crashing_receiving_process").to_string();
-
     type ChannelPair = (mux::SubSender<mux::SubSender<bool>>, mux::SubSender<()>);
+
+    let executable_path: String = env!("CARGO_BIN_EXE_crashing_receiving_process").to_string();
 
     let (server, token) =
         mux::SubOneShotServer::<ChannelPair>::new().expect("Failed to create sub one-shot server");

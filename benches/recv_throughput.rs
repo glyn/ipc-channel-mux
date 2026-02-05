@@ -24,7 +24,7 @@ fn recv_throughput(c: &mut Criterion) {
             let join_handle = thread::spawn(move || {
                 loop {
                     match main_rx.recv() {
-                        Ok(_) => {},
+                        Ok(()) => {},
                         Err(IpcError::Disconnected) => break 42,
                         result => panic!("unexpected result {:?}", result),
                     }
@@ -37,7 +37,7 @@ fn recv_throughput(c: &mut Criterion) {
 
             drop(main_tx);
             assert_eq!(join_handle.join().unwrap(), 42);
-        })
+        });
     });
     group.bench_function("uncontended_subchannel_recv", |b| {
         b.iter(|| {
@@ -49,7 +49,7 @@ fn recv_throughput(c: &mut Criterion) {
             let join_handle = thread::spawn(move || {
                 loop {
                     match main_rx.recv() {
-                        Ok(_) => {},
+                        Ok(()) => {},
                         Err(MuxError::Disconnected) => break 42,
                         result => panic!("unexpected result {:?}", result),
                     }
@@ -62,7 +62,7 @@ fn recv_throughput(c: &mut Criterion) {
 
             drop(main_tx);
             assert_eq!(join_handle.join().unwrap(), 42);
-        })
+        });
     });
     group.bench_function("contended_subchannel_recv", |b| {
         b.iter(|| {
@@ -80,7 +80,7 @@ fn recv_throughput(c: &mut Criterion) {
             let join_handle2 = thread::spawn(move || {
                 loop {
                     match main_rx.recv() {
-                        Ok(_) => {},
+                        Ok(()) => {},
                         Err(MuxError::Disconnected) => break 42,
                         result => panic!("unexpected result {:?}", result),
                     }
@@ -95,7 +95,7 @@ fn recv_throughput(c: &mut Criterion) {
             drop(other_tx);
             assert_eq!(join_handle.join().unwrap(), 42);
             assert_eq!(join_handle2.join().unwrap(), 42);
-        })
+        });
     });
     group.finish();
 }
