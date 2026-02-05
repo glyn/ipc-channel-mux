@@ -729,22 +729,6 @@ fn receiver_set_heterogeneous_blocking() {
 }
 
 #[test]
-// Test a SubReceiverSet with a "freestanding" SubReceiver not in the set.
-fn freestanding_subreceiver_associated_with_subreceiverset_cannot_receive() {
-    let channel = mux::Channel::new().unwrap();
-    let (_tx1, rx1) = channel.sub_channel::<i32>();
-
-    let mut rx_set = mux::SubReceiverSet::new().unwrap();
-    let _rx1_id = rx_set.add(rx1).unwrap();
-
-    let (_tx2, rx2) = channel.sub_channel::<String>();
-    assert_eq!(
-        format!("{:?}", rx2.recv()),
-        "Err(InternalError(\"SubReceiver sharing an IPC channel with another SubReceiver in a SubReceiverSet cannot receive\"))"
-    );
-}
-
-#[test]
 // Test SubReceivers sharing an IPC channel belonging to distinct SubReceiverSets with distinct IpcReceiverSets.
 fn subreceivers_sharing_ipc_channel_cannot_belong_to_distinct_subreceiversets_with_distinct_ipcreceiversets()
  {

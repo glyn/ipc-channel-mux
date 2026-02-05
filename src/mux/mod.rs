@@ -879,19 +879,9 @@ impl MultiReceiver {
         }
     }
 
-    #[instrument(level = "debug", err(level = "debug"))]
+    //#[instrument(level = "debug", err(level = "debug"))]
+    #[inline(always)]
     fn try_recv_timeout(mr: &Arc<MultiReceiver>, duration: Duration) -> Result<(), TryRecvError> {
-        // The following is inlined to avoid deadlock.
-        let maybe_mrs = mr
-            .mutator
-            .lock()
-            .as_ref()
-            .unwrap()
-            .ipc_receiver_or_multi_receiver_set
-            .multi_receiver_set();
-        if maybe_mrs.is_some() {
-            return Err(TryRecvError::MuxError(MuxError::InternalError("SubReceiver sharing an IPC channel with another SubReceiver in a SubReceiverSet cannot receive".to_string())));
-        }
         let result = mr
             .mutator
             .lock()
@@ -1540,14 +1530,15 @@ impl fmt::Debug for SubChannelReceiver {
     }
 }
 
+const POLLING_INTERVAL: Duration = Duration::from_millis(100);
+const CONTENDED_WAIT_INTERVAL: Duration = Duration::from_micros(100);
+
 impl SubChannelReceiver {
     #[instrument(level = "debug", err(level = "debug"))]
     fn recv<T>(&self) -> Result<T, MuxError>
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {
-        const POLLING_INTERVAL: Duration = Duration::from_millis(100);
-        const CONTENDED_WAIT_INTERVAL: Duration = Duration::from_micros(100);
         let mut wait_interval: Option<Duration> = None;
         loop {
             let result = if let Some(interval) = wait_interval {
