@@ -22,6 +22,7 @@ libc = "0.2.162"
 log = "0.4.26"
 postcard = { version = "1.1", default-features = false, features = ["use-std"] }
 serde = { version = "1.0", features = ["derive", "rc"] }
+thiserror = "2.0.18"
 tracing = { version = "0.1.41", features = ["log"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 weak-table = "0.3.2"

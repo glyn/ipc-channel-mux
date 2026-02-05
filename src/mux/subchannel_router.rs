@@ -19,6 +19,7 @@ use std::thread::{self, JoinHandle};
 
 use crossbeam_channel::{self, Receiver, Sender};
 use serde::{Deserialize, Serialize};
+use thiserror::Error;
 
 use crate::mux::{
     self, MuxError, OpaqueSubReceiver, RawMessage, SubReceiver, SubReceiverSet, SubSelectionResult,
@@ -189,9 +190,10 @@ pub struct RouterChannel {
 }
 
 /// RouterError describes errors related to routing.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum RouterError {
     /// The router is shutting down.
+    #[error("Router shutting down")]
     ShuttingDown,
 }
 

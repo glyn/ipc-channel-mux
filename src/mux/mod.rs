@@ -143,6 +143,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 use subchannel_lifecycle::SubSenderTracker;
+use thiserror::Error;
 use tracing::instrument;
 use uuid::Uuid;
 use weak_table::WeakValueHashMap;
@@ -501,10 +502,11 @@ impl fmt::Debug for MultiSender {
 /// module.
 ///
 /// [mux]: crate::mux
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum MuxError {
     /// An error has occurred while receiving a message from the IPC channel underlying a subchannel.
-    IpcError(IpcError),
+    #[error("IPC error: {0}")]
+    IpcError(#[from] IpcError),
     /// No more messages may be received.
     ///
     /// Returned from [send] when the subchannel's [SubReceiver] has disconnected (has been
@@ -516,28 +518,11 @@ pub enum MuxError {
     /// [send]: crate::mux::SubSender::send
     /// [recv]: crate::mux::SubReceiver::recv
     /// [accept]: crate::mux::SubOneShotServer::accept
+    #[error("Disconnected")]
     Disconnected,
     /// An internal logic error has occurred.
+    #[error("Internal error: {0}")]
     InternalError(String),
-}
-
-impl fmt::Display for MuxError {
-    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            MuxError::IpcError(err) => write!(fmt, "IPC error: {}", err),
-            MuxError::Disconnected => write!(fmt, "disconnected"),
-            MuxError::InternalError(s) => write!(fmt, "internal logic error: {s}"),
-        }
-    }
-}
-
-impl From<IpcError> for MuxError {
-    fn from(err: IpcError) -> MuxError {
-        match err {
-            IpcError::Disconnected => MuxError::Disconnected,
-            _ => MuxError::IpcError(err),
-        }
-    }
 }
 
 impl From<std::io::Error> for MuxError {
