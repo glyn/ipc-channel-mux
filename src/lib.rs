@@ -13,5 +13,3 @@ pub mod mux;
 
 #[cfg(test)]
 mod mux_test;
-
-pub use bincode::{Error, ErrorKind};

@@ -128,7 +128,6 @@
 
 #![warn(missing_docs)]
 
-use bincode;
 use channel_identification::{Source, Target};
 use ipc_channel::IpcError;
 use ipc_channel::ipc::{
@@ -138,7 +137,7 @@ use log;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{self, Debug, Display, Formatter};
-use std::io::{self, Cursor, Read};
+use std::io;
 use std::marker::PhantomData;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, Weak};
@@ -547,13 +546,9 @@ impl From<std::io::Error> for MuxError {
     }
 }
 
-// FIXME: the following is a temporary implementation until ipc-channel-mux switches
-// from bincode to postcard.
-impl From<bincode::Error> for MuxError {
-    fn from(_err: bincode::Error) -> MuxError {
-        MuxError::IpcError(IpcError::SerializationError(
-            postcard::Error::NotYetImplemented.into(),
-        ))
+impl From<postcard::Error> for MuxError {
+    fn from(err: postcard::Error) -> MuxError {
+        MuxError::IpcError(IpcError::SerializationError(err.into()))
     }
 }
 
@@ -1203,11 +1198,7 @@ impl SubChannelSender {
         }
         clear_serialization_context();
 
-        let mut c = Cursor::new(Vec::<u8>::new());
-        bincode::serialize_into(&mut c, &msg)?;
-        c.set_position(0);
-        let mut payload = Vec::new();
-        c.read_to_end(&mut payload).unwrap();
+        let payload = postcard::to_stdvec(&msg).map_err(MuxError::from)?;
 
         let (serialized_subchannel_senders, ipc_senders_to_send) = take_serialization_context();
 
@@ -1560,7 +1551,7 @@ impl SubChannelReceiver {
 
                     establish_deserialization_context(&self.multi_receiver, multi_senders, scid);
 
-                    let result = bincode::deserialize::<T>(payload.as_slice());
+                    let result = postcard::from_bytes::<T>(payload.as_slice());
 
                     clear_deserialization_context();
 
@@ -1780,7 +1771,7 @@ impl RawMessage {
     {
         establish_deserialization_context(&self.multi_receiver, self.senders, self.scid);
 
-        let result = bincode::deserialize::<T>(self.payload.as_slice());
+        let result = postcard::from_bytes::<T>(self.payload.as_slice());
 
         clear_deserialization_context();
 
@@ -2023,12 +2014,8 @@ impl MultiReceiverSet {
                                 if let Some(multi_receiver) = mrs_mut.multi_receivers.get(&id) {
                                     MultiReceiver::handle(
                                         Arc::clone(multi_receiver),
-                                        // FIXME: the following is a temporary implementation until ipc-channel-mux switches
-                                        // from bincode to postcard.
-                                        ipc_message.to().map_err(|_e| {
-                                            MuxError::IpcError(IpcError::SerializationError(
-                                                postcard::Error::NotYetImplemented.into(),
-                                            ))
+                                        ipc_message.to().map_err(|e| {
+                                            MuxError::IpcError(IpcError::SerializationError(e))
                                         })?,
                                     )?;
                                 }
@@ -2078,15 +2065,9 @@ impl MultiReceiverSet {
                     if let Some(multi_receiver) = mrs_mut.multi_receivers.get(&id) {
                         MultiReceiver::handle(
                             Arc::clone(multi_receiver),
-                            // FIXME: the following is a temporary implementation until ipc-channel-mux switches
-                            // from bincode to postcard.
                             ipc_message
                                 .to()
-                                .map_err(|_e| {
-                                    MuxError::IpcError(IpcError::SerializationError(
-                                        postcard::Error::NotYetImplemented.into(),
-                                    ))
-                                })
+                                .map_err(|e| MuxError::IpcError(IpcError::SerializationError(e)))
                                 .map_err(TryRecvError::MuxError)?,
                         )
                         .map_err(TryRecvError::MuxError)?;
