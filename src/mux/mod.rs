@@ -676,11 +676,8 @@ impl IpcReceiverOrMultiReceiverSet {
                     Err(ipc_channel::TryRecvError::Empty) => return Err(TryRecvError::Empty),
                 }
             },
-            IpcReceiverOrMultiReceiverSet::MultiReceiverSet(multi_receiver_set) => {
-                match MultiReceiverSet::try_select(multi_receiver_set) {
-                    Ok(()) => return Err(TryRecvError::Handled),
-                    Err(e) => return Err(e),
-                }
+            IpcReceiverOrMultiReceiverSet::MultiReceiverSet(_) => {
+                unimplemented!();
             },
         }
     }
@@ -836,11 +833,12 @@ impl MultiReceiver {
             .unwrap()
             .ipc_receiver_or_multi_receiver_set
             .multi_receiver_set();
-        if let Some(multi_receiver_set) = maybe_mrs {
-            match MultiReceiverSet::try_select(&multi_receiver_set) {
-                Ok(()) => return Ok(()),
-                Err(e) => return Err(e),
-            }
+        if maybe_mrs.is_some() {
+            // No need to attempt to receive messages because
+            // SubChannelReceiver::drop in this case can only occur
+            // when the router is shutting down, in which case
+            // message receiving is irrelevant.
+            return Err(TryRecvError::Empty);
         }
         let result = mr
             .mutator
@@ -2024,40 +2022,6 @@ impl MultiReceiverSet {
                 },
                 Err(ipc_channel::TrySelectError::IoError(e)) => {
                     return Err(e.into());
-                },
-            }
-        }
-        Ok(())
-    }
-
-    // Obtain zero or more incoming messages and handle them.
-    #[instrument(level = "trace", ret, err(level = "trace"))]
-    fn try_select(mrs: &Arc<Mutex<MultiReceiverSet>>) -> Result<(), TryRecvError> {
-        let mut mrs_mut = mrs.lock().unwrap();
-        let results = mrs_mut.ipc_receiver_set.try_select().map_err(|e| match e {
-            ipc_channel::TrySelectError::Empty => TryRecvError::Empty,
-            ipc_channel::TrySelectError::IoError(e) => TryRecvError::MuxError(e.into()),
-        })?;
-        log::trace!(
-            "MultiReceiverSet::select processing {} results",
-            results.len()
-        );
-        for result in results {
-            match result {
-                IpcSelectionResult::MessageReceived(id, ipc_message) => {
-                    if let Some(multi_receiver) = mrs_mut.multi_receivers.get(&id) {
-                        MultiReceiver::handle(
-                            Arc::clone(multi_receiver),
-                            ipc_message
-                                .to()
-                                .map_err(|e| MuxError::IpcError(IpcError::SerializationError(e)))
-                                .map_err(TryRecvError::MuxError)?,
-                        )
-                        .map_err(TryRecvError::MuxError)?;
-                    }
-                },
-                IpcSelectionResult::ChannelClosed(id) => {
-                    mrs_mut.multi_receivers.remove(&id);
                 },
             }
         }
