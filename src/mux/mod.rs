@@ -818,7 +818,6 @@ impl MultiReceiver {
         SubChannelReceiver {
             multi_receiver: Arc::clone(mr),
             sub_channel_id,
-            ipc_receiver_uuid: mr.ipc_receiver_uuid,
             channel: rx,
         }
     }
@@ -1439,7 +1438,6 @@ struct SubChannelSenderIds {
 struct SubChannelReceiver {
     multi_receiver: Arc<MultiReceiver>,
     sub_channel_id: SubChannelId,
-    ipc_receiver_uuid: Uuid,
     channel: Receiver<ResolvedMessageOrDisconnect>,
 }
 
@@ -1497,7 +1495,6 @@ impl fmt::Debug for SubChannelReceiver {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SubChannelReceiver")
             .field("sub_channel_id", &self.sub_channel_id)
-            .field("ipc_receiver_uuid", &self.ipc_receiver_uuid)
             .finish_non_exhaustive()
     }
 }
