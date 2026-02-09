@@ -22,8 +22,8 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::mux::{
-    self, MuxError, OpaqueSubReceiver, RawMessage, SubReceiver, SubReceiverSet, SubSelectionResult,
-    SubSender,
+    self, MuxError, OpaqueSubReceiver2, RawMessage, SubReceiver2, SubReceiverSet,
+    SubSelectionResult, SubSender,
 };
 
 /// Global object wrapping a `RouterProxy`.
@@ -52,7 +52,7 @@ impl RouterProxy {
         // receiver ends.
         // Router proxy takes both sending ends.
         let (msg_sender, msg_receiver) = crossbeam_channel::unbounded();
-        let chan = mux::Channel::new().unwrap();
+        let chan = mux::Channel2::new().unwrap();
         let (wakeup_sender, wakeup_receiver) = chan.sub_channel();
         let handle = thread::Builder::new()
             .name("router-proxy".to_string())
@@ -71,7 +71,7 @@ impl RouterProxy {
     /// Create a new `RouterChannel`, which is used to construct routed subchannels.
     pub fn new_router_channel(proxy: &Arc<RouterProxy>) -> Result<RouterChannel, MuxError> {
         Ok(RouterChannel {
-            chan: mux::Channel::new()?,
+            chan: mux::Channel2::new()?,
             proxy: proxy.clone(),
         })
     }
@@ -83,7 +83,7 @@ impl RouterProxy {
     /// mismatches between the receiver and callback types.
     fn add_route(
         &self,
-        subreceiver: OpaqueSubReceiver,
+        subreceiver: OpaqueSubReceiver2,
         callback: RouterHandler,
     ) -> Result<(), RouterError> {
         let comm = self.comm.lock().unwrap();
@@ -104,7 +104,7 @@ impl RouterProxy {
     /// that `subreceiver` and `callback` use the same message type.
     fn add_typed_route<T>(
         &self,
-        subreceiver: SubReceiver<T>,
+        subreceiver: SubReceiver2<T>,
         mut callback: TypedRouterHandler<T>,
     ) -> Result<(), RouterError>
     where
@@ -122,7 +122,7 @@ impl RouterProxy {
     /// A convenience function to route an `SubReceiver<T>` to an existing `Sender<T>`.
     fn route_subreceiver_to_crossbeam_sender<T>(
         &self,
-        subreceiver: SubReceiver<T>,
+        subreceiver: SubReceiver2<T>,
         crossbeam_sender: Sender<T>,
     ) -> Result<(), RouterError>
     where
@@ -138,7 +138,7 @@ impl RouterProxy {
     /// use of a `Router`.
     fn route_subreceiver_to_new_crossbeam_receiver<T>(
         &self,
-        subreceiver: SubReceiver<T>,
+        subreceiver: SubReceiver2<T>,
     ) -> Result<Receiver<T>, RouterError>
     where
         T: for<'de> Deserialize<'de> + Serialize + Send + 'static,
@@ -185,7 +185,7 @@ impl RouterProxy {
 /// sharing an underlying IPC channel with non-routed subchannels, which would give rise to
 /// liveness and fairness issues.
 pub struct RouterChannel {
-    chan: mux::Channel,
+    chan: mux::Channel2,
     proxy: Arc<RouterProxy>,
 }
 
@@ -265,7 +265,7 @@ struct Router {
 }
 
 impl Router {
-    fn new(msg_receiver: Receiver<RouterMsg>, wakeup_receiver: SubReceiver<()>) -> Router {
+    fn new(msg_receiver: Receiver<RouterMsg>, wakeup_receiver: SubReceiver2<()>) -> Router {
         let mut subreceiver_set = SubReceiverSet::new().unwrap();
         let msg_wakeup_id = subreceiver_set.add(wakeup_receiver).unwrap();
         Router {
@@ -327,7 +327,7 @@ impl Router {
 enum RouterMsg {
     /// Register the receiver OpaqueSubReceiver for listening for events on.
     /// When a message comes from this receiver, call RouterHandler.
-    AddRoute(OpaqueSubReceiver, RouterHandler),
+    AddRoute(OpaqueSubReceiver2, RouterHandler),
     /// Shutdown the router, providing a sender to send an acknowledgement.
     Shutdown(Sender<()>),
 }
