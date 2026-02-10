@@ -1009,6 +1009,58 @@ impl Demuxer {
             },
         }
     }
+
+    fn send(
+        self: &mut Demuxer,
+        scid: SubChannelId,
+        payload: Vec<u8>,
+        ipc_senders: &[(SubChannelId, IpcSenderAndOrId)],
+        mr_clone: Arc<MultiReceiver2>,
+    ) -> Result<(), MuxError> {
+        let srs = Demuxer::process_results(
+            ipc_senders
+                .iter()
+                .map(|(scid, s)| (*scid, self.ipcsender_from_sender_and_or_id(s)))
+                .collect(),
+        );
+        if let Ok(srs) = srs {
+            if let Some(sm) = self.sub_channels.get(&scid) {
+                let sent = sm.send(
+                    ResolvedMessageOrDisconnect::ResolvedMessageWithDeserializationContext(
+                        ResolvedMessageWithDeserializationContext {
+                            resolved_message: ResolvedMessage {
+                                scid,
+                                payload,
+                                senders: srs,
+                            },
+                            multi_receiver: mr_clone,
+                        },
+                    ),
+                );
+                if let Some(result) = sent {
+                    result.map_err(|_| MuxError::Disconnected)
+                } else {
+                    Err(MuxError::Disconnected)
+                }
+            } else {
+                // Send ReceiveFailed to members of srs
+                // TODO: Need to test this path
+                for (recv_scid, recv_multi_sender) in srs {
+                    {
+                        let _ = recv_multi_sender.lock().unwrap().ipc_sender.send(
+                            MultiMessage::ReceiveFailed {
+                                scid: recv_scid,
+                                via: scid,
+                            },
+                        );
+                    }
+                }
+                Err(MuxError::Disconnected)
+            }
+        } else {
+            srs.map(|_| ())
+        }
+    }
 }
 
 thread_local! {
@@ -1272,51 +1324,7 @@ impl MultiReceiver2 {
         let demuxer = &mut mr.receiver_demuxer.lock().unwrap().demuxer;
         let mr_clone = Arc::clone(&mr);
         if let MultiMessage::Data(scid, payload, ipc_senders) = msg {
-            let srs: IdSenders = Demuxer::process_results(
-                ipc_senders
-                    .iter()
-                    .map(|(scid, s)| (*scid, demuxer.ipcsender_from_sender_and_or_id(s)))
-                    .collect(),
-            )?;
-
-            let result: Option<Result<(), mpsc::SendError<ResolvedMessageOrDisconnect>>> =
-                if let Some(sm) = demuxer.sub_channels.get(&scid) {
-                    sm.send(
-                        ResolvedMessageOrDisconnect::ResolvedMessageWithDeserializationContext(
-                            ResolvedMessageWithDeserializationContext {
-                                resolved_message: ResolvedMessage {
-                                    scid,
-                                    payload,
-                                    senders: srs,
-                                },
-                                multi_receiver: mr_clone,
-                            },
-                        ),
-                    )
-                } else {
-                    // Send ReceiveFailed to members of srs
-                    // TODO: Need to test this path
-                    for (recv_scid, recv_multi_sender) in srs {
-                        {
-                            let _ = recv_multi_sender.lock().unwrap().ipc_sender.send(
-                                MultiMessage::ReceiveFailed {
-                                    scid: recv_scid,
-                                    via: scid,
-                                },
-                            );
-                        }
-                    }
-                    Err(MuxError::InternalError(format!(
-                        "invalid subchannel id {}",
-                        scid
-                    )))?
-                };
-
-            if let Some(Ok(())) = result {
-                Ok(())
-            } else {
-                Err(MuxError::Disconnected)
-            }
+            demuxer.send(scid, payload, &ipc_senders, mr_clone)
         } else {
             demuxer.handle(msg)
         }
