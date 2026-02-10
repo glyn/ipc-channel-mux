@@ -2277,36 +2277,10 @@ impl OneShotMultiServer {
 /// (and exclusive) endpoint for receiving messages on any of the added
 /// subchannels.
 ///
-/// # Examples
+/// This type is not exposed on the crate API because of various restrictions.
+/// For example, a `SubReceiverSet` cannot contain a `SubReceiver` which shares
+/// an IPC channel with a `SubReceiver` not in a `SubReceiverSet`.
 ///
-/// ```
-/// # use ipc_channel_mux::mux::{self, RawMessage, SubReceiverSet, SubSelectionResult};
-/// let data = vec![0x52, 0x75, 0x73, 0x74, 0x00];
-/// let channel = mux::Channel2::new().unwrap();
-/// let (tx, rx) = channel.sub_channel();
-/// let mut rx_set = SubReceiverSet::new().unwrap();
-///
-/// // Add the receiver to the receiver set and send the data
-/// // from the sender
-/// let rx_id = rx_set.add(rx).unwrap();
-/// tx.send(data.clone()).unwrap();
-///
-/// // Poll the receiver set for any readable events
-/// for event in rx_set.select().unwrap() {
-///     match event {
-///         SubSelectionResult::MessageReceived(id, message) => {
-///             let rx_data: Vec<u8> = message.to().unwrap();
-///             assert_eq!(id, rx_id);
-///             assert_eq!(data, rx_data);
-///             println!("Received: {:?} from {}", data, id);
-///         },
-///         SubSelectionResult::ChannelClosed(id) => {
-///             assert_eq!(id, rx_id);
-///             println!("No more data from {}", id);
-///         }
-///     }
-/// }
-/// ```
 /// [SubReceiver]: struct.SubReceiver.html
 #[derive(Debug)]
 pub struct SubReceiverSet {
