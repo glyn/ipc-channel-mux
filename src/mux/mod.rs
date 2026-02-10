@@ -723,9 +723,11 @@ struct ResolvedMessage {
     scid: SubChannelId,
     payload: Vec<u8>,
     senders: VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>)>,
-    // The following field is None for a directly received message
-    // and Some(...) for a message received via IpcReceiverSet.
-    multi_receiver: Option<MultiReceiverRef>,
+}
+
+struct ResolvedMessageWithDeserializationContext {
+    resolved_message: ResolvedMessage,
+    multi_receiver: Arc<MultiReceiver2>,
 }
 
 #[derive(Debug)]
@@ -906,6 +908,7 @@ impl
 
 enum ResolvedMessageOrDisconnect {
     ResolvedMessage(ResolvedMessage),
+    ResolvedMessageWithDeserializationContext(ResolvedMessageWithDeserializationContext),
     Disconnect(SubChannelId),
 }
 
@@ -1043,7 +1046,6 @@ impl MultiReceiver {
                                 scid,
                                 payload,
                                 senders: srs,
-                                multi_receiver: None,
                             },
                         ))
                     } else {
@@ -1334,14 +1336,18 @@ impl MultiReceiver2 {
                         .sub_channels
                         .get(&scid)
                     {
-                        sm.send(ResolvedMessageOrDisconnect::ResolvedMessage(
-                            ResolvedMessage {
-                                scid,
-                                payload,
-                                senders: srs,
-                                multi_receiver: Some(MultiReceiverRef::MultiReceiver2(mr_clone)),
-                            },
-                        ))
+                        sm.send(
+                            ResolvedMessageOrDisconnect::ResolvedMessageWithDeserializationContext(
+                                ResolvedMessageWithDeserializationContext {
+                                    resolved_message: ResolvedMessage {
+                                        scid,
+                                        payload,
+                                        senders: srs,
+                                    },
+                                    multi_receiver: mr_clone,
+                                },
+                            ),
+                        )
                     } else {
                         // Send ReceiveFailed to members of srs
                         // TODO: Need to test this path
@@ -1968,7 +1974,6 @@ impl Drop for SubChannelReceiver {
             scid: via,
             payload: _,
             senders: scids_and_multi_senders,
-            multi_receiver: _,
         })) = self.channel.try_recv()
         {
             log::trace!(
@@ -2018,12 +2023,17 @@ impl Drop for SubChannelReceiver2 {
 
         // Drain the SubChannelReceiver and mark any subsenders as "receive failed". This is equivalent to receiving and then dropping
         // the subsenders.
-        while let Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
-            scid: via,
-            payload: _,
-            senders: scids_and_multi_senders,
-            multi_receiver: _,
-        })) = self.channel.try_recv()
+        while let Ok(ResolvedMessageOrDisconnect::ResolvedMessageWithDeserializationContext(
+            ResolvedMessageWithDeserializationContext {
+                resolved_message:
+                    ResolvedMessage {
+                        scid: via,
+                        payload: _,
+                        senders: scids_and_multi_senders,
+                    },
+                multi_receiver: _,
+            },
+        )) = self.channel.try_recv()
         {
             log::trace!(
                 "SubChannelReceiver::drop draining = {:#?}",
@@ -2081,7 +2091,6 @@ impl SubChannelReceiver {
                     scid,
                     payload,
                     senders: multi_senders,
-                    multi_receiver: _,
                 })) => {
                     log::trace!("SubChannelReceiver::recv received = {:#?}", payload);
 
@@ -2464,17 +2473,22 @@ impl SubReceiverSet {
         // TODO: relax the current restriction of returning at most one SubSelectionResult.
         loop {
             match self.rx.try_recv() {
-                Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
-                    scid,
-                    payload,
-                    senders,
-                    multi_receiver: Some(multi_receiver),
-                })) => {
+                Ok(ResolvedMessageOrDisconnect::ResolvedMessageWithDeserializationContext(
+                    ResolvedMessageWithDeserializationContext {
+                        resolved_message:
+                            ResolvedMessage {
+                                scid,
+                                payload,
+                                senders,
+                            },
+                        multi_receiver,
+                    },
+                )) => {
                     let id = self.ids.get(&scid).unwrap();
                     return Ok(vec![SubSelectionResult::MessageReceived(
                         *id,
                         RawMessage {
-                            multi_receiver,
+                            multi_receiver: MultiReceiverRef::MultiReceiver2(multi_receiver),
                             payload,
                             senders,
                             scid,
