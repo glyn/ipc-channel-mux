@@ -1010,7 +1010,6 @@ impl MultiReceiver {
     #[instrument(level = "debug", ret, err(level = "debug"))]
     #[allow(clippy::too_many_lines)]
     fn handle(mr: Arc<MultiReceiver>, msg: MultiMessage) -> Result<(), MuxError> {
-        let mr_clone = Arc::clone(&mr);
         match msg {
             MultiMessage::Connect(sender, client_id) => {
                 mr.receiver_demuxer
@@ -1044,7 +1043,7 @@ impl MultiReceiver {
                                 scid,
                                 payload,
                                 senders: srs,
-                                multi_receiver: Some(MultiReceiverRef::MultiReceiver(mr_clone)),
+                                multi_receiver: None,
                             },
                         ))
                     } else {
