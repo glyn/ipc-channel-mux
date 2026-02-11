@@ -705,7 +705,7 @@ struct ReceiverDemuxer {
     // When receiving from the IPC receiver, the Demuxer must be locked to
     // ensure messages are received in order.
     ipc_receiver_or_multi_receiver_set: IpcReceiverOrMultiReceiverSet,
-    demuxer: Demuxer,
+    demuxer: Arc<Demuxer>,
 }
 
 #[derive(Debug)]
@@ -713,7 +713,7 @@ struct ReceiverDemuxer2 {
     // When receiving from the IPC receiver, the Demuxer must be locked to
     // ensure messages are received in order.
     ipc_receiver_or_multi_receiver_set: IpcReceiverOrMultiReceiverSet,
-    demuxer: Demuxer,
+    demuxer: Arc<Demuxer>,
 }
 
 unsafe impl Send for MultiReceiver {}
@@ -722,7 +722,7 @@ unsafe impl Sync for MultiReceiver {}
 struct ResolvedMessage {
     scid: SubChannelId,
     payload: Vec<u8>,
-    senders: VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>)>,
+    senders: VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>, Uuid, Arc<SubSenderTracker<dyn Fn() + Send + Sync>>)>,
 }
 
 struct ResolvedMessageWithDeserializationContext {
@@ -869,12 +869,36 @@ impl Demuxer {
                 let srs: IdSenders = Self::process_results(
                     ipc_senders
                         .iter()
-                        .map(|(scid, s)| (*scid, Self::ipcsender_from_sender_and_or_id(self, s)))
+                        .map(|(scid, s)| {
+                            let ipc_sender = Self::ipcsender_from_sender_and_or_id(self, s).unwrap();
+                            let i = ipc_sender.lock().unwrap().ipc_sender;
+                            let disc = if let Some(disc) = self.disconnectors.get(scid) {
+                        disc
+                    } else {
+                        let disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync>> =
+                            Arc::new(SubSenderTracker::new(Box::new(move || {
+                                let d = SubChannelDisconnector {
+                                    sub_channel_id: *scid,
+                                    ipc_sender: i.clone(),
+                                    source: new_source,
+                                    multi_sender: ipc_sender.clone(),
+                                };
+                                d.dropped();
+                            })));
+                        self
+                            .disconnectors
+                            .insert(*scid, Arc::clone(&disconnector));
+                        disconnector
+                    };
+
+                            (*scid, ipc_sender, self.disconnectors.get(scid))
+                        }) // TODO: optionally build disconnector here
                         .collect(),
                 )?;
 
                 let result: Option<Result<(), mpsc::SendError<ResolvedMessageOrDisconnect>>> =
                     if let Some(sm) = self.sub_channels.get(&scid) {
+                        self.disconnectors.get(key)
                         sm.send(ResolvedMessageOrDisconnect::ResolvedMessage(
                             ResolvedMessage {
                                 scid,
@@ -1064,22 +1088,74 @@ impl Demuxer {
 }
 
 thread_local! {
-    static IPC_SENDERS_RECEIVED: Mutex<VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>)>> = const { Mutex::new(VecDeque::new()) };
+    static IPC_SENDERS_RECEIVED: Mutex<VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>, Uuid, Arc<SubSenderTracker<dyn Fn() + Send + Sync>>)>> = const { Mutex::new(VecDeque::new()) };
     static CURRENT_MULTI_RECEIVER: Mutex<Option<MultiReceiverRef>> = const { Mutex::new(None) };
     static VIA: Mutex<SubChannelId> = const { Mutex::new(EMPTY_SUBCHANNEL_ID) };
 }
 
+/*
+        let disc = CURRENT_MULTI_RECEIVER.with(|maybe_mr| {
+            let maybe_mr = maybe_mr.lock().unwrap();
+            let mr = maybe_mr.as_ref().expect("CURRENT_MULTI_RECEIVER not set");
+            match mr {
+                MultiReceiverRef::MultiReceiver(multi_receiver) => {
+                    let mut mutator = multi_receiver.receiver_demuxer.lock().unwrap();
+                    if let Some(disc) = mutator.demuxer.disconnectors.get(&scsi.sub_channel_id) {
+                        disc
+                    } else {
+                        let disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync>> =
+                            Arc::new(SubSenderTracker::new(Box::new(move || {
+                                let d = SubChannelDisconnector {
+                                    sub_channel_id: scsi.sub_channel_id,
+                                    ipc_sender: ipc_sender_clone.clone(),
+                                    source: new_source,
+                                    multi_sender: multi_sender_clone.clone(),
+                                };
+                                d.dropped();
+                            })));
+                        mutator
+                            .demuxer
+                            .disconnectors
+                            .insert(scsi.sub_channel_id, Arc::clone(&disconnector));
+                        disconnector
+                    }
+                },
+                MultiReceiverRef::MultiReceiver2(multi_receiver2) => {
+                    let mut mutator = multi_receiver2.receiver_demuxer.lock().unwrap();
+                    if let Some(disc) = mutator.demuxer.disconnectors.get(&scsi.sub_channel_id) {
+                        disc
+                    } else {
+                        let disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync>> =
+                            Arc::new(SubSenderTracker::new(Box::new(move || {
+                                let d = SubChannelDisconnector {
+                                    sub_channel_id: scsi.sub_channel_id,
+                                    ipc_sender: ipc_sender_clone.clone(),
+                                    source: new_source,
+                                    multi_sender: multi_sender_clone.clone(),
+                                };
+                                d.dropped();
+                            })));
+                        mutator
+                            .demuxer
+                            .disconnectors
+                            .insert(scsi.sub_channel_id, Arc::clone(&disconnector));
+                        disconnector
+                    }
+                },
+            }
+        });
+
+
+*/
+
 fn establish_deserialization_context(
     mr: MultiReceiverRef,
-    mut multi_senders: VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>)>,
+    mut multi_senders: VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>, Uuid, Arc<SubSenderTracker<dyn Fn() + Send + Sync>>)>,
     via: SubChannelId,
 ) {
     IPC_SENDERS_RECEIVED.with(|senders| {
         senders.lock().unwrap().clear();
         senders.lock().unwrap().append(&mut multi_senders);
-    });
-    CURRENT_MULTI_RECEIVER.with(|multi_receiver| {
-        multi_receiver.lock().unwrap().replace(mr);
     });
     VIA.with(|via_val| {
         let mut v = via_val.lock().unwrap();
@@ -1091,9 +1167,6 @@ fn clear_deserialization_context() {
     VIA.with(|via| {
         let mut v = via.lock().unwrap();
         *v = EMPTY_SUBCHANNEL_ID;
-    });
-    CURRENT_MULTI_RECEIVER.with(|multi_receiver| {
-        multi_receiver.lock().unwrap().take();
     });
     IPC_SENDERS_RECEIVED.with(|senders| {
         senders.lock().unwrap().clear();
@@ -1550,19 +1623,8 @@ impl<'de> Deserialize<'de> for SubChannelSender {
             })
             .map_err(serde::de::Error::custom::<MuxError>)?;
 
-        let new_source = CURRENT_MULTI_RECEIVER.with(|maybe_mr| {
-            match maybe_mr
-                .lock()
-                .unwrap()
-                .as_ref()
-                .expect("CURRENT_MULTI_RECEIVER not set")
-            {
-                MultiReceiverRef::MultiReceiver(multi_receiver) => multi_receiver.ipc_receiver_uuid,
-                MultiReceiverRef::MultiReceiver2(multi_receiver2) => {
-                    multi_receiver2.ipc_receiver_uuid
-                },
-            }
-        });
+                let new_source = multi_sender.2;
+
 
         let via = VIA.with(|via| *via.lock().unwrap());
 
@@ -1578,60 +1640,7 @@ impl<'de> Deserialize<'de> for SubChannelSender {
             })
             .unwrap();
 
-        let ipc_sender_clone = multi_sender.1.lock().unwrap().ipc_sender.clone();
-        let multi_sender_clone = multi_sender.1.clone();
-
-        let disc = CURRENT_MULTI_RECEIVER.with(|maybe_mr| {
-            let maybe_mr = maybe_mr.lock().unwrap();
-            let mr = maybe_mr.as_ref().expect("CURRENT_MULTI_RECEIVER not set");
-            match mr {
-                MultiReceiverRef::MultiReceiver(multi_receiver) => {
-                    let mut mutator = multi_receiver.receiver_demuxer.lock().unwrap();
-                    if let Some(disc) = mutator.demuxer.disconnectors.get(&scsi.sub_channel_id) {
-                        disc
-                    } else {
-                        let disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync>> =
-                            Arc::new(SubSenderTracker::new(Box::new(move || {
-                                let d = SubChannelDisconnector {
-                                    sub_channel_id: scsi.sub_channel_id,
-                                    ipc_sender: ipc_sender_clone.clone(),
-                                    source: new_source,
-                                    multi_sender: multi_sender_clone.clone(),
-                                };
-                                d.dropped();
-                            })));
-                        mutator
-                            .demuxer
-                            .disconnectors
-                            .insert(scsi.sub_channel_id, Arc::clone(&disconnector));
-                        disconnector
-                    }
-                },
-                MultiReceiverRef::MultiReceiver2(multi_receiver2) => {
-                    let mut mutator = multi_receiver2.receiver_demuxer.lock().unwrap();
-                    if let Some(disc) = mutator.demuxer.disconnectors.get(&scsi.sub_channel_id) {
-                        disc
-                    } else {
-                        let disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync>> =
-                            Arc::new(SubSenderTracker::new(Box::new(move || {
-                                let d = SubChannelDisconnector {
-                                    sub_channel_id: scsi.sub_channel_id,
-                                    ipc_sender: ipc_sender_clone.clone(),
-                                    source: new_source,
-                                    multi_sender: multi_sender_clone.clone(),
-                                };
-                                d.dropped();
-                            })));
-                        mutator
-                            .demuxer
-                            .disconnectors
-                            .insert(scsi.sub_channel_id, Arc::clone(&disconnector));
-                        disconnector
-                    }
-                },
-            }
-        });
-
+        let disc = multi_sender.3;
         let ipc_sender = Arc::clone(&multi_sender.1.lock().unwrap().ipc_sender);
         let ipc_sender_uuid = multi_sender.1.lock().unwrap().uuid;
 
