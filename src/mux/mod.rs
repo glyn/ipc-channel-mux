@@ -858,7 +858,7 @@ impl std::fmt::Debug for Demuxer {
 impl Demuxer {
     #[instrument(level = "debug", ret, err(level = "debug"))]
     #[allow(clippy::too_many_lines)]
-    fn handle(self: &mut Demuxer, msg: MultiMessage) -> Result<(), MuxError> {
+    fn handle(self: &mut Demuxer, msg: MultiMessage, multi_receiver_uuid: Uuid) -> Result<(), MuxError> {
         match msg {
             MultiMessage::Connect(sender, client_id) => {
                 self.ipc_senders.insert(client_id, sender);
@@ -866,7 +866,7 @@ impl Demuxer {
             },
 
             MultiMessage::Data(scid, payload, ipc_senders) => {
-                let srs: IdSenders = Self::process_results(
+                let srs = Self::process_results(
                     ipc_senders
                         .iter()
                         .map(|(scid, s)| {
@@ -880,7 +880,7 @@ impl Demuxer {
                                 let d = SubChannelDisconnector {
                                     sub_channel_id: *scid,
                                     ipc_sender: i.clone(),
-                                    source: new_source,
+                                    source: multi_receiver_uuid,
                                     multi_sender: ipc_sender.clone(),
                                 };
                                 d.dropped();
@@ -891,8 +891,8 @@ impl Demuxer {
                         disconnector
                     };
 
-                            (*scid, ipc_sender, self.disconnectors.get(scid))
-                        }) // TODO: optionally build disconnector here
+                            (*scid, ipc_sender, multi_receiver_uuid, self.disconnectors.get(scid))
+                        })
                         .collect(),
                 )?;
 
@@ -1193,7 +1193,7 @@ enum ResolvedMessageOrDisconnect {
     Disconnect(SubChannelId),
 }
 
-type IdSenders = VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>)>;
+type IdSenders = VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>, Uuid, Arc<SubSenderTracker<dyn Fn() + Send + Sync>>)>;
 
 type IdSenderResults = VecDeque<(SubChannelId, Result<Arc<Mutex<MultiSender>>, MuxError>)>;
 
@@ -1272,7 +1272,7 @@ impl MultiReceiver {
                 .lock()
                 .unwrap()
                 .demuxer
-                .handle(msg)
+                .handle(msg, mr.ipc_receiver_uuid)
                 .map_err(TryRecvError::MuxError),
             Err(TryRecvError::Empty) => {
                 mr.poll();
