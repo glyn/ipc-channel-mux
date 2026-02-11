@@ -691,13 +691,13 @@ impl MultiSender {
 #[derive(Debug)]
 struct MultiReceiver {
     ipc_receiver_uuid: Uuid,
-    receiver_demuxer: Mutex<ReceiverDemuxer>,
+    receiver_demuxer: ReceiverDemuxer,
 }
 
 #[derive(Debug)]
 struct MultiReceiver2 {
     ipc_receiver_uuid: Uuid,
-    receiver_demuxer: Mutex<ReceiverDemuxer2>,
+    receiver_demuxer: ReceiverDemuxer2,
 }
 
 #[derive(Debug)]
@@ -705,15 +705,15 @@ struct ReceiverDemuxer {
     // When receiving from the IPC receiver, the Demuxer must be locked to
     // ensure messages are received in order.
     ipc_receiver_or_multi_receiver_set: IpcReceiverOrMultiReceiverSet,
-    demuxer: Arc<Demuxer>,
+    demuxer: Arc<Mutex<Demuxer>>,
 }
 
 #[derive(Debug)]
 struct ReceiverDemuxer2 {
     // When receiving from the IPC receiver, the Demuxer must be locked to
     // ensure messages are received in order.
-    ipc_receiver_or_multi_receiver_set: IpcReceiverOrMultiReceiverSet,
-    demuxer: Arc<Demuxer>,
+    ipc_receiver_or_multi_receiver_set: Mutex<IpcReceiverOrMultiReceiverSet>,
+    demuxer: Arc<Mutex<Demuxer>>,
 }
 
 unsafe impl Send for MultiReceiver {}
@@ -722,7 +722,12 @@ unsafe impl Sync for MultiReceiver {}
 struct ResolvedMessage {
     scid: SubChannelId,
     payload: Vec<u8>,
-    senders: VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>, Uuid, Arc<SubSenderTracker<dyn Fn() + Send + Sync>>)>,
+    senders: VecDeque<(
+        SubChannelId,
+        Arc<Mutex<MultiSender>>,
+        Uuid,
+        Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
+    )>,
 }
 
 struct ResolvedMessageWithDeserializationContext {
@@ -858,7 +863,11 @@ impl std::fmt::Debug for Demuxer {
 impl Demuxer {
     #[instrument(level = "debug", ret, err(level = "debug"))]
     #[allow(clippy::too_many_lines)]
-    fn handle(self: &mut Demuxer, msg: MultiMessage, multi_receiver_uuid: Uuid) -> Result<(), MuxError> {
+    fn handle(
+        self: &mut Demuxer,
+        msg: MultiMessage,
+        multi_receiver_uuid: Uuid,
+    ) -> Result<(), MuxError> {
         match msg {
             MultiMessage::Connect(sender, client_id) => {
                 self.ipc_senders.insert(client_id, sender);
@@ -866,39 +875,49 @@ impl Demuxer {
             },
 
             MultiMessage::Data(scid, payload, ipc_senders) => {
-                let srs = Self::process_results(
-                    ipc_senders
-                        .iter()
-                        .map(|(scid, s)| {
-                            let ipc_sender = Self::ipcsender_from_sender_and_or_id(self, s).unwrap();
-                            let i = ipc_sender.lock().unwrap().ipc_sender;
-                            let disc = if let Some(disc) = self.disconnectors.get(scid) {
-                        disc
-                    } else {
-                        let disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync>> =
-                            Arc::new(SubSenderTracker::new(Box::new(move || {
+                let srs: VecDeque<(
+                    SubChannelId,
+                    Arc<Mutex<MultiSender>>,
+                    Uuid,
+                    Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
+                )> = ipc_senders
+                    .clone()
+                    .iter()
+                    .map(|(scid, s)| {
+                        let ipc_sender = Self::ipcsender_from_sender_and_or_id(self, s).unwrap();
+                        let i = {
+                            let l = ipc_sender.lock().unwrap();
+                            l.ipc_sender.clone()
+                        };
+                        let j = ipc_sender.clone();
+                        let disc = if let Some(disc) = self.disconnectors.get(scid) {
+                            disc
+                        } else {
+                            let scid_clone = scid.clone();
+                            let ipc_sender_clone = i.clone();
+                            let source_clone = multi_receiver_uuid.clone();
+                            let multi_sender_clone = ipc_sender.clone();
+                            let disconnector: Arc<
+                                SubSenderTracker<dyn Fn() + Send + Sync + 'static>,
+                            > = Arc::new(SubSenderTracker::new(Box::new(move || {
                                 let d = SubChannelDisconnector {
-                                    sub_channel_id: *scid,
-                                    ipc_sender: i.clone(),
-                                    source: multi_receiver_uuid,
-                                    multi_sender: ipc_sender.clone(),
+                                    sub_channel_id: scid_clone,
+                                    ipc_sender: ipc_sender_clone.clone(),
+                                    source: source_clone,
+                                    multi_sender: multi_sender_clone.clone(),
                                 };
                                 d.dropped();
                             })));
-                        self
-                            .disconnectors
-                            .insert(*scid, Arc::clone(&disconnector));
-                        disconnector
-                    };
+                            self.disconnectors.insert(*scid, Arc::clone(&disconnector));
+                            disconnector.clone()
+                        };
 
-                            (*scid, ipc_sender, multi_receiver_uuid, self.disconnectors.get(scid))
-                        })
-                        .collect(),
-                )?;
+                        (*scid, j, multi_receiver_uuid, disc)
+                    })
+                    .collect();
 
                 let result: Option<Result<(), mpsc::SendError<ResolvedMessageOrDisconnect>>> =
                     if let Some(sm) = self.sub_channels.get(&scid) {
-                        self.disconnectors.get(key)
                         sm.send(ResolvedMessageOrDisconnect::ResolvedMessage(
                             ResolvedMessage {
                                 scid,
@@ -909,7 +928,7 @@ impl Demuxer {
                     } else {
                         // Send ReceiveFailed to members of srs
                         // TODO: Need to test this path
-                        for (recv_scid, recv_multi_sender) in srs {
+                        for (recv_scid, recv_multi_sender, _, _) in srs {
                             {
                                 let _ = recv_multi_sender.lock().unwrap().ipc_sender.send(
                                     MultiMessage::ReceiveFailed {
@@ -999,9 +1018,9 @@ impl Demuxer {
     }
 
     fn process_results(results: IdSenderResults) -> Result<IdSenders, MuxError> {
-        let mut srs: VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>)> = VecDeque::new();
-        for (scid, res) in results {
-            srs.push_back((scid, res?));
+        let mut srs: IdSenders = VecDeque::new();
+        for (scid, res, uuid, disc) in results {
+            srs.push_back((scid, res?, uuid, disc));
         }
         Ok(srs)
     }
@@ -1044,7 +1063,14 @@ impl Demuxer {
         let srs = Demuxer::process_results(
             ipc_senders
                 .iter()
-                .map(|(scid, s)| (*scid, self.ipcsender_from_sender_and_or_id(s)))
+                .map(|(scid, s)| {
+                    (
+                        *scid,
+                        self.ipcsender_from_sender_and_or_id(s),
+                        mr_clone.ipc_receiver_uuid,
+                        self.disconnectors.get(scid).unwrap(), // FIXME: can this panic?
+                    )
+                })
                 .collect(),
         );
         if let Ok(srs) = srs {
@@ -1069,7 +1095,7 @@ impl Demuxer {
             } else {
                 // Send ReceiveFailed to members of srs
                 // TODO: Need to test this path
-                for (recv_scid, recv_multi_sender) in srs {
+                for (recv_scid, recv_multi_sender, _, _) in srs {
                     {
                         let _ = recv_multi_sender.lock().unwrap().ipc_sender.send(
                             MultiMessage::ReceiveFailed {
@@ -1150,7 +1176,12 @@ thread_local! {
 
 fn establish_deserialization_context(
     mr: MultiReceiverRef,
-    mut multi_senders: VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>, Uuid, Arc<SubSenderTracker<dyn Fn() + Send + Sync>>)>,
+    mut multi_senders: VecDeque<(
+        SubChannelId,
+        Arc<Mutex<MultiSender>>,
+        Uuid,
+        Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
+    )>,
     via: SubChannelId,
 ) {
     IPC_SENDERS_RECEIVED.with(|senders| {
@@ -1193,9 +1224,19 @@ enum ResolvedMessageOrDisconnect {
     Disconnect(SubChannelId),
 }
 
-type IdSenders = VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>, Uuid, Arc<SubSenderTracker<dyn Fn() + Send + Sync>>)>;
+type IdSenders = VecDeque<(
+    SubChannelId,
+    Arc<Mutex<MultiSender>>,
+    Uuid,
+    Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
+)>;
 
-type IdSenderResults = VecDeque<(SubChannelId, Result<Arc<Mutex<MultiSender>>, MuxError>)>;
+type IdSenderResults = VecDeque<(
+    SubChannelId,
+    Result<Arc<Mutex<MultiSender>>, MuxError>,
+    Uuid,
+    Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
+)>;
 
 impl MultiReceiver {
     #[instrument(level = "debug", ret)]
@@ -1205,9 +1246,9 @@ impl MultiReceiver {
             Receiver<ResolvedMessageOrDisconnect>,
         ) = mpsc::channel();
         mr.receiver_demuxer
+            .demuxer
             .lock()
             .unwrap()
-            .demuxer
             .sub_channels
             .insert(
                 sub_channel_id,
@@ -1225,8 +1266,6 @@ impl MultiReceiver {
         // The following is inlined to avoid deadlock.
         let maybe_mrs = mr
             .receiver_demuxer
-            .lock()
-            .unwrap()
             .ipc_receiver_or_multi_receiver_set
             .multi_receiver_set();
         if maybe_mrs.is_some() {
@@ -1238,17 +1277,15 @@ impl MultiReceiver {
         }
         let result = mr
             .receiver_demuxer
-            .lock()
-            .unwrap()
             .ipc_receiver_or_multi_receiver_set
             .try_recv();
         match result {
             Ok(msg) => {
                 mr.receiver_demuxer
+                    .demuxer
                     .lock()
                     .unwrap()
-                    .demuxer
-                    .handle(msg)
+                    .handle(msg, mr.ipc_receiver_uuid)
                     .map_err(TryRecvError::MuxError)?;
                 Err(TryRecvError::Handled)
             },
@@ -1262,16 +1299,14 @@ impl MultiReceiver {
     fn try_recv_timeout(mr: &Arc<MultiReceiver>, duration: Duration) -> Result<(), TryRecvError> {
         let result = mr
             .receiver_demuxer
-            .lock()
-            .unwrap()
             .ipc_receiver_or_multi_receiver_set
             .try_recv_timeout(duration);
         match result {
             Ok(msg) => mr
                 .receiver_demuxer
+                .demuxer
                 .lock()
                 .unwrap()
-                .demuxer
                 .handle(msg, mr.ipc_receiver_uuid)
                 .map_err(TryRecvError::MuxError),
             Err(TryRecvError::Empty) => {
@@ -1298,8 +1333,6 @@ impl MultiReceiver {
     fn receive_sub_channel(mr: &Arc<MultiReceiver>) -> Result<(SubChannelId, String), MuxError> {
         let msg = mr
             .receiver_demuxer
-            .lock()
-            .unwrap()
             .ipc_receiver_or_multi_receiver_set
             .recv()?;
         match msg {
@@ -1316,9 +1349,9 @@ impl MultiReceiver {
     fn poll(&self) -> bool {
         let probe_failed = Mutex::new(false);
         self.receiver_demuxer
+            .demuxer
             .lock()
             .unwrap()
-            .demuxer
             .sub_channels
             .iter()
             .for_each(|(scid, subsender_state_machine)| {
@@ -1345,9 +1378,9 @@ impl MultiReceiver2 {
             Receiver<ResolvedMessageOrDisconnect>,
         ) = mpsc::channel();
         mr.receiver_demuxer
+            .demuxer
             .lock()
             .unwrap()
-            .demuxer
             .sub_channels
             .insert(
                 sub_channel_id,
@@ -1365,9 +1398,9 @@ impl MultiReceiver2 {
         // The following is inlined to avoid deadlock.
         let maybe_mrs = mr
             .receiver_demuxer
+            .ipc_receiver_or_multi_receiver_set
             .lock()
             .unwrap()
-            .ipc_receiver_or_multi_receiver_set
             .multi_receiver_set();
         if maybe_mrs.is_some() {
             // No need to attempt to receive messages because
@@ -1378,9 +1411,9 @@ impl MultiReceiver2 {
         }
         let result = mr
             .receiver_demuxer
+            .ipc_receiver_or_multi_receiver_set
             .lock()
             .unwrap()
-            .ipc_receiver_or_multi_receiver_set
             .try_recv();
         match result {
             Ok(msg) => {
@@ -1394,12 +1427,12 @@ impl MultiReceiver2 {
 
     #[instrument(level = "debug", ret, err(level = "debug"))]
     fn handle(mr: Arc<MultiReceiver2>, msg: MultiMessage) -> Result<(), MuxError> {
-        let demuxer = &mut mr.receiver_demuxer.lock().unwrap().demuxer;
+        let demuxer = &mut mr.receiver_demuxer.demuxer.lock().unwrap();
         let mr_clone = Arc::clone(&mr);
         if let MultiMessage::Data(scid, payload, ipc_senders) = msg {
             demuxer.send(scid, payload, &ipc_senders, mr_clone)
         } else {
-            demuxer.handle(msg)
+            demuxer.handle(msg, mr.ipc_receiver_uuid)
         }
     }
 
@@ -1419,9 +1452,9 @@ impl MultiReceiver2 {
     fn poll(&self) -> bool {
         let probe_failed = Mutex::new(false);
         self.receiver_demuxer
+            .demuxer
             .lock()
             .unwrap()
-            .demuxer
             .sub_channels
             .iter()
             .for_each(|(scid, subsender_state_machine)| {
@@ -1623,8 +1656,7 @@ impl<'de> Deserialize<'de> for SubChannelSender {
             })
             .map_err(serde::de::Error::custom::<MuxError>)?;
 
-                let new_source = multi_sender.2;
-
+        let new_source = multi_sender.2;
 
         let via = VIA.with(|via| *via.lock().unwrap());
 
@@ -1776,9 +1808,9 @@ impl Drop for SubChannelReceiver {
         for (client_id, sender) in &self
             .multi_receiver
             .receiver_demuxer
+            .demuxer
             .lock()
             .unwrap()
-            .demuxer
             .ipc_senders
         {
             log::trace!(
@@ -1801,11 +1833,11 @@ impl Drop for SubChannelReceiver {
             senders: scids_and_multi_senders,
         })) = self.channel.try_recv()
         {
-            log::trace!(
-                "SubChannelReceiver::drop draining = {:#?}",
-                scids_and_multi_senders
-            );
-            for (scid, ms) in scids_and_multi_senders {
+            // log::trace!(
+            //     "SubChannelReceiver::drop draining = {:#?}",
+            //     scids_and_multi_senders
+            // );
+            for (scid, ms, _, _) in scids_and_multi_senders {
                 {
                     let _ = ms
                         .lock()
@@ -1829,9 +1861,9 @@ impl Drop for SubChannelReceiver2 {
         for (client_id, sender) in &self
             .multi_receiver
             .receiver_demuxer
+            .demuxer
             .lock()
             .unwrap()
-            .demuxer
             .ipc_senders
         {
             log::trace!(
@@ -1860,11 +1892,11 @@ impl Drop for SubChannelReceiver2 {
             },
         )) = self.channel.try_recv()
         {
-            log::trace!(
-                "SubChannelReceiver::drop draining = {:#?}",
-                scids_and_multi_senders
-            );
-            for (scid, ms) in scids_and_multi_senders {
+            // log::trace!(
+            //     "SubChannelReceiver::drop draining = {:#?}",
+            //     scids_and_multi_senders
+            // );
+            for (scid, ms, _, _) in scids_and_multi_senders {
                 {
                     let _ = ms
                         .lock()
@@ -1933,7 +1965,13 @@ impl SubChannelReceiver {
                 },
                 Err(mpsc::TryRecvError::Empty) => {
                     // If the mutex is locked, wait on the local channel.
-                    if self.multi_receiver.receiver_demuxer.try_lock().is_err() {
+                    if self
+                        .multi_receiver
+                        .receiver_demuxer
+                        .demuxer
+                        .try_lock()
+                        .is_err()
+                    {
                         wait_interval = Some(CONTENDED_WAIT_INTERVAL);
                         continue;
                     }
@@ -1981,7 +2019,7 @@ enum MultiMessage {
     Probe(),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Clone, Serialize, Deserialize, Debug)]
 enum IpcSenderAndOrId {
     IpcSender(IpcSender<MultiMessage>, String),
     IpcSenderId(String),
@@ -2013,17 +2051,17 @@ fn multi_channel() -> Result<(Arc<Mutex<MultiSender>>, Arc<MultiReceiver>), io::
     senders.insert(client_id, ipc_response_sender);
     let multi_receiver = MultiReceiver {
         ipc_receiver_uuid: Uuid::new_v4(),
-        receiver_demuxer: Mutex::new(ReceiverDemuxer {
+        receiver_demuxer: ReceiverDemuxer {
             ipc_receiver_or_multi_receiver_set: IpcReceiverOrMultiReceiverSet::IpcReceiver(
                 ipc_receiver,
             ),
-            demuxer: Demuxer {
+            demuxer: Arc::new(Mutex::new(Demuxer {
                 ipc_senders: senders,
                 sub_channels: HashMap::new(),
                 disconnectors: WeakValueHashMap::new(),
                 ipc_senders_by_id: Target::new(),
-            },
-        }),
+            })),
+        },
     };
     let multi_receiver_rc = Arc::new(multi_receiver);
     let multi_sender = MultiSender {
@@ -2046,17 +2084,17 @@ fn multi_channel2() -> Result<(Arc<Mutex<MultiSender>>, Arc<MultiReceiver2>), io
     senders.insert(client_id, ipc_response_sender);
     let multi_receiver = MultiReceiver2 {
         ipc_receiver_uuid: Uuid::new_v4(),
-        receiver_demuxer: Mutex::new(ReceiverDemuxer2 {
-            ipc_receiver_or_multi_receiver_set: IpcReceiverOrMultiReceiverSet::IpcReceiver(
-                ipc_receiver,
+        receiver_demuxer: ReceiverDemuxer2 {
+            ipc_receiver_or_multi_receiver_set: Mutex::new(
+                IpcReceiverOrMultiReceiverSet::IpcReceiver(ipc_receiver),
             ),
-            demuxer: Demuxer {
+            demuxer: Arc::new(Mutex::new(Demuxer {
                 ipc_senders: senders,
                 sub_channels: HashMap::new(),
                 disconnectors: WeakValueHashMap::new(),
                 ipc_senders_by_id: Target::new(),
-            },
-        }),
+            })),
+        },
     };
     let multi_receiver_rc = Arc::new(multi_receiver);
     let multi_sender = MultiSender {
@@ -2088,25 +2126,25 @@ impl OneShotMultiServer {
 
         let mr = MultiReceiver {
             ipc_receiver_uuid: Uuid::new_v4(),
-            receiver_demuxer: Mutex::new(ReceiverDemuxer {
+            receiver_demuxer: ReceiverDemuxer {
                 ipc_receiver_or_multi_receiver_set: IpcReceiverOrMultiReceiverSet::IpcReceiver(
                     ipc_receiver,
                 ),
-                demuxer: Demuxer {
+                demuxer: Arc::new(Mutex::new(Demuxer {
                     ipc_senders: HashMap::new(),
                     sub_channels: HashMap::new(),
                     disconnectors: WeakValueHashMap::new(),
                     ipc_senders_by_id: Target::new(),
-                },
-            }),
+                })),
+            },
         };
         let mr_rc = Arc::new(mr);
         mr_rc
             .receiver_demuxer
+            .demuxer
             .lock()
             .unwrap()
-            .demuxer
-            .handle(multi_message)?;
+            .handle(multi_message, mr_rc.ipc_receiver_uuid)?;
         Ok(mr_rc)
     }
 }
@@ -2149,7 +2187,12 @@ pub enum SubSelectionResult {
 pub struct RawMessage {
     multi_receiver: MultiReceiverRef,
     payload: Vec<u8>,
-    senders: VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>)>,
+    senders: VecDeque<(
+        SubChannelId,
+        Arc<Mutex<MultiSender>>,
+        Uuid,
+        Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
+    )>,
     scid: SubChannelId,
 }
 
@@ -2226,9 +2269,9 @@ impl SubReceiverSet {
             .sub_channel_receiver
             .multi_receiver
             .receiver_demuxer
+            .ipc_receiver_or_multi_receiver_set
             .lock()
             .unwrap()
-            .ipc_receiver_or_multi_receiver_set
             .is_ipc_receiver()
         {
             MultiReceiverSet::add(
@@ -2241,9 +2284,9 @@ impl SubReceiverSet {
                 .sub_channel_receiver
                 .multi_receiver
                 .receiver_demuxer
+                .ipc_receiver_or_multi_receiver_set
                 .lock()
                 .unwrap()
-                .ipc_receiver_or_multi_receiver_set
                 .multi_receiver_set()
                 .unwrap();
 
@@ -2259,9 +2302,9 @@ impl SubReceiverSet {
                     .sub_channel_receiver
                     .multi_receiver
                     .receiver_demuxer
+                    .ipc_receiver_or_multi_receiver_set
                     .lock()
                     .unwrap()
-                    .ipc_receiver_or_multi_receiver_set
                     .multi_receiver_set()
                     .unwrap();
             } else {
@@ -2273,14 +2316,14 @@ impl SubReceiverSet {
 
         // Modify MultiReceiver so that messages for the subchannel are sent to the set.
         {
-            let mut multi_receiver_mutator = receiver
+            let mut demuxer = receiver
                 .sub_channel_receiver
                 .multi_receiver
                 .receiver_demuxer
+                .demuxer
                 .lock()
                 .unwrap();
-            let sub_sender_state_machine = multi_receiver_mutator
-                .demuxer
+            let sub_sender_state_machine = demuxer
                 .sub_channels
                 .get_mut(&receiver.sub_channel_receiver.sub_channel_id)
                 .unwrap();
@@ -2372,9 +2415,9 @@ impl MultiReceiverSet {
     ) -> Result<(), MuxError> {
         let ipc_receiver = multi_receiver
             .receiver_demuxer
+            .ipc_receiver_or_multi_receiver_set
             .lock()
             .unwrap()
-            .ipc_receiver_or_multi_receiver_set
             .swap(Arc::clone(mrs));
         let mut multi_receiver_set_mut = mrs.lock().unwrap();
         let id = multi_receiver_set_mut.ipc_receiver_set.add(ipc_receiver)?;

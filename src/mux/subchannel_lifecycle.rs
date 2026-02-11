@@ -27,6 +27,15 @@ where
     notify_dropped: Box<T>,
 }
 
+impl<T> std::fmt::Debug for SubSenderTracker<T>
+where
+    T: Fn() + Send + Sync + ?Sized,
+{
+    fn fmt(&self, _f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        Ok(())
+    }
+}
+
 impl<T> Drop for SubSenderTracker<T>
 where
     T: Fn() + Send + Sync + ?Sized,
