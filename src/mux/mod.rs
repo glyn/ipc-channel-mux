@@ -719,15 +719,17 @@ struct ReceiverDemuxer2 {
 unsafe impl Send for MultiReceiver {}
 unsafe impl Sync for MultiReceiver {}
 
+type ProtoSender = (
+    SubChannelId,
+    Arc<Mutex<MultiSender>>,
+    Uuid,
+    Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
+);
+
 struct ResolvedMessage {
     scid: SubChannelId,
     payload: Vec<u8>,
-    senders: VecDeque<(
-        SubChannelId,
-        Arc<Mutex<MultiSender>>,
-        Uuid,
-        Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
-    )>,
+    senders: VecDeque<ProtoSender>,
 }
 
 struct ResolvedMessageWithDeserializationContext {
@@ -875,12 +877,7 @@ impl Demuxer {
             },
 
             MultiMessage::Data(scid, payload, ipc_senders) => {
-                let srs: VecDeque<(
-                    SubChannelId,
-                    Arc<Mutex<MultiSender>>,
-                    Uuid,
-                    Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
-                )> = ipc_senders
+                let srs: VecDeque<ProtoSender> = ipc_senders
                     .clone()
                     .iter()
                     .map(|(scid, s)| {
@@ -893,17 +890,17 @@ impl Demuxer {
                         let disc = if let Some(disc) = self.disconnectors.get(scid) {
                             disc
                         } else {
-                            let scid_clone = scid.clone();
+                            let scid_copy = *scid;
                             let ipc_sender_clone = i.clone();
-                            let source_clone = multi_receiver_uuid.clone();
+                            let source_copy = multi_receiver_uuid;
                             let multi_sender_clone = ipc_sender.clone();
                             let disconnector: Arc<
                                 SubSenderTracker<dyn Fn() + Send + Sync + 'static>,
                             > = Arc::new(SubSenderTracker::new(Box::new(move || {
                                 let d = SubChannelDisconnector {
-                                    sub_channel_id: scid_clone,
+                                    sub_channel_id: scid_copy,
                                     ipc_sender: ipc_sender_clone.clone(),
-                                    source: source_clone,
+                                    source: source_copy,
                                     multi_sender: multi_sender_clone.clone(),
                                 };
                                 d.dropped();
@@ -1114,7 +1111,7 @@ impl Demuxer {
 }
 
 thread_local! {
-    static IPC_SENDERS_RECEIVED: Mutex<VecDeque<(SubChannelId, Arc<Mutex<MultiSender>>, Uuid, Arc<SubSenderTracker<dyn Fn() + Send + Sync>>)>> = const { Mutex::new(VecDeque::new()) };
+    static IPC_SENDERS_RECEIVED: Mutex<VecDeque<ProtoSender>> = const { Mutex::new(VecDeque::new()) };
     static CURRENT_MULTI_RECEIVER: Mutex<Option<MultiReceiverRef>> = const { Mutex::new(None) };
     static VIA: Mutex<SubChannelId> = const { Mutex::new(EMPTY_SUBCHANNEL_ID) };
 }
@@ -1176,12 +1173,7 @@ thread_local! {
 
 fn establish_deserialization_context(
     mr: MultiReceiverRef,
-    mut multi_senders: VecDeque<(
-        SubChannelId,
-        Arc<Mutex<MultiSender>>,
-        Uuid,
-        Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
-    )>,
+    mut multi_senders: VecDeque<ProtoSender>,
     via: SubChannelId,
 ) {
     IPC_SENDERS_RECEIVED.with(|senders| {
@@ -2187,12 +2179,7 @@ pub enum SubSelectionResult {
 pub struct RawMessage {
     multi_receiver: MultiReceiverRef,
     payload: Vec<u8>,
-    senders: VecDeque<(
-        SubChannelId,
-        Arc<Mutex<MultiSender>>,
-        Uuid,
-        Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
-    )>,
+    senders: VecDeque<ProtoSender>,
     scid: SubChannelId,
 }
 
