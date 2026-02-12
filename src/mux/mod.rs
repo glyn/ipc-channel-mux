@@ -162,6 +162,7 @@ pub struct Channel {
     multi_receiver: Arc<MultiReceiver>,
 }
 
+/// Channel2 wraps an IPC channel and is used to construct subchannels.
 pub struct Channel2 {
     multi_sender: Arc<Mutex<MultiSender>>,
     multi_receiver: Arc<MultiReceiver2>,
@@ -354,6 +355,7 @@ where
     phantom: PhantomData<T>,
 }
 
+/// SubReceiver2 is the receiving end of a subchannel which will be added to a SubReceiverSet.
 #[derive(Debug)]
 pub struct SubReceiver2<T>
 where
@@ -419,6 +421,9 @@ pub struct OpaqueSubReceiver {
     sub_channel_receiver: SubChannelReceiver,
 }
 
+/// OpaqueSubReceiver2 is a SubReceiver2 with the message type erased. It can be
+/// passed around in a message type independent manner, but must be converted
+/// into a SubReceiver2 before it can be used to receive messages.
 pub struct OpaqueSubReceiver2 {
     sub_channel_receiver: SubChannelReceiver2,
 }
