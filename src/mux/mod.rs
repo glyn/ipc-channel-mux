@@ -732,11 +732,6 @@ struct ResolvedMessage {
     senders: VecDeque<ProtoSender>,
 }
 
-struct ResolvedMessageWithDeserializationContext {
-    resolved_message: ResolvedMessage,
-    multi_receiver: Arc<MultiReceiver2>,
-}
-
 #[derive(Debug)]
 enum IpcReceiverOrMultiReceiverSet {
     IpcReceiver(IpcReceiver<MultiMessage>),
@@ -1072,18 +1067,13 @@ impl Demuxer {
         );
         if let Ok(srs) = srs {
             if let Some(sm) = self.sub_channels.get(&scid) {
-                let sent = sm.send(
-                    ResolvedMessageOrDisconnect::ResolvedMessageWithDeserializationContext(
-                        ResolvedMessageWithDeserializationContext {
-                            resolved_message: ResolvedMessage {
-                                scid,
-                                payload,
-                                senders: srs,
-                            },
-                            multi_receiver: mr_clone,
-                        },
-                    ),
-                );
+                let sent = sm.send(ResolvedMessageOrDisconnect::ResolvedMessage(
+                    ResolvedMessage {
+                        scid,
+                        payload,
+                        senders: srs,
+                    },
+                ));
                 if let Some(result) = sent {
                     result.map_err(|_| MuxError::Disconnected)
                 } else {
@@ -1112,70 +1102,10 @@ impl Demuxer {
 
 thread_local! {
     static IPC_SENDERS_RECEIVED: Mutex<VecDeque<ProtoSender>> = const { Mutex::new(VecDeque::new()) };
-    static CURRENT_MULTI_RECEIVER: Mutex<Option<MultiReceiverRef>> = const { Mutex::new(None) };
     static VIA: Mutex<SubChannelId> = const { Mutex::new(EMPTY_SUBCHANNEL_ID) };
 }
 
-/*
-        let disc = CURRENT_MULTI_RECEIVER.with(|maybe_mr| {
-            let maybe_mr = maybe_mr.lock().unwrap();
-            let mr = maybe_mr.as_ref().expect("CURRENT_MULTI_RECEIVER not set");
-            match mr {
-                MultiReceiverRef::MultiReceiver(multi_receiver) => {
-                    let mut mutator = multi_receiver.receiver_demuxer.lock().unwrap();
-                    if let Some(disc) = mutator.demuxer.disconnectors.get(&scsi.sub_channel_id) {
-                        disc
-                    } else {
-                        let disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync>> =
-                            Arc::new(SubSenderTracker::new(Box::new(move || {
-                                let d = SubChannelDisconnector {
-                                    sub_channel_id: scsi.sub_channel_id,
-                                    ipc_sender: ipc_sender_clone.clone(),
-                                    source: new_source,
-                                    multi_sender: multi_sender_clone.clone(),
-                                };
-                                d.dropped();
-                            })));
-                        mutator
-                            .demuxer
-                            .disconnectors
-                            .insert(scsi.sub_channel_id, Arc::clone(&disconnector));
-                        disconnector
-                    }
-                },
-                MultiReceiverRef::MultiReceiver2(multi_receiver2) => {
-                    let mut mutator = multi_receiver2.receiver_demuxer.lock().unwrap();
-                    if let Some(disc) = mutator.demuxer.disconnectors.get(&scsi.sub_channel_id) {
-                        disc
-                    } else {
-                        let disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync>> =
-                            Arc::new(SubSenderTracker::new(Box::new(move || {
-                                let d = SubChannelDisconnector {
-                                    sub_channel_id: scsi.sub_channel_id,
-                                    ipc_sender: ipc_sender_clone.clone(),
-                                    source: new_source,
-                                    multi_sender: multi_sender_clone.clone(),
-                                };
-                                d.dropped();
-                            })));
-                        mutator
-                            .demuxer
-                            .disconnectors
-                            .insert(scsi.sub_channel_id, Arc::clone(&disconnector));
-                        disconnector
-                    }
-                },
-            }
-        });
-
-
-*/
-
-fn establish_deserialization_context(
-    mr: MultiReceiverRef,
-    mut multi_senders: VecDeque<ProtoSender>,
-    via: SubChannelId,
-) {
+fn establish_deserialization_context(mut multi_senders: VecDeque<ProtoSender>, via: SubChannelId) {
     IPC_SENDERS_RECEIVED.with(|senders| {
         senders.lock().unwrap().clear();
         senders.lock().unwrap().append(&mut multi_senders);
@@ -1212,7 +1142,6 @@ impl
 
 enum ResolvedMessageOrDisconnect {
     ResolvedMessage(ResolvedMessage),
-    ResolvedMessageWithDeserializationContext(ResolvedMessageWithDeserializationContext),
     Disconnect(SubChannelId),
 }
 
@@ -1872,17 +1801,11 @@ impl Drop for SubChannelReceiver2 {
 
         // Drain the SubChannelReceiver and mark any subsenders as "receive failed". This is equivalent to receiving and then dropping
         // the subsenders.
-        while let Ok(ResolvedMessageOrDisconnect::ResolvedMessageWithDeserializationContext(
-            ResolvedMessageWithDeserializationContext {
-                resolved_message:
-                    ResolvedMessage {
-                        scid: via,
-                        payload: _,
-                        senders: scids_and_multi_senders,
-                    },
-                multi_receiver: _,
-            },
-        )) = self.channel.try_recv()
+        while let Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
+            scid: via,
+            payload: _,
+            senders: scids_and_multi_senders,
+        })) = self.channel.try_recv()
         {
             // log::trace!(
             //     "SubChannelReceiver::drop draining = {:#?}",
@@ -1943,11 +1866,7 @@ impl SubChannelReceiver {
                 })) => {
                     log::trace!("SubChannelReceiver::recv received = {:#?}", payload);
 
-                    establish_deserialization_context(
-                        MultiReceiverRef::MultiReceiver(Arc::clone(&self.multi_receiver)),
-                        multi_senders,
-                        scid,
-                    );
+                    establish_deserialization_context(multi_senders, scid);
 
                     let result = postcard::from_bytes::<T>(payload.as_slice());
 
@@ -2177,7 +2096,6 @@ pub enum SubSelectionResult {
 /// A message received on a subchannel prior to deserialisation.
 #[derive(Debug)]
 pub struct RawMessage {
-    multi_receiver: MultiReceiverRef,
     payload: Vec<u8>,
     senders: VecDeque<ProtoSender>,
     scid: SubChannelId,
@@ -2189,7 +2107,7 @@ impl RawMessage {
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {
-        establish_deserialization_context(self.multi_receiver, self.senders, self.scid);
+        establish_deserialization_context(self.senders, self.scid);
 
         let result = postcard::from_bytes::<T>(self.payload.as_slice());
 
@@ -2333,22 +2251,15 @@ impl SubReceiverSet {
         // TODO: relax the current restriction of returning at most one SubSelectionResult.
         loop {
             match self.rx.try_recv() {
-                Ok(ResolvedMessageOrDisconnect::ResolvedMessageWithDeserializationContext(
-                    ResolvedMessageWithDeserializationContext {
-                        resolved_message:
-                            ResolvedMessage {
-                                scid,
-                                payload,
-                                senders,
-                            },
-                        multi_receiver,
-                    },
-                )) => {
+                Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
+                    scid,
+                    payload,
+                    senders,
+                })) => {
                     let id = self.ids.get(&scid).unwrap();
                     return Ok(vec![SubSelectionResult::MessageReceived(
                         *id,
                         RawMessage {
-                            multi_receiver: MultiReceiverRef::MultiReceiver2(multi_receiver),
                             payload,
                             senders,
                             scid,
@@ -2359,7 +2270,6 @@ impl SubReceiverSet {
                     let id = self.ids.get(&scid).unwrap();
                     return Ok(vec![SubSelectionResult::ChannelClosed(*id)]);
                 },
-                Ok(_) => panic!("Direct message received from set channel"),
                 Err(mpsc::TryRecvError::Empty) => {
                     MultiReceiverSet::select(&self.multi_receiver_set)?;
                 },
@@ -2472,10 +2382,4 @@ impl MultiReceiverSet {
         }
         Ok(())
     }
-}
-
-#[derive(Debug)]
-enum MultiReceiverRef {
-    MultiReceiver(Arc<MultiReceiver>),
-    MultiReceiver2(Arc<MultiReceiver2>),
 }
