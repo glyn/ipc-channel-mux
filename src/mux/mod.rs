@@ -1055,7 +1055,7 @@ impl Demuxer {
         scid: SubChannelId,
         payload: Vec<u8>,
         ipc_senders: &[(SubChannelId, IpcSenderAndOrId)],
-        mr_clone: Arc<MultiReceiver2>,
+        mr_clone: &Arc<MultiReceiver2>,
     ) -> Result<(), MuxError> {
         let srs = Demuxer::process_results(
             ipc_senders
@@ -1354,9 +1354,8 @@ impl MultiReceiver2 {
     #[instrument(level = "debug", ret, err(level = "debug"))]
     fn handle(mr: Arc<MultiReceiver2>, msg: MultiMessage) -> Result<(), MuxError> {
         let demuxer = &mut mr.receiver_demuxer.demuxer.lock().unwrap();
-        let mr_clone = Arc::clone(&mr);
         if let MultiMessage::Data(scid, payload, ipc_senders) = msg {
-            demuxer.send(scid, payload, &ipc_senders, mr_clone)
+            demuxer.send(scid, payload, &ipc_senders, &mr)
         } else {
             demuxer.handle(msg, mr.ipc_receiver_uuid)
         }
