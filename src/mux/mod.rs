@@ -724,6 +724,9 @@ struct ReceiverDemuxer2 {
 unsafe impl Send for MultiReceiver {}
 unsafe impl Sync for MultiReceiver {}
 
+unsafe impl Send for MultiReceiver2 {}
+unsafe impl Sync for MultiReceiver2 {}
+
 type ProtoSender = (
     SubChannelId,
     Arc<Mutex<MultiSender>>,
@@ -1713,14 +1716,18 @@ struct SubChannelReceiver {
     sub_channel_id: SubChannelId,
     channel: Receiver<ResolvedMessageOrDisconnect>,
 }
+
+unsafe impl Send for SubChannelReceiver {}
+unsafe impl Sync for SubChannelReceiver {}
+
 struct SubChannelReceiver2 {
     multi_receiver: Arc<MultiReceiver2>,
     sub_channel_id: SubChannelId,
     channel: Receiver<ResolvedMessageOrDisconnect>,
 }
 
-unsafe impl Send for SubChannelReceiver {}
-unsafe impl Sync for SubChannelReceiver {}
+unsafe impl Send for SubChannelReceiver2 {}
+unsafe impl Sync for SubChannelReceiver2 {}
 
 impl Drop for SubChannelReceiver {
     fn drop(&mut self) {
