@@ -724,9 +724,6 @@ struct ReceiverDemuxer2 {
 unsafe impl Send for MultiReceiver {}
 unsafe impl Sync for MultiReceiver {}
 
-unsafe impl Send for MultiReceiver2 {}
-unsafe impl Sync for MultiReceiver2 {}
-
 type ProtoSender = (
     SubChannelId,
     Arc<Mutex<MultiSender>>,
