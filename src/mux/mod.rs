@@ -1204,16 +1204,14 @@ impl MultiReceiver {
             // message receiving is irrelevant.
             return Err(TryRecvError::Empty);
         }
+        let mut demuxer = mr.receiver_demuxer.demuxer.lock().unwrap();
         let result = mr
             .receiver_demuxer
             .ipc_receiver_or_multi_receiver_set
             .try_recv();
         match result {
             Ok(msg) => {
-                mr.receiver_demuxer
-                    .demuxer
-                    .lock()
-                    .unwrap()
+                demuxer
                     .handle(msg, mr.ipc_receiver_uuid)
                     .map_err(TryRecvError::MuxError)?;
                 Err(TryRecvError::Handled)
@@ -1260,6 +1258,7 @@ impl MultiReceiver {
 
     #[instrument(level = "debug", ret, err(level = "debug"))]
     fn receive_sub_channel(mr: &Arc<MultiReceiver>) -> Result<(SubChannelId, String), MuxError> {
+        let _unused = mr.receiver_demuxer.demuxer.lock().unwrap();
         let msg = mr
             .receiver_demuxer
             .ipc_receiver_or_multi_receiver_set

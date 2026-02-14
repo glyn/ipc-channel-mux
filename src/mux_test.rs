@@ -450,14 +450,17 @@ fn multiplex_drop_only_subreceiver_for_subchannel_of_dropped_channel() {
 fn compare_base_transmission_failure() {
     let channel1 = mux::Channel::new().unwrap();
     let (tx, rx) = channel1.sub_channel::<i32>();
+    log::trace!("POINT A");
 
     let channel2 = mux::Channel::new().unwrap();
     let (via_tx, via_rx) = channel2.sub_channel();
 
     via_tx.send(tx).unwrap();
+    log::trace!("POINT B");
 
     drop(via_rx);
 
+    log::trace!("POINT D");
     match rx.recv().unwrap_err() {
         mux::MuxError::Disconnected => (),
         e => panic!("expected Disconnected, got {:?}", e),
