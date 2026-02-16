@@ -140,7 +140,7 @@ use std::fmt::{self, Debug, Display, Formatter};
 use std::io;
 use std::marker::PhantomData;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 use subchannel_lifecycle::SubSenderTracker;
 use thiserror::Error;
@@ -1223,21 +1223,21 @@ impl MultiReceiver {
 
     //#[instrument(level = "debug", err(level = "debug"))]
     #[inline(always)]
-    fn try_recv_timeout(mr: &Arc<MultiReceiver>, duration: Duration) -> Result<(), TryRecvError> {
+    fn try_recv_timeout(
+        mr: &Arc<MultiReceiver>,
+        mut demuxer: MutexGuard<'_, Demuxer>,
+        duration: Duration,
+    ) -> Result<(), TryRecvError> {
         let result = mr
             .receiver_demuxer
             .ipc_receiver_or_multi_receiver_set
             .try_recv_timeout(duration);
         match result {
-            Ok(msg) => mr
-                .receiver_demuxer
-                .demuxer
-                .lock()
-                .unwrap()
+            Ok(msg) => demuxer
                 .handle(msg, mr.ipc_receiver_uuid)
                 .map_err(TryRecvError::MuxError),
             Err(TryRecvError::Empty) => {
-                mr.poll();
+                mr.poll(demuxer);
                 Ok(())
             },
             Err(TryRecvError::Handled) => Ok(()),
@@ -1274,12 +1274,9 @@ impl MultiReceiver {
 
     // poll returns true if and only if a probe failed.
     #[instrument(level = "trace", ret)]
-    fn poll(&self) -> bool {
+    fn poll(&self, demuxer: MutexGuard<'_, Demuxer>) -> bool {
         let probe_failed = Mutex::new(false);
-        self.receiver_demuxer
-            .demuxer
-            .lock()
-            .unwrap()
+        demuxer
             .sub_channels
             .iter()
             .for_each(|(scid, subsender_state_machine)| {
@@ -1885,21 +1882,19 @@ impl SubChannelReceiver {
                     return result.map_err(From::from);
                 },
                 Err(mpsc::TryRecvError::Empty) => {
+                    let try_lock = self.multi_receiver.receiver_demuxer.demuxer.try_lock();
                     // If the mutex is locked, wait on the local channel.
-                    if self
-                        .multi_receiver
-                        .receiver_demuxer
-                        .demuxer
-                        .try_lock()
-                        .is_err()
-                    {
+                    if try_lock.is_err() {
                         wait_interval = Some(CONTENDED_WAIT_INTERVAL);
                         continue;
                     }
                     wait_interval = None;
                     // receive another message, possibly for another subchannel
-                    let multi_receiver_result =
-                        MultiReceiver::try_recv_timeout(&self.multi_receiver, POLLING_INTERVAL);
+                    let multi_receiver_result = MultiReceiver::try_recv_timeout(
+                        &self.multi_receiver,
+                        try_lock.unwrap(),
+                        POLLING_INTERVAL,
+                    );
                     log::trace!(
                         "SubChannelReceiver::recv multi_receiver_result = {:#?}",
                         multi_receiver_result.as_ref()
