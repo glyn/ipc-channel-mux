@@ -851,7 +851,7 @@ type SubSenderStateMachine = subchannel_lifecycle::SubSenderStateMachine<
 
 struct Demuxer {
     ipc_senders: HashMap<ClientId, IpcSender<MultiResponse>>,
-    sub_channels: HashMap<SubChannelId, SubSenderStateMachine>,
+    sub_channels: HashMap<SubChannelId, Arc<SubSenderStateMachine>>,
     disconnectors: WeakValueHashMap<SubChannelId, Weak<SubSenderTracker<dyn Fn() + Send + Sync>>>,
     ipc_senders_by_id: Target<Arc<Mutex<MultiSender>>>,
 }
@@ -1181,7 +1181,7 @@ impl MultiReceiver {
             .sub_channels
             .insert(
                 sub_channel_id,
-                subchannel_lifecycle::SubSenderStateMachine::new(tx, ORIGIN),
+                Arc::new(subchannel_lifecycle::SubSenderStateMachine::new(tx, ORIGIN)),
             );
         SubChannelReceiver {
             multi_receiver: Arc::clone(mr),
@@ -1275,23 +1275,28 @@ impl MultiReceiver {
     // poll returns true if and only if a probe failed.
     #[instrument(level = "trace", ret)]
     fn poll(&self, demuxer: MutexGuard<'_, Demuxer>) -> bool {
-        let probe_failed = Mutex::new(false);
-        demuxer
+        // Snapshot Arc refs while holding the lock, then drop the lock before
+        // running probes. This prevents a probe from blocking indefinitely
+        // (e.g. when the remote socket buffer is full) while holding the
+        // demuxer mutex.
+        let state_machines: Vec<(SubChannelId, Arc<SubSenderStateMachine>)> = demuxer
             .sub_channels
             .iter()
-            .for_each(|(scid, subsender_state_machine)| {
-                let (poll, v) = subsender_state_machine.poll();
-                if !poll {
-                    let _ = v
-                        .unwrap()
-                        .send(ResolvedMessageOrDisconnect::Disconnect(*scid));
-                    let mut p = probe_failed.lock().unwrap();
-                    *p = true;
-                }
-            });
-        #[allow(clippy::clone_on_copy)]
-        let result = probe_failed.lock().unwrap().clone();
-        result
+            .map(|(scid, sm)| (*scid, Arc::clone(sm)))
+            .collect();
+        drop(demuxer);
+
+        let mut probe_failed = false;
+        for (scid, subsender_state_machine) in state_machines {
+            let (poll, v) = subsender_state_machine.poll();
+            if !poll {
+                let _ = v
+                    .unwrap()
+                    .send(ResolvedMessageOrDisconnect::Disconnect(scid));
+                probe_failed = true;
+            }
+        }
+        probe_failed
     }
 }
 
@@ -1309,7 +1314,7 @@ impl MultiReceiver2 {
             .sub_channels
             .insert(
                 sub_channel_id,
-                subchannel_lifecycle::SubSenderStateMachine::new(tx, ORIGIN),
+                Arc::new(subchannel_lifecycle::SubSenderStateMachine::new(tx, ORIGIN)),
             );
         SubChannelReceiver2 {
             multi_receiver: Arc::clone(mr),
@@ -1374,26 +1379,31 @@ impl MultiReceiver2 {
     // poll returns true if and only if a probe failed.
     #[instrument(level = "trace", ret)]
     fn poll(&self) -> bool {
-        let probe_failed = Mutex::new(false);
-        self.receiver_demuxer
+        // Snapshot Arc refs while holding the lock, then drop the lock before
+        // running probes. This prevents a probe from blocking indefinitely
+        // (e.g. when the remote socket buffer is full) while holding the
+        // demuxer mutex.
+        let state_machines: Vec<(SubChannelId, Arc<SubSenderStateMachine>)> = self
+            .receiver_demuxer
             .demuxer
             .lock()
             .unwrap()
             .sub_channels
             .iter()
-            .for_each(|(scid, subsender_state_machine)| {
-                let (poll, v) = subsender_state_machine.poll();
-                if !poll {
-                    let _ = v
-                        .unwrap()
-                        .send(ResolvedMessageOrDisconnect::Disconnect(*scid));
-                    let mut p = probe_failed.lock().unwrap();
-                    *p = true;
-                }
-            });
-        #[allow(clippy::clone_on_copy)]
-        let result = probe_failed.lock().unwrap().clone();
-        result
+            .map(|(scid, sm)| (*scid, Arc::clone(sm)))
+            .collect();
+
+        let mut probe_failed = false;
+        for (scid, subsender_state_machine) in state_machines {
+            let (poll, v) = subsender_state_machine.poll();
+            if !poll {
+                let _ = v
+                    .unwrap()
+                    .send(ResolvedMessageOrDisconnect::Disconnect(scid));
+                probe_failed = true;
+            }
+        }
+        probe_failed
     }
 }
 
@@ -2226,7 +2236,7 @@ impl SubReceiverSet {
 
         // Modify MultiReceiver so that messages for the subchannel are sent to the set.
         {
-            let mut demuxer = receiver
+            let demuxer = receiver
                 .sub_channel_receiver
                 .multi_receiver
                 .receiver_demuxer
@@ -2235,7 +2245,7 @@ impl SubReceiverSet {
                 .unwrap();
             let sub_sender_state_machine = demuxer
                 .sub_channels
-                .get_mut(&receiver.sub_channel_receiver.sub_channel_id)
+                .get(&receiver.sub_channel_receiver.sub_channel_id)
                 .unwrap();
             sub_sender_state_machine.switch_sender(self.tx.clone());
         }

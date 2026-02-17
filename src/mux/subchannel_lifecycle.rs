@@ -226,7 +226,7 @@ where
         }
     }
 
-    pub fn switch_sender(&mut self, t: T) {
+    pub fn switch_sender(&self, t: T) {
         self.maybe.lock().unwrap().replace(t);
     }
 }
