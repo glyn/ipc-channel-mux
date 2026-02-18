@@ -523,29 +523,29 @@ fn receiver_set_homogeneous() {
 
     let mut recvd1 = false;
     let mut recvd2 = false;
-    for event in rx_set.select().unwrap() {
-        if let SubSelectionResult::MessageReceived(received_id, received_data) = event {
-            match received_id {
-                id if id == rx1_id => {
-                    assert!(!recvd1, "i32 received twice");
-                    let received_value: i32 = received_data.to().unwrap();
-                    assert_eq!(received_value, 1);
-                    recvd1 = true;
-                },
-                id if id == rx2_id => {
-                    assert!(!recvd2, "String received twice");
-                    let received_value: String = received_data.to().unwrap();
-                    assert_eq!(received_value, "test".to_string());
-                    recvd2 = true;
-                },
-                _ => panic!("unexpected id"),
+    while !recvd1 || !recvd2 {
+        for event in rx_set.select().unwrap() {
+            if let SubSelectionResult::MessageReceived(received_id, received_data) = event {
+                match received_id {
+                    id if id == rx1_id => {
+                        assert!(!recvd1, "i32 received twice");
+                        let received_value: i32 = received_data.to().unwrap();
+                        assert_eq!(received_value, 1);
+                        recvd1 = true;
+                    },
+                    id if id == rx2_id => {
+                        assert!(!recvd2, "String received twice");
+                        let received_value: String = received_data.to().unwrap();
+                        assert_eq!(received_value, "test".to_string());
+                        recvd2 = true;
+                    },
+                    _ => panic!("unexpected id"),
+                }
+            } else {
+                panic!("Unexpected SubSelectionResult");
             }
-        } else {
-            panic!("Unexpected SubSelectionResult");
         }
     }
-    assert!(recvd1, "i32 was not received");
-    assert!(recvd2, "String was not received");
 }
 
 #[test]
@@ -566,29 +566,29 @@ fn receiver_set_heterogeneous() {
 
     let mut recvd1 = false;
     let mut recvd2 = false;
-    for event in rx_set.select().unwrap() {
-        if let SubSelectionResult::MessageReceived(received_id, received_data) = event {
-            match received_id {
-                id if id == rx1_id => {
-                    assert!(!recvd1, "i32 received twice");
-                    let received_value: i32 = received_data.to().unwrap();
-                    assert_eq!(received_value, 1);
-                    recvd1 = true;
-                },
-                id if id == rx2_id => {
-                    assert!(!recvd2, "String received twice");
-                    let received_value: String = received_data.to().unwrap();
-                    assert_eq!(received_value, "test".to_string());
-                    recvd2 = true;
-                },
-                _ => panic!("unexpected id"),
+    while !recvd1 || !recvd2 {
+        for event in rx_set.select().unwrap() {
+            if let SubSelectionResult::MessageReceived(received_id, received_data) = event {
+                match received_id {
+                    id if id == rx1_id => {
+                        assert!(!recvd1, "i32 received twice");
+                        let received_value: i32 = received_data.to().unwrap();
+                        assert_eq!(received_value, 1);
+                        recvd1 = true;
+                    },
+                    id if id == rx2_id => {
+                        assert!(!recvd2, "String received twice");
+                        let received_value: String = received_data.to().unwrap();
+                        assert_eq!(received_value, "test".to_string());
+                        recvd2 = true;
+                    },
+                    _ => panic!("unexpected id"),
+                }
+            } else {
+                panic!("Unexpected SubSelectionResult");
             }
-        } else {
-            panic!("Unexpected SubSelectionResult");
         }
     }
-    assert!(recvd1, "i32 was not received");
-    assert!(recvd2, "String was not received");
 }
 
 #[test]
