@@ -670,16 +670,20 @@ impl MultiSender {
 
     #[instrument(level = "trace", ret)]
     fn is_receiver_connected(&self, scid: SubChannelId) -> bool {
-        while let Ok(MultiResponse::SubReceiverDisconnected(disconnected_scid)) =
-            self.response_receiver.try_recv()
-        {
-            if let Some(proxy) = self
-                .sub_receiver_proxies
-                .lock()
-                .unwrap()
-                .get(&disconnected_scid)
-            {
-                proxy.disconnect();
+        loop {
+            match self.response_receiver.try_recv() {
+                Ok(MultiResponse::SubReceiverDisconnected(disconnected_scid)) => {
+                    if let Some(proxy) = self
+                        .sub_receiver_proxies
+                        .lock()
+                        .unwrap()
+                        .get(&disconnected_scid)
+                    {
+                        proxy.disconnect();
+                    }
+                },
+                Err(ipc_channel::TryRecvError::Empty) => break,
+                Err(ipc_channel::TryRecvError::IpcError(_)) => return false,
             }
         }
         if let Some(proxy) = self.sub_receiver_proxies.lock().unwrap().get(&scid) {
