@@ -1667,29 +1667,6 @@ impl Drop for SubChannelReceiver2 {
             let result = sender.send(MultiResponse::SubReceiverDisconnected(self.sub_channel_id));
             log::trace!("Result of sending SubReceiverDisconnected was {:?}", result);
         }
-
-        // Drain the SubChannelReceiver and mark any subsenders as "receive failed". This is equivalent to receiving and then dropping
-        // the subsenders.
-        while let Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
-            scid: via,
-            payload: _,
-            senders: scids_and_multi_senders,
-        })) = self.channel.try_recv()
-        {
-            // log::trace!(
-            //     "SubChannelReceiver::drop draining = {:#?}",
-            //     scids_and_multi_senders
-            // );
-            for (scid, ms, _, _) in scids_and_multi_senders {
-                {
-                    let _ = ms
-                        .lock()
-                        .unwrap()
-                        .ipc_sender
-                        .send(MultiMessage::ReceiveFailed { scid, via });
-                }
-            }
-        }
     }
 }
 
