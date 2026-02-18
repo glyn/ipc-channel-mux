@@ -1653,6 +1653,9 @@ impl Drop for SubChannelReceiver {
 impl Drop for SubChannelReceiver2 {
     fn drop(&mut self) {
         // Broadcast disconnection to all MultiSenders connected to the MultiReceiver for this SubChannelReceiver.
+        // This is necessary because the Demuxer (which holds the response channel IPC senders) is kept alive
+        // by the Channel2, which may outlive the SubChannelReceiver2. Without this explicit notification,
+        // is_receiver_connected would see an open response channel and report the receiver as still connected.
         // Note: This may be overkill as not all MultiSenders will have a SubChannelSender corresponding to this
         // SubChannelReceiver.
         for (client_id, sender) in &self
