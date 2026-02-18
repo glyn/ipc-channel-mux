@@ -709,7 +709,7 @@ struct MultiReceiver2 {
 struct ReceiverDemuxer {
     // When receiving from the IPC receiver, the Demuxer must be locked to
     // ensure messages are received in order.
-    ipc_receiver_or_multi_receiver_set: IpcReceiverOrMultiReceiverSet,
+    ipc_receiver: IpcReceiver<MultiMessage>,
     demuxer: Arc<Mutex<Demuxer>>,
 }
 
@@ -767,26 +767,6 @@ impl fmt::Display for TryRecvError {
 
 impl IpcReceiverOrMultiReceiverSet {
     #[instrument(level = "trace", ret)]
-    fn try_recv_timeout(&self, duration: Duration) -> Result<MultiMessage, TryRecvError> {
-        match self {
-            IpcReceiverOrMultiReceiverSet::IpcReceiver(ipc_receiver) => {
-                match ipc_receiver.try_recv_timeout(duration) {
-                    Ok(multi_message) => return Ok(multi_message),
-                    Err(ipc_channel::TryRecvError::IpcError(ipc_error)) => {
-                        return Err(TryRecvError::MuxError(MuxError::IpcError(ipc_error)));
-                    },
-                    Err(ipc_channel::TryRecvError::Empty) => return Err(TryRecvError::Empty),
-                }
-            },
-            IpcReceiverOrMultiReceiverSet::MultiReceiverSet(_multi_receiver_set) => {
-                unimplemented!(
-                    "calling this from a locked MultiReceiver mutator results in deadlock"
-                );
-            },
-        }
-    }
-
-    #[instrument(level = "trace", ret)]
     fn try_recv(&self) -> Result<MultiMessage, TryRecvError> {
         match self {
             IpcReceiverOrMultiReceiverSet::IpcReceiver(ipc_receiver) => {
@@ -800,19 +780,6 @@ impl IpcReceiverOrMultiReceiverSet {
             },
             IpcReceiverOrMultiReceiverSet::MultiReceiverSet(_) => {
                 unimplemented!();
-            },
-        }
-    }
-
-    #[instrument(level = "trace", ret)]
-    fn recv(&self) -> Result<MultiMessage, MuxError> {
-        match self {
-            IpcReceiverOrMultiReceiverSet::IpcReceiver(ipc_receiver) => match ipc_receiver.recv() {
-                Ok(multi_message) => return Ok(multi_message),
-                Err(e) => return Err(MuxError::IpcError(e)),
-            },
-            IpcReceiverOrMultiReceiverSet::MultiReceiverSet(_) => {
-                panic!("IpcReceiver not set");
             },
         }
     }
@@ -1192,23 +1159,8 @@ impl MultiReceiver {
 
     #[instrument(level = "debug", err(level = "debug"))]
     fn try_recv(mr: &Arc<MultiReceiver>) -> Result<(), TryRecvError> {
-        // The following is inlined to avoid deadlock.
-        let maybe_mrs = mr
-            .receiver_demuxer
-            .ipc_receiver_or_multi_receiver_set
-            .multi_receiver_set();
-        if maybe_mrs.is_some() {
-            // No need to attempt to receive messages because
-            // SubChannelReceiver::drop in this case can only occur
-            // when the router is shutting down, in which case
-            // message receiving is irrelevant.
-            return Err(TryRecvError::Empty);
-        }
         let mut demuxer = mr.receiver_demuxer.demuxer.lock().unwrap();
-        let result = mr
-            .receiver_demuxer
-            .ipc_receiver_or_multi_receiver_set
-            .try_recv();
+        let result = mr.receiver_demuxer.ipc_receiver.try_recv();
         match result {
             Ok(msg) => {
                 demuxer
@@ -1216,8 +1168,12 @@ impl MultiReceiver {
                     .map_err(TryRecvError::MuxError)?;
                 Err(TryRecvError::Handled)
             },
-            Err(TryRecvError::Handled) => Ok(()),
-            Err(e) => Err(e),
+            Err(e) => Err(match e {
+                ipc_channel::TryRecvError::IpcError(ipc_error) => {
+                    TryRecvError::MuxError(ipc_error.into())
+                },
+                ipc_channel::TryRecvError::Empty => TryRecvError::Empty,
+            }),
         }
     }
 
@@ -1228,20 +1184,18 @@ impl MultiReceiver {
         mut demuxer: MutexGuard<'_, Demuxer>,
         duration: Duration,
     ) -> Result<(), TryRecvError> {
-        let result = mr
-            .receiver_demuxer
-            .ipc_receiver_or_multi_receiver_set
-            .try_recv_timeout(duration);
+        let result = mr.receiver_demuxer.ipc_receiver.try_recv_timeout(duration);
         match result {
             Ok(msg) => demuxer
                 .handle(msg, mr.ipc_receiver_uuid)
                 .map_err(TryRecvError::MuxError),
-            Err(TryRecvError::Empty) => {
+            Err(ipc_channel::TryRecvError::Empty) => {
                 mr.poll(demuxer);
                 Ok(())
             },
-            Err(TryRecvError::Handled) => Ok(()),
-            Err(e) => Err(e),
+            Err(ipc_channel::TryRecvError::IpcError(ipc_error)) => {
+                Err(TryRecvError::MuxError(ipc_error.into()))
+            },
         }
     }
 
@@ -1259,10 +1213,7 @@ impl MultiReceiver {
     #[instrument(level = "debug", ret, err(level = "debug"))]
     fn receive_sub_channel(mr: &Arc<MultiReceiver>) -> Result<(SubChannelId, String), MuxError> {
         let _unused = mr.receiver_demuxer.demuxer.lock().unwrap();
-        let msg = mr
-            .receiver_demuxer
-            .ipc_receiver_or_multi_receiver_set
-            .recv()?;
+        let msg = mr.receiver_demuxer.ipc_receiver.recv()?;
         match msg {
             MultiMessage::SubChannelId(sub_channel_id, name) => Ok((sub_channel_id, name)),
             m => Err(MuxError::InternalError(format!(
@@ -1978,9 +1929,7 @@ fn multi_channel() -> Result<(Arc<Mutex<MultiSender>>, Arc<MultiReceiver>), io::
     let multi_receiver = MultiReceiver {
         ipc_receiver_uuid: Uuid::new_v4(),
         receiver_demuxer: ReceiverDemuxer {
-            ipc_receiver_or_multi_receiver_set: IpcReceiverOrMultiReceiverSet::IpcReceiver(
-                ipc_receiver,
-            ),
+            ipc_receiver,
             demuxer: Arc::new(Mutex::new(Demuxer {
                 ipc_senders: senders,
                 sub_channels: HashMap::new(),
@@ -2053,9 +2002,7 @@ impl OneShotMultiServer {
         let mr = MultiReceiver {
             ipc_receiver_uuid: Uuid::new_v4(),
             receiver_demuxer: ReceiverDemuxer {
-                ipc_receiver_or_multi_receiver_set: IpcReceiverOrMultiReceiverSet::IpcReceiver(
-                    ipc_receiver,
-                ),
+                ipc_receiver,
                 demuxer: Arc::new(Mutex::new(Demuxer {
                     ipc_senders: HashMap::new(),
                     sub_channels: HashMap::new(),
