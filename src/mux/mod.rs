@@ -1208,7 +1208,7 @@ impl MultiReceiver {
 impl MultiReceiver2 {
     #[instrument(level = "debug", ret)]
     fn attach(mr: &Arc<MultiReceiver2>, sub_channel_id: SubChannelId) -> SubChannelReceiver2 {
-        let (tx, rx): (
+        let (tx, _rx): (
             Sender<ResolvedMessageOrDisconnect>,
             Receiver<ResolvedMessageOrDisconnect>,
         ) = mpsc::channel();
@@ -1224,7 +1224,6 @@ impl MultiReceiver2 {
         SubChannelReceiver2 {
             multi_receiver: Arc::clone(mr),
             sub_channel_id,
-            channel: rx,
         }
     }
 
@@ -1591,7 +1590,6 @@ unsafe impl Sync for SubChannelReceiver {}
 struct SubChannelReceiver2 {
     multi_receiver: Arc<MultiReceiver2>,
     sub_channel_id: SubChannelId,
-    channel: Receiver<ResolvedMessageOrDisconnect>,
 }
 
 unsafe impl Send for SubChannelReceiver2 {}
