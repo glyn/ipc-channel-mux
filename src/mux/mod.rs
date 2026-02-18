@@ -2263,7 +2263,7 @@ impl SubReceiverSet {
     /// either a message received or a channel closed event.
     #[instrument(level = "debug", ret, err(level = "debug"))]
     pub fn select(&mut self) -> Result<Vec<SubSelectionResult>, MuxError> {
-        // TODO: relax the current restriction of returning at most one SubSelectionResult.
+        let mut results = Vec::new();
         loop {
             match self.rx.try_recv() {
                 Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
@@ -2271,21 +2271,25 @@ impl SubReceiverSet {
                     payload,
                     senders,
                 })) => {
-                    let id = self.ids.get(&scid).unwrap();
-                    return Ok(vec![SubSelectionResult::MessageReceived(
-                        *id,
+                    let id = *self.ids.get(&scid).unwrap();
+                    results.push(SubSelectionResult::MessageReceived(
+                        id,
                         RawMessage {
                             payload,
                             senders,
                             scid,
                         },
-                    )]);
+                    ));
                 },
                 Ok(ResolvedMessageOrDisconnect::Disconnect(scid)) => {
-                    let id = self.ids.get(&scid).unwrap();
-                    return Ok(vec![SubSelectionResult::ChannelClosed(*id)]);
+                    let id = self.ids.remove(&scid).unwrap();
+                    self.rxs.remove(&id);
+                    results.push(SubSelectionResult::ChannelClosed(id));
                 },
                 Err(mpsc::TryRecvError::Empty) => {
+                    if !results.is_empty() {
+                        return Ok(results);
+                    }
                     MultiReceiverSet::select(&self.multi_receiver_set)?;
                 },
                 Err(_) => {

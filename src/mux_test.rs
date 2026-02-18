@@ -523,10 +523,8 @@ fn receiver_set_homogeneous() {
 
     let mut recvd1 = false;
     let mut recvd2 = false;
-    for _ in 1..3 {
-        if let SubSelectionResult::MessageReceived(received_id, received_data) =
-            rx_set.select().unwrap().into_iter().next().unwrap()
-        {
+    for event in rx_set.select().unwrap() {
+        if let SubSelectionResult::MessageReceived(received_id, received_data) = event {
             match received_id {
                 id if id == rx1_id => {
                     assert!(!recvd1, "i32 received twice");
@@ -568,10 +566,8 @@ fn receiver_set_heterogeneous() {
 
     let mut recvd1 = false;
     let mut recvd2 = false;
-    for _ in 1..3 {
-        if let SubSelectionResult::MessageReceived(received_id, received_data) =
-            rx_set.select().unwrap().into_iter().next().unwrap()
-        {
+    for event in rx_set.select().unwrap() {
+        if let SubSelectionResult::MessageReceived(received_id, received_data) = event {
             match received_id {
                 id if id == rx1_id => {
                     assert!(!recvd1, "i32 received twice");
@@ -634,31 +630,29 @@ fn receiver_set_homogeneous_blocking() {
 
         let mut recvd1 = false;
         let mut recvd2 = false;
-        for _ in 1..3 {
-            if let SubSelectionResult::MessageReceived(received_id, received_data) =
-                rx_set.select().unwrap().into_iter().next().unwrap()
-            {
-                match received_id {
-                    id if id == rx1_id => {
-                        assert!(!recvd1, "1 received twice");
-                        let received_value: i32 = received_data.to().unwrap();
-                        assert_eq!(received_value, 1);
-                        recvd1 = true;
-                    },
-                    id if id == rx2_id => {
-                        assert!(!recvd2, "2 received twice");
-                        let received_value: i32 = received_data.to().unwrap();
-                        assert_eq!(received_value, 2);
-                        recvd2 = true;
-                    },
-                    _ => panic!("unexpected id"),
+        while !recvd1 || !recvd2 {
+            for event in rx_set.select().unwrap() {
+                if let SubSelectionResult::MessageReceived(received_id, received_data) = event {
+                    match received_id {
+                        id if id == rx1_id => {
+                            assert!(!recvd1, "1 received twice");
+                            let received_value: i32 = received_data.to().unwrap();
+                            assert_eq!(received_value, 1);
+                            recvd1 = true;
+                        },
+                        id if id == rx2_id => {
+                            assert!(!recvd2, "2 received twice");
+                            let received_value: i32 = received_data.to().unwrap();
+                            assert_eq!(received_value, 2);
+                            recvd2 = true;
+                        },
+                        _ => panic!("unexpected id"),
+                    }
+                } else {
+                    panic!("Unexpected SubSelectionResult");
                 }
-            } else {
-                panic!("Unexpected SubSelectionResult");
             }
         }
-        assert!(recvd1, "i32 was not received");
-        assert!(recvd2, "String was not received");
     });
 
     let (bootstrap_sub_receiver, tx1): (SubReceiver<SubSender<i32>>, SubSender<i32>) =
@@ -694,31 +688,29 @@ fn receiver_set_heterogeneous_blocking() {
 
         let mut recvd1 = false;
         let mut recvd2 = false;
-        for _ in 1..3 {
-            if let SubSelectionResult::MessageReceived(received_id, received_data) =
-                rx_set.select().unwrap().into_iter().next().unwrap()
-            {
-                match received_id {
-                    id if id == rx1_id => {
-                        assert!(!recvd1, "1 received twice");
-                        let received_value: i32 = received_data.to().unwrap();
-                        assert_eq!(received_value, 1);
-                        recvd1 = true;
-                    },
-                    id if id == rx2_id => {
-                        assert!(!recvd2, "2 received twice");
-                        let received_value: i32 = received_data.to().unwrap();
-                        assert_eq!(received_value, 2);
-                        recvd2 = true;
-                    },
-                    _ => panic!("unexpected id"),
+        while !recvd1 || !recvd2 {
+            for event in rx_set.select().unwrap() {
+                if let SubSelectionResult::MessageReceived(received_id, received_data) = event {
+                    match received_id {
+                        id if id == rx1_id => {
+                            assert!(!recvd1, "1 received twice");
+                            let received_value: i32 = received_data.to().unwrap();
+                            assert_eq!(received_value, 1);
+                            recvd1 = true;
+                        },
+                        id if id == rx2_id => {
+                            assert!(!recvd2, "2 received twice");
+                            let received_value: i32 = received_data.to().unwrap();
+                            assert_eq!(received_value, 2);
+                            recvd2 = true;
+                        },
+                        _ => panic!("unexpected id"),
+                    }
+                } else {
+                    panic!("Unexpected SubSelectionResult");
                 }
-            } else {
-                panic!("Unexpected SubSelectionResult");
             }
         }
-        assert!(recvd1, "i32 was not received");
-        assert!(recvd2, "String was not received");
     });
 
     let (bootstrap_sub_receiver, tx1): (SubReceiver<SubSender<i32>>, SubSender<i32>) =
