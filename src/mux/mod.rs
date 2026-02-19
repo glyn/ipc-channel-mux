@@ -163,7 +163,7 @@ pub struct Channel {
 }
 
 /// Channel2 wraps an IPC channel and is used to construct subchannels.
-pub struct Channel2 {
+pub(crate) struct Channel2 {
     multi_sender: Arc<Mutex<MultiSender>>,
     multi_receiver: Arc<MultiReceiver2>,
 }
@@ -357,7 +357,7 @@ where
 
 /// SubReceiver2 is the receiving end of a subchannel which will be added to a SubReceiverSet.
 #[derive(Debug)]
-pub struct SubReceiver2<T>
+pub(crate) struct SubReceiver2<T>
 where
     T: for<'x> Deserialize<'x> + Serialize,
 {
@@ -407,7 +407,8 @@ where
     /// Convert a SubReceiver2 to an OpaqueSubReceiver2 by erasing its message type.
     ///
     /// Useful for adding routes to a `RouterProxy`.
-    pub fn to_opaque(self) -> OpaqueSubReceiver2 {
+    #[allow(clippy::wrong_self_convention)]
+    pub(crate) fn to_opaque(self) -> OpaqueSubReceiver2 {
         OpaqueSubReceiver2 {
             sub_channel_receiver: self.sub_channel_receiver,
         }
@@ -424,7 +425,7 @@ pub struct OpaqueSubReceiver {
 /// OpaqueSubReceiver2 is a SubReceiver2 with the message type erased. It can be
 /// passed around in a message type independent manner, but must be converted
 /// into a SubReceiver2 before it can be used to receive messages.
-pub struct OpaqueSubReceiver2 {
+pub(crate) struct OpaqueSubReceiver2 {
     sub_channel_receiver: SubChannelReceiver2,
 }
 
@@ -438,22 +439,6 @@ impl OpaqueSubReceiver {
         T: for<'x> Deserialize<'x> + Serialize,
     {
         SubReceiver {
-            sub_channel_receiver: self.sub_channel_receiver,
-            phantom: PhantomData,
-        }
-    }
-}
-
-impl OpaqueSubReceiver2 {
-    /// Convert an OpaqueSubReceiver2 to a SubReceiver2 by restoring its message type.
-    /// If the message type and the original message type have incompatible
-    /// serial representations, deserialization may produce errors or unexpected
-    /// deserialized values.
-    pub fn to<'de, T>(self) -> SubReceiver2<T>
-    where
-        T: for<'x> Deserialize<'x> + Serialize,
-    {
-        SubReceiver2 {
             sub_channel_receiver: self.sub_channel_receiver,
             phantom: PhantomData,
         }
@@ -1900,7 +1885,7 @@ impl OneShotMultiServer {
 ///
 /// [SubReceiver]: struct.SubReceiver.html
 #[derive(Debug)]
-pub struct SubReceiverSet {
+pub(crate) struct SubReceiverSet {
     next_id: u64,
     rxs: HashMap<u64, SubChannelReceiver2>,
     ids: HashMap<SubChannelId, u64>,
