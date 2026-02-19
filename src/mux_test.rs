@@ -510,12 +510,12 @@ type Person = (String, u32);
 // A homogeneous SubReceiverSet is one whose SubReceivers all have the same underlying IpcChannel.
 fn receiver_set_homogeneous() {
     let channel = mux::Channel2::new().unwrap();
-    let (tx1, rx1) = channel.sub_channel::<i32>();
+    let (tx1, rx1) = channel.sub_channel::<i32>().unwrap();
 
     let mut rx_set = mux::SubReceiverSet::new().unwrap();
     let rx1_id = rx_set.add(rx1).unwrap();
 
-    let (tx2, rx2) = channel.sub_channel::<String>();
+    let (tx2, rx2) = channel.sub_channel::<String>().unwrap();
     let rx2_id = rx_set.add(rx2).unwrap();
 
     tx1.send(1).unwrap();
@@ -552,13 +552,13 @@ fn receiver_set_homogeneous() {
 // A heterogeneous SubReceiverSet is one with SubReceivers having distinct underlying IpcChannels.
 fn receiver_set_heterogeneous() {
     let channel1 = mux::Channel2::new().unwrap();
-    let (tx1, rx1) = channel1.sub_channel::<i32>();
+    let (tx1, rx1) = channel1.sub_channel::<i32>().unwrap();
 
     let mut rx_set = mux::SubReceiverSet::new().unwrap();
     let rx1_id = rx_set.add(rx1).unwrap();
 
     let channel2 = mux::Channel2::new().unwrap();
-    let (tx2, rx2) = channel2.sub_channel::<String>();
+    let (tx2, rx2) = channel2.sub_channel::<String>().unwrap();
     let rx2_id = rx_set.add(rx2).unwrap();
 
     tx1.send(1).unwrap();
@@ -594,7 +594,7 @@ fn receiver_set_heterogeneous() {
 #[test]
 fn receiver_set_disconnect() {
     let channel = mux::Channel2::new().unwrap();
-    let (tx, rx) = channel.sub_channel::<i32>();
+    let (tx, rx) = channel.sub_channel::<i32>().unwrap();
 
     let mut rx_set = mux::SubReceiverSet::new().unwrap();
     let rx_id = rx_set.add(rx).unwrap();
@@ -619,9 +619,9 @@ fn receiver_set_homogeneous_blocking() {
             SubSender::connect(bootstrap_token).unwrap();
 
         let channel = mux::Channel2::new().unwrap();
-        let (tx1, rx1) = channel.sub_channel();
+        let (tx1, rx1) = channel.sub_channel().unwrap();
         bootstrap_sub_sender.send(tx1).unwrap();
-        let (tx2, rx2) = channel.sub_channel();
+        let (tx2, rx2) = channel.sub_channel().unwrap();
         bootstrap_sub_sender.send(tx2).unwrap();
 
         let mut rx_set = mux::SubReceiverSet::new().unwrap();
@@ -675,11 +675,11 @@ fn receiver_set_heterogeneous_blocking() {
             SubSender::connect(bootstrap_token).unwrap();
 
         let channel1 = mux::Channel2::new().unwrap();
-        let (tx1, rx1) = channel1.sub_channel();
+        let (tx1, rx1) = channel1.sub_channel().unwrap();
         bootstrap_sub_sender.send(tx1).unwrap();
 
         let channel2 = mux::Channel2::new().unwrap();
-        let (tx2, rx2) = channel2.sub_channel();
+        let (tx2, rx2) = channel2.sub_channel().unwrap();
         bootstrap_sub_sender.send(tx2).unwrap();
 
         let mut rx_set = mux::SubReceiverSet::new().unwrap();
@@ -728,8 +728,8 @@ fn receiver_set_heterogeneous_blocking() {
 fn subreceivers_sharing_ipc_channel_cannot_belong_to_distinct_subreceiversets_with_distinct_ipcreceiversets()
  {
     let channel = mux::Channel2::new().unwrap();
-    let (_tx1, rx1) = channel.sub_channel::<i32>();
-    let (_tx2, rx2) = channel.sub_channel::<i32>();
+    let (_tx1, rx1) = channel.sub_channel::<i32>().unwrap();
+    let (_tx2, rx2) = channel.sub_channel::<i32>().unwrap();
 
     let mut rx_set1 = mux::SubReceiverSet::new().unwrap();
     let _rx1_id = rx_set1.add(rx1).unwrap();
@@ -738,7 +738,7 @@ fn subreceivers_sharing_ipc_channel_cannot_belong_to_distinct_subreceiversets_wi
 
     // Ensure rx_set2 has a non-empty IpcReceiverSet.
     let channel2 = mux::Channel2::new().unwrap();
-    let (_tx3, rx3) = channel2.sub_channel::<i32>();
+    let (_tx3, rx3) = channel2.sub_channel::<i32>().unwrap();
     let _rx3_id = rx_set2.add(rx3).unwrap();
 
     assert_eq!(
@@ -751,13 +751,13 @@ fn subreceivers_sharing_ipc_channel_cannot_belong_to_distinct_subreceiversets_wi
 // A homogeneous SubReceiverSet is one whose SubReceivers all have the same underlying IpcChannel.
 fn receiver_sets_with_subreceivers_sharing_ipc_channel() {
     let channel = mux::Channel2::new().unwrap();
-    let (tx1, rx1) = channel.sub_channel::<i32>();
+    let (tx1, rx1) = channel.sub_channel::<i32>().unwrap();
 
     let mut rx_set1 = mux::SubReceiverSet::new().unwrap();
     let rx1_id = rx_set1.add(rx1).unwrap();
 
     let mut rx_set2 = mux::SubReceiverSet::new().unwrap();
-    let (tx2, rx2) = channel.sub_channel::<String>();
+    let (tx2, rx2) = channel.sub_channel::<String>().unwrap();
     let rx2_id = rx_set2.add(rx2).unwrap();
 
     tx1.send(1).unwrap();

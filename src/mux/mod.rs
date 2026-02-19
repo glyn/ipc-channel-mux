@@ -165,7 +165,7 @@ pub struct Channel {
 /// Channel2 wraps an IPC channel and is used to construct subchannels.
 pub struct Channel2 {
     multi_sender: Arc<Mutex<MultiSender>>,
-    multi_receiver: Arc<MultiReceiver2>,
+    multi_receiver: Weak<MultiReceiver2>,
 }
 
 impl Channel {
@@ -215,17 +215,18 @@ impl Channel2 {
         let (ms, mr) = multi_channel2()?;
         Ok(Channel2 {
             multi_sender: ms,
-            multi_receiver: mr,
+            multi_receiver: Arc::downgrade(&mr),
         })
     }
 
     /// Construct a new subchannel of a [Channel]. The subchannel has
     /// a [SubSender] and a [SubReceiver].
     #[instrument(level = "debug", skip(self))]
-    pub fn sub_channel<T>(&self) -> (SubSender<T>, SubReceiver2<T>)
+    pub fn sub_channel<T>(&self) -> Result<(SubSender<T>, SubReceiver2<T>), MuxError>
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {
+        let mr = self.multi_receiver.upgrade().ok_or(MuxError::Disconnected)?;
         let scs = SubChannelSender::new(Arc::clone(&self.multi_sender));
         let scid = scs.sub_channel_id();
         self.multi_sender
@@ -235,8 +236,8 @@ impl Channel2 {
             .lock()
             .unwrap()
             .insert(scid, subchannel_lifecycle::SubReceiverProxy::new());
-        let scr = MultiReceiver2::attach(&self.multi_receiver, scid);
-        (
+        let scr = MultiReceiver2::attach(&mr, scid);
+        Ok((
             SubSender {
                 sub_channel_sender: scs,
                 phantom: PhantomData,
@@ -245,7 +246,7 @@ impl Channel2 {
                 sub_channel_receiver: scr,
                 phantom: PhantomData,
             },
-        )
+        ))
     }
 }
 
@@ -1648,32 +1649,10 @@ impl Drop for SubChannelReceiver {
     }
 }
 
-impl Drop for SubChannelReceiver2 {
-    fn drop(&mut self) {
-        // Broadcast disconnection to all MultiSenders connected to the MultiReceiver for this SubChannelReceiver.
-        // This is necessary because the Demuxer (which holds the response channel IPC senders) is kept alive
-        // by the Channel2, which may outlive the SubChannelReceiver2. Without this explicit notification,
-        // is_receiver_connected would see an open response channel and report the receiver as still connected.
-        // Note: This may be overkill as not all MultiSenders will have a SubChannelSender corresponding to this
-        // SubChannelReceiver.
-        for (client_id, sender) in &self
-            .multi_receiver
-            .receiver_demuxer
-            .demuxer
-            .lock()
-            .unwrap()
-            .ipc_senders
-        {
-            log::trace!(
-                "SubChannelReceiver::drop sending SubReceiverDisconnected for subchannel {:?} to client {:?}",
-                self.sub_channel_id,
-                client_id
-            );
-            let result = sender.send(MultiResponse::SubReceiverDisconnected(self.sub_channel_id));
-            log::trace!("Result of sending SubReceiverDisconnected was {:?}", result);
-        }
-    }
-}
+// No custom Drop for SubChannelReceiver2: Channel2 holds only a Weak<MultiReceiver2>,
+// so dropping the last SubChannelReceiver2 (and MultiReceiverSet entry) drops the
+// MultiReceiver2 and its Demuxer, closing the response channel IPC senders.
+// is_receiver_connected detects this closure and returns false.
 
 impl fmt::Debug for SubChannelReceiver {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -2058,7 +2037,9 @@ impl SubReceiverSet {
                     {
                         let mut self_locked = self.multi_receiver_set.lock().unwrap();
                         let id = self_locked.ipc_receiver_set.add(ipc_receiver)?;
-                        self_locked.multi_receivers.insert(id, multi_receiver);
+                        self_locked
+                            .multi_receivers
+                            .insert(id, Arc::downgrade(&multi_receiver));
                     }
                     incoming_locked.merged_into = Some(Arc::downgrade(&self.multi_receiver_set));
                 } else {
@@ -2137,12 +2118,16 @@ impl SubReceiverSet {
 
 struct MultiReceiverSet {
     ipc_receiver_set: IpcReceiverSet,
-    multi_receivers: HashMap<u64, Arc<MultiReceiver2>>,
+    // Weak refs to avoid a reference cycle: MultiReceiver2 → MultiReceiverSet → MultiReceiver2.
+    // The strong refs are held by SubChannelReceiver2 instances.
+    multi_receivers: HashMap<u64, Weak<MultiReceiver2>>,
     // IPC receiver not yet registered in ipc_receiver_set, waiting to be registered
     // when the first subreceiver from this channel is added to a SubReceiverSet.
+    // Uses a strong Arc to keep MultiReceiver2 alive until subchannels are created
+    // (this creates a temporary reference cycle that is broken by register_pending).
     pending: Option<(IpcReceiver<MultiMessage>, Arc<MultiReceiver2>)>,
     // After this MRS is merged into another, records which MRS it was merged into.
-    merged_into: Option<std::sync::Weak<Mutex<MultiReceiverSet>>>,
+    merged_into: Option<Weak<Mutex<MultiReceiverSet>>>,
 }
 
 impl fmt::Debug for MultiReceiverSet {
@@ -2167,10 +2152,12 @@ impl MultiReceiverSet {
     }
 
     // Register a pending IPC receiver into the IpcReceiverSet.
+    // This breaks the temporary reference cycle by dropping the strong Arc<MultiReceiver2>
+    // from pending and storing only a Weak ref in multi_receivers.
     fn register_pending(&mut self) -> Result<(), MuxError> {
         if let Some((ipc_receiver, multi_receiver)) = self.pending.take() {
             let id = self.ipc_receiver_set.add(ipc_receiver)?;
-            self.multi_receivers.insert(id, multi_receiver);
+            self.multi_receivers.insert(id, Arc::downgrade(&multi_receiver));
         }
         Ok(())
     }
@@ -2200,9 +2187,11 @@ impl MultiReceiverSet {
                     for result in results {
                         match result {
                             IpcSelectionResult::MessageReceived(id, ipc_message) => {
-                                if let Some(multi_receiver) = mrs_mut.multi_receivers.get(&id) {
+                                if let Some(multi_receiver) =
+                                    mrs_mut.multi_receivers.get(&id).and_then(Weak::upgrade)
+                                {
                                     MultiReceiver2::handle(
-                                        Arc::clone(multi_receiver),
+                                        multi_receiver,
                                         ipc_message.to().map_err(|e| {
                                             MuxError::IpcError(IpcError::SerializationError(e))
                                         })?,
@@ -2218,9 +2207,11 @@ impl MultiReceiverSet {
                 },
                 Err(ipc_channel::TrySelectError::Empty) => {
                     let mut probe_failed = false;
-                    for mr in mrs_mut.multi_receivers.values() {
-                        if mr.poll() {
-                            probe_failed = true;
+                    for weak_mr in mrs_mut.multi_receivers.values() {
+                        if let Some(mr) = weak_mr.upgrade() {
+                            if mr.poll() {
+                                probe_failed = true;
+                            }
                         }
                     }
                     if probe_failed {
