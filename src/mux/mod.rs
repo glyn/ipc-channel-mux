@@ -162,10 +162,10 @@ pub struct Channel {
     multi_receiver: Arc<MultiReceiver>,
 }
 
-/// Channel2 wraps an IPC channel and is used to construct subchannels.
-pub(crate) struct Channel2 {
+/// SelectableChannel wraps an IPC channel and is used to construct subchannels.
+pub(crate) struct SelectableChannel {
     multi_sender: Arc<Mutex<MultiSender>>,
-    multi_receiver: Arc<MultiReceiver2>,
+    multi_receiver: Arc<SelectableMultiReceiver>,
 }
 
 impl Channel {
@@ -208,12 +208,12 @@ impl Channel {
         )
     }
 }
-impl Channel2 {
-    /// Construct a new [Channel2].
+impl SelectableChannel {
+    /// Construct a new [SelectableChannel].
     #[instrument(level = "debug", err(level = "debug"))]
-    pub fn new() -> Result<Channel2, MuxError> {
-        let (ms, mr) = multi_channel2()?;
-        Ok(Channel2 {
+    pub fn new() -> Result<SelectableChannel, MuxError> {
+        let (ms, mr) = selectable_multi_channel()?;
+        Ok(SelectableChannel {
             multi_sender: ms,
             multi_receiver: mr,
         })
@@ -222,7 +222,7 @@ impl Channel2 {
     /// Construct a new subchannel of a [Channel]. The subchannel has
     /// a [SubSender] and a [SubReceiver].
     #[instrument(level = "debug", skip(self))]
-    pub fn sub_channel<T>(&self) -> (SubSender<T>, SubReceiver2<T>)
+    pub fn sub_channel<T>(&self) -> (SubSender<T>, SelectableSubReceiver<T>)
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {
@@ -235,13 +235,13 @@ impl Channel2 {
             .lock()
             .unwrap()
             .insert(scid, subchannel_lifecycle::SubReceiverProxy::new());
-        let scr = MultiReceiver2::attach(&self.multi_receiver, scid);
+        let scr = SelectableMultiReceiver::attach(&self.multi_receiver, scid);
         (
             SubSender {
                 sub_channel_sender: scs,
                 phantom: PhantomData,
             },
-            SubReceiver2 {
+            SelectableSubReceiver {
                 sub_channel_receiver: scr,
                 phantom: PhantomData,
             },
@@ -355,13 +355,13 @@ where
     phantom: PhantomData<T>,
 }
 
-/// SubReceiver2 is the receiving end of a subchannel which will be added to a SubReceiverSet.
+/// SelectableSubReceiver is the receiving end of a subchannel which will be added to a SubReceiverSet.
 #[derive(Debug)]
-pub(crate) struct SubReceiver2<T>
+pub(crate) struct SelectableSubReceiver<T>
 where
     T: for<'x> Deserialize<'x> + Serialize,
 {
-    sub_channel_receiver: SubChannelReceiver2,
+    sub_channel_receiver: SelectableSubChannelReceiver,
     phantom: PhantomData<T>,
 }
 
@@ -400,16 +400,16 @@ where
     }
 }
 
-impl<T> SubReceiver2<T>
+impl<T> SelectableSubReceiver<T>
 where
     T: for<'de> Deserialize<'de> + Serialize,
 {
-    /// Convert a SubReceiver2 to an OpaqueSubReceiver2 by erasing its message type.
+    /// Convert a SelectableSubReceiver to an OpaqueSelectableSubReceiver by erasing its message type.
     ///
     /// Useful for adding routes to a `RouterProxy`.
     #[allow(clippy::wrong_self_convention)]
-    pub(crate) fn to_opaque(self) -> OpaqueSubReceiver2 {
-        OpaqueSubReceiver2 {
+    pub(crate) fn to_opaque(self) -> OpaqueSelectableSubReceiver {
+        OpaqueSelectableSubReceiver {
             sub_channel_receiver: self.sub_channel_receiver,
         }
     }
@@ -422,11 +422,11 @@ pub struct OpaqueSubReceiver {
     sub_channel_receiver: SubChannelReceiver,
 }
 
-/// OpaqueSubReceiver2 is a SubReceiver2 with the message type erased. It can be
+/// OpaqueSelectableSubReceiver is a SelectableSubReceiver with the message type erased. It can be
 /// passed around in a message type independent manner, but must be converted
-/// into a SubReceiver2 before it can be used to receive messages.
-pub(crate) struct OpaqueSubReceiver2 {
-    sub_channel_receiver: SubChannelReceiver2,
+/// into a SelectableSubReceiver before it can be used to receive messages.
+pub(crate) struct OpaqueSelectableSubReceiver {
+    sub_channel_receiver: SelectableSubChannelReceiver,
 }
 
 impl OpaqueSubReceiver {
@@ -689,9 +689,9 @@ struct MultiReceiver {
 }
 
 #[derive(Debug)]
-struct MultiReceiver2 {
+struct SelectableMultiReceiver {
     ipc_receiver_uuid: Uuid,
-    receiver_demuxer: ReceiverDemuxer2,
+    receiver_demuxer: SelectableReceiverDemuxer,
 }
 
 #[derive(Debug)]
@@ -703,7 +703,7 @@ struct ReceiverDemuxer {
 }
 
 #[derive(Debug)]
-struct ReceiverDemuxer2 {
+struct SelectableReceiverDemuxer {
     multi_receiver_set: Arc<Mutex<MultiReceiverSet>>,
     demuxer: Arc<Mutex<Demuxer>>,
 }
@@ -711,8 +711,8 @@ struct ReceiverDemuxer2 {
 unsafe impl Send for MultiReceiver {}
 unsafe impl Sync for MultiReceiver {}
 
-unsafe impl Send for MultiReceiver2 {}
-unsafe impl Sync for MultiReceiver2 {}
+unsafe impl Send for SelectableMultiReceiver {}
+unsafe impl Sync for SelectableMultiReceiver {}
 
 type ProtoSender = (
     SubChannelId,
@@ -964,7 +964,7 @@ impl Demuxer {
         scid: SubChannelId,
         payload: Vec<u8>,
         ipc_senders: &[(SubChannelId, IpcSenderAndOrId)],
-        mr_clone: &Arc<MultiReceiver2>,
+        mr_clone: &Arc<SelectableMultiReceiver>,
     ) -> Result<(), MuxError> {
         let srs = Demuxer::process_results(
             ipc_senders
@@ -1194,9 +1194,12 @@ impl MultiReceiver {
     }
 }
 
-impl MultiReceiver2 {
+impl SelectableMultiReceiver {
     #[instrument(level = "debug", ret)]
-    fn attach(mr: &Arc<MultiReceiver2>, sub_channel_id: SubChannelId) -> SubChannelReceiver2 {
+    fn attach(
+        mr: &Arc<SelectableMultiReceiver>,
+        sub_channel_id: SubChannelId,
+    ) -> SelectableSubChannelReceiver {
         let (tx, _rx): (
             Sender<ResolvedMessageOrDisconnect>,
             Receiver<ResolvedMessageOrDisconnect>,
@@ -1210,14 +1213,14 @@ impl MultiReceiver2 {
                 sub_channel_id,
                 Arc::new(subchannel_lifecycle::SubSenderStateMachine::new(tx, ORIGIN)),
             );
-        SubChannelReceiver2 {
+        SelectableSubChannelReceiver {
             multi_receiver: Arc::clone(mr),
             sub_channel_id,
         }
     }
 
     #[instrument(level = "debug", ret, err(level = "debug"))]
-    fn handle(mr: Arc<MultiReceiver2>, msg: MultiMessage) -> Result<(), MuxError> {
+    fn handle(mr: Arc<SelectableMultiReceiver>, msg: MultiMessage) -> Result<(), MuxError> {
         let demuxer = &mut mr.receiver_demuxer.demuxer.lock().unwrap();
         if let MultiMessage::Data(scid, payload, ipc_senders) = msg {
             demuxer.send(scid, payload, &ipc_senders, &mr)
@@ -1576,13 +1579,13 @@ struct SubChannelReceiver {
 unsafe impl Send for SubChannelReceiver {}
 unsafe impl Sync for SubChannelReceiver {}
 
-struct SubChannelReceiver2 {
-    multi_receiver: Arc<MultiReceiver2>,
+struct SelectableSubChannelReceiver {
+    multi_receiver: Arc<SelectableMultiReceiver>,
     sub_channel_id: SubChannelId,
 }
 
-unsafe impl Send for SubChannelReceiver2 {}
-unsafe impl Sync for SubChannelReceiver2 {}
+unsafe impl Send for SelectableSubChannelReceiver {}
+unsafe impl Sync for SelectableSubChannelReceiver {}
 
 impl Drop for SubChannelReceiver {
     fn drop(&mut self) {
@@ -1637,7 +1640,7 @@ impl Drop for SubChannelReceiver {
     }
 }
 
-// No custom Drop for SubChannelReceiver2: SubReceiverSet::drop calls
+// No custom Drop for SelectableSubChannelReceiver: SubReceiverSet::drop calls
 // MultiReceiverSet::close() which clears the demuxer's ipc_senders,
 // closing the response channels. is_receiver_connected detects this
 // closure via IpcError and returns false.
@@ -1649,9 +1652,9 @@ impl fmt::Debug for SubChannelReceiver {
             .finish_non_exhaustive()
     }
 }
-impl fmt::Debug for SubChannelReceiver2 {
+impl fmt::Debug for SelectableSubChannelReceiver {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SubChannelReceiver2")
+        f.debug_struct("SelectableSubChannelReceiver")
             .field("sub_channel_id", &self.sub_channel_id)
             .finish_non_exhaustive()
     }
@@ -1801,7 +1804,8 @@ fn multi_channel() -> Result<(Arc<Mutex<MultiSender>>, Arc<MultiReceiver>), io::
 }
 
 #[instrument(level = "debug", ret, err(level = "debug"))]
-fn multi_channel2() -> Result<(Arc<Mutex<MultiSender>>, Arc<MultiReceiver2>), io::Error> {
+fn selectable_multi_channel()
+-> Result<(Arc<Mutex<MultiSender>>, Arc<SelectableMultiReceiver>), io::Error> {
     let (ipc_sender, ipc_receiver) = ipc::channel()?;
     let (ipc_response_sender, ipc_response_receiver) = ipc::channel()?;
     let client_id = ClientId(Uuid::new_v4());
@@ -1809,9 +1813,9 @@ fn multi_channel2() -> Result<(Arc<Mutex<MultiSender>>, Arc<MultiReceiver2>), io
     senders.insert(client_id, ipc_response_sender);
     #[allow(clippy::arc_with_non_send_sync)]
     let mrs = Arc::new(Mutex::new(MultiReceiverSet::new()?));
-    let multi_receiver_rc = Arc::new(MultiReceiver2 {
+    let multi_receiver_rc = Arc::new(SelectableMultiReceiver {
         ipc_receiver_uuid: Uuid::new_v4(),
-        receiver_demuxer: ReceiverDemuxer2 {
+        receiver_demuxer: SelectableReceiverDemuxer {
             multi_receiver_set: Arc::clone(&mrs),
             demuxer: Arc::new(Mutex::new(Demuxer {
                 ipc_senders: senders,
@@ -1887,7 +1891,7 @@ impl OneShotMultiServer {
 #[derive(Debug)]
 pub(crate) struct SubReceiverSet {
     next_id: u64,
-    rxs: HashMap<u64, SubChannelReceiver2>,
+    rxs: HashMap<u64, SelectableSubChannelReceiver>,
     ids: HashMap<SubChannelId, u64>,
     multi_receiver_set: Arc<Mutex<MultiReceiverSet>>,
     rx: Receiver<ResolvedMessageOrDisconnect>,
@@ -1967,7 +1971,7 @@ impl SubReceiverSet {
     /// [SubReceiver]: struct.SubReceiver.html
     /// [SubReceiverSet]: struct.SubReceiverSet.html
     #[instrument(level = "debug", skip(subreceiver), err(level = "debug"))]
-    pub fn add<T>(&mut self, subreceiver: SubReceiver2<T>) -> Result<u64, MuxError>
+    pub fn add<T>(&mut self, subreceiver: SelectableSubReceiver<T>) -> Result<u64, MuxError>
     where
         T: for<'x> Deserialize<'x> + Serialize,
     {
@@ -1984,7 +1988,7 @@ impl SubReceiverSet {
     ///
     /// [OpaqueSubReceiver]: struct.OpaqueSubReceiver.html
     #[instrument(level = "debug", skip(receiver), ret, err(level = "debug"))]
-    pub fn add_opaque(&mut self, receiver: OpaqueSubReceiver2) -> Result<u64, MuxError> {
+    pub fn add_opaque(&mut self, receiver: OpaqueSelectableSubReceiver) -> Result<u64, MuxError> {
         // The subreceiver is associated with a MultiReceiverSet from construction.
         let incoming_multi_receiver_set = Arc::clone(
             &receiver
@@ -2106,7 +2110,7 @@ impl SubReceiverSet {
 
 impl Drop for SubReceiverSet {
     fn drop(&mut self) {
-        // Close all MultiReceiver2s' response channels so that is_receiver_connected
+        // Close all SelectableMultiReceivers' response channels so that is_receiver_connected
         // detects the disconnection via IpcError on the response channel.
         self.multi_receiver_set.lock().unwrap().close();
     }
@@ -2114,14 +2118,14 @@ impl Drop for SubReceiverSet {
 
 struct MultiReceiverSet {
     ipc_receiver_set: IpcReceiverSet,
-    // Weak refs to avoid a reference cycle: MultiReceiver2 → MultiReceiverSet → MultiReceiver2.
-    // The strong refs are held by SubChannelReceiver2 instances.
-    multi_receivers: HashMap<u64, Weak<MultiReceiver2>>,
+    // Weak refs to avoid a reference cycle: SelectableMultiReceiver → MultiReceiverSet → SelectableMultiReceiver.
+    // The strong refs are held by SelectableSubChannelReceiver instances.
+    multi_receivers: HashMap<u64, Weak<SelectableMultiReceiver>>,
     // IPC receiver not yet registered in ipc_receiver_set, waiting to be registered
     // when the first subreceiver from this channel is added to a SubReceiverSet.
-    // Uses a strong Arc to keep MultiReceiver2 alive until subchannels are created
+    // Uses a strong Arc to keep SelectableMultiReceiver alive until subchannels are created
     // (this creates a temporary reference cycle that is broken by register_pending).
-    pending: Option<(IpcReceiver<MultiMessage>, Arc<MultiReceiver2>)>,
+    pending: Option<(IpcReceiver<MultiMessage>, Arc<SelectableMultiReceiver>)>,
     // After this MRS is merged into another, records which MRS it was merged into.
     merged_into: Option<Weak<Mutex<MultiReceiverSet>>>,
 }
@@ -2148,7 +2152,7 @@ impl MultiReceiverSet {
     }
 
     // Register a pending IPC receiver into the IpcReceiverSet.
-    // This breaks the temporary reference cycle by dropping the strong Arc<MultiReceiver2>
+    // This breaks the temporary reference cycle by dropping the strong Arc<SelectableMultiReceiver>
     // from pending and storing only a Weak ref in multi_receivers.
     fn register_pending(&mut self) -> Result<(), MuxError> {
         if let Some((ipc_receiver, multi_receiver)) = self.pending.take() {
@@ -2159,7 +2163,7 @@ impl MultiReceiverSet {
         Ok(())
     }
 
-    // Close all MultiReceiver2s in this set by clearing their demuxer's ipc_senders.
+    // Close all SelectableMultiReceivers in this set by clearing their demuxer's ipc_senders.
     // This causes is_receiver_connected to detect IpcError on the response channel,
     // signalling disconnection to MultiSenders without needing a SubReceiverDisconnected broadcast.
     // Called from SubReceiverSet::drop to handle router shutdown.
@@ -2212,7 +2216,7 @@ impl MultiReceiverSet {
                                 if let Some(multi_receiver) =
                                     mrs_mut.multi_receivers.get(&id).and_then(Weak::upgrade)
                                 {
-                                    MultiReceiver2::handle(
+                                    SelectableMultiReceiver::handle(
                                         multi_receiver,
                                         ipc_message.to().map_err(|e| {
                                             MuxError::IpcError(IpcError::SerializationError(e))

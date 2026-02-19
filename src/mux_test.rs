@@ -509,7 +509,7 @@ type Person = (String, u32);
 #[test]
 // A homogeneous SubReceiverSet is one whose SubReceivers all have the same underlying IpcChannel.
 fn receiver_set_homogeneous() {
-    let channel = mux::Channel2::new().unwrap();
+    let channel = mux::SelectableChannel::new().unwrap();
     let (tx1, rx1) = channel.sub_channel::<i32>();
 
     let mut rx_set = mux::SubReceiverSet::new().unwrap();
@@ -551,13 +551,13 @@ fn receiver_set_homogeneous() {
 #[test]
 // A heterogeneous SubReceiverSet is one with SubReceivers having distinct underlying IpcChannels.
 fn receiver_set_heterogeneous() {
-    let channel1 = mux::Channel2::new().unwrap();
+    let channel1 = mux::SelectableChannel::new().unwrap();
     let (tx1, rx1) = channel1.sub_channel::<i32>();
 
     let mut rx_set = mux::SubReceiverSet::new().unwrap();
     let rx1_id = rx_set.add(rx1).unwrap();
 
-    let channel2 = mux::Channel2::new().unwrap();
+    let channel2 = mux::SelectableChannel::new().unwrap();
     let (tx2, rx2) = channel2.sub_channel::<String>();
     let rx2_id = rx_set.add(rx2).unwrap();
 
@@ -593,7 +593,7 @@ fn receiver_set_heterogeneous() {
 
 #[test]
 fn receiver_set_disconnect() {
-    let channel = mux::Channel2::new().unwrap();
+    let channel = mux::SelectableChannel::new().unwrap();
     let (tx, rx) = channel.sub_channel::<i32>();
 
     let mut rx_set = mux::SubReceiverSet::new().unwrap();
@@ -618,7 +618,7 @@ fn receiver_set_homogeneous_blocking() {
         let bootstrap_sub_sender: SubSender<SubSender<i32>> =
             SubSender::connect(bootstrap_token).unwrap();
 
-        let channel = mux::Channel2::new().unwrap();
+        let channel = mux::SelectableChannel::new().unwrap();
         let (tx1, rx1) = channel.sub_channel();
         bootstrap_sub_sender.send(tx1).unwrap();
         let (tx2, rx2) = channel.sub_channel();
@@ -674,11 +674,11 @@ fn receiver_set_heterogeneous_blocking() {
         let bootstrap_sub_sender: SubSender<SubSender<i32>> =
             SubSender::connect(bootstrap_token).unwrap();
 
-        let channel1 = mux::Channel2::new().unwrap();
+        let channel1 = mux::SelectableChannel::new().unwrap();
         let (tx1, rx1) = channel1.sub_channel();
         bootstrap_sub_sender.send(tx1).unwrap();
 
-        let channel2 = mux::Channel2::new().unwrap();
+        let channel2 = mux::SelectableChannel::new().unwrap();
         let (tx2, rx2) = channel2.sub_channel();
         bootstrap_sub_sender.send(tx2).unwrap();
 
@@ -727,7 +727,7 @@ fn receiver_set_heterogeneous_blocking() {
 // Test SubReceivers sharing an IPC channel belonging to distinct SubReceiverSets with distinct IpcReceiverSets.
 fn subreceivers_sharing_ipc_channel_cannot_belong_to_distinct_subreceiversets_with_distinct_ipcreceiversets()
  {
-    let channel = mux::Channel2::new().unwrap();
+    let channel = mux::SelectableChannel::new().unwrap();
     let (_tx1, rx1) = channel.sub_channel::<i32>();
     let (_tx2, rx2) = channel.sub_channel::<i32>();
 
@@ -737,7 +737,7 @@ fn subreceivers_sharing_ipc_channel_cannot_belong_to_distinct_subreceiversets_wi
     let mut rx_set2 = mux::SubReceiverSet::new().unwrap();
 
     // Ensure rx_set2 has a non-empty IpcReceiverSet.
-    let channel2 = mux::Channel2::new().unwrap();
+    let channel2 = mux::SelectableChannel::new().unwrap();
     let (_tx3, rx3) = channel2.sub_channel::<i32>();
     let _rx3_id = rx_set2.add(rx3).unwrap();
 
@@ -750,7 +750,7 @@ fn subreceivers_sharing_ipc_channel_cannot_belong_to_distinct_subreceiversets_wi
 #[test]
 // A homogeneous SubReceiverSet is one whose SubReceivers all have the same underlying IpcChannel.
 fn receiver_sets_with_subreceivers_sharing_ipc_channel() {
-    let channel = mux::Channel2::new().unwrap();
+    let channel = mux::SelectableChannel::new().unwrap();
     let (tx1, rx1) = channel.sub_channel::<i32>();
 
     let mut rx_set1 = mux::SubReceiverSet::new().unwrap();
@@ -852,7 +852,7 @@ fn router_channel_usable_after_all_senders_dropped() {
     assert_eq!(callback_fired_receiver.recv().unwrap(), 42);
 
     // Drop the sender. The router will process ChannelClosed, dropping
-    // the SubChannelReceiver2.
+    // the SelectableSubChannelReceiver.
     drop(tx);
 
     // Wait for the router to process the disconnection.
