@@ -10,6 +10,14 @@ The `serde` library is used to serialize and deserialize messages sent over `ipc
 
 [^mux]: The term _mux_ is an abbreviation for multiplexer.
 
+## Design goals
+
+* **Resource efficiency**: Multiplex subchannels over shared IPC channels to reduce OS resource consumption (file descriptors, sockets, etc.). Subsenders can be cloned and sent without consuming additional OS resources. See [When is multiplexing beneficial?](#when-is-multiplexing-beneficial) for more detail.
+* **Drop-in replacement for Rust channels**: The API mirrors `channel()` / `Sender<T>` / `Receiver<T>` as closely as possible. See the mapping table below and [Semantic differences from Rust channels](#semantic-differences-from-rust-channels) for the differences.
+* **Sender mobility**: `SubSender` implements `Serialize` and `Deserialize`, so subsenders can be sent over subchannels to other processes, enabling dynamic communication topologies. See [Subsender serialization](#subsender-serialization) for how this is implemented efficiently.
+* **Disconnection detection**: Detect when all senders or the receiver of a subchannel have been dropped, even across process boundaries and even when subsenders are in-flight (being sent over a subchannel but not yet received). See [Subsender lifecycle](#subsender-lifecycle) for the mechanism.
+* **Deadlock avoidance**: Proactively drain IPC channels to prevent buffer-full blocking, which could cause deadlocks when many subchannels share an IPC channel. See [Blocking sends and deadlocks](#blocking-sends-and-deadlocks) for background.
+
 As much as possible, `ipc-channel-mux` has been designed to be a drop-in replacement for Rust channels. The mapping from the Rust channel APIs to subchannel APIs is as follows:
 
 * `channel()` → `mux::Channel::new().unwrap().sub_channel();`
@@ -67,6 +75,20 @@ This allows receiving code to utilise Crossbeam features.
 
 The router is in the `mux::subchannel_router` module.
 
+### Opaque senders and receivers
+
+`OpaqueSubSender` and `OpaqueSubReceiver` are type-erased versions of `SubSender<T>` and `SubReceiver<T>`. They are useful when the message type is not known statically or when handling heterogeneous channels. For example, the router uses `OpaqueSubReceiver` internally so it can manage receivers of different message types together.
+
+To convert between typed and opaque forms, use `to_opaque()` and `to::<T>()`:
+
+~~~Rust
+let opaque_tx: OpaqueSubSender = tx.to_opaque();
+let tx: SubSender<MyMessage> = opaque_tx.to();
+
+let opaque_rx: OpaqueSubReceiver = rx.to_opaque();
+let rx: SubReceiver<MyMessage> = opaque_rx.to();
+~~~
+
 ## Semantic differences from Rust channels
 
 * Rust channels can be either unbounded or bounded whereas subchannels are always unbounded and `send()` never blocks.
@@ -76,7 +98,7 @@ The router is in the `mux::subchannel_router` module.
 
 ## Semantic differences from IPC channels
 
-IPC channels are provided by Servo's [ipc-channel](https://github.com/server/ipc-channel) crate which the implementation of `ipc-channel-mux` uses for IPC communication.
+IPC channels are provided by Servo's [ipc-channel](https://github.com/servo/ipc-channel) crate which the implementation of `ipc-channel-mux` uses for IPC communication.
 
 * Subchannel creation requires the underlying IPC channel to have been created already. Reusing the underlying channel when creating multiple subchannels enables those subchannels to be multiplexed over the underlying channel.
 * Subchannel receivers, or _subreceivers_, may not be sent or received. This is a consequence of the MPSC nature of the underlying IPC channel: sending a subreceiver would entail sending the underlying IPC receiver and this would break any other subreceivers using that IPC receiver.
@@ -178,6 +200,26 @@ The following sections describe the principles of multiplexing subchannels over 
 ### Subchannel identifiers
 
 Each subchannel needs a separate identifier. This is used to _tag_ messages for that subchannel before they are sent to the IPC channel underlying the subchannel. On message receipt, the subchannel id. is used to route the message to the appropriate subchannel.
+
+### Subsender serialization
+
+When a subsender is sent over a subchannel, the underlying IPC sender must be transmitted to the receiving process. To avoid redundantly transmitting the same IPC sender multiple times, the implementation uses a UUID-based optimization:
+
+* The first time a subsender is sent over a particular IPC channel, both the IPC sender and a UUID identifying it are transmitted.
+* Subsequent sends of clones of the same subsender over the same IPC channel transmit only the UUID — the receiving process already has the IPC sender from the first transmission.
+
+This is tracked using two complementary data structures: a `Source` (using weak references to track which endpoints have been sent from the sending side) and a `Target` (mapping UUIDs to endpoints on the receiving side). Thread-local context is used during serialization and deserialization to pass this metadata without changing serde's signatures.
+
+### Subsender lifecycle
+
+Subsenders have a complex lifecycle because they can be cloned, sent over subchannels to other processes, and dropped independently. A subsender that has been sent over a subchannel but not yet received by the other process is said to be _in-flight_.
+
+It would be incorrect to report a subchannel as disconnected while a subsender is still in-flight, since the receiving process may yet receive it and use it to send messages. The `SubSenderStateMachine` manages this by tracking:
+
+* **Sources**: the set of processes that currently hold a copy of the subsender.
+* **In-flight entries**: subsenders that have been serialized and sent but not yet deserialized and received.
+
+A subchannel is only considered disconnected when all sources have dropped their copies _and_ no copies are in-flight. Periodic probing detects process crashes that might prevent in-flight subsenders from ever being received.
 
 ### When to block
 
