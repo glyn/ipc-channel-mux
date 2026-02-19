@@ -1004,12 +1004,11 @@ impl Demuxer {
                     },
                 ));
                 match sent {
-                    Some(Ok(())) => Ok(()),
-                    // SubSenderStateMachine's internal channel disconnected.
-                    // This can happen transiently between attach() and switch_sender()
-                    // when the receiver hasn't been added to a SubReceiverSet yet.
-                    // Drop the message rather than propagating a fatal error.
-                    Some(Err(_)) => Ok(()),
+                    // In the case of an error, SubSenderStateMachine's internal channel
+                    // disconnected. This can happen transiently between attach() and
+                    // switch_sender() when the receiver hasn't been added to a
+                    // SubReceiverSet yet. Drop the message rather than propagating a fatal error.
+                    Some(_) => Ok(()),
                     // SubSenderStateMachine was already disconnected (maybe taken by poll).
                     None => Err(MuxError::Disconnected),
                 }
@@ -2169,7 +2168,8 @@ impl MultiReceiverSet {
     fn register_pending(&mut self) -> Result<(), MuxError> {
         if let Some((ipc_receiver, multi_receiver)) = self.pending.take() {
             let id = self.ipc_receiver_set.add(ipc_receiver)?;
-            self.multi_receivers.insert(id, Arc::downgrade(&multi_receiver));
+            self.multi_receivers
+                .insert(id, Arc::downgrade(&multi_receiver));
         }
         Ok(())
     }
@@ -2181,11 +2181,21 @@ impl MultiReceiverSet {
     fn close(&self) {
         for mr in self.multi_receivers.values() {
             if let Some(mr) = mr.upgrade() {
-                mr.receiver_demuxer.demuxer.lock().unwrap().ipc_senders.clear();
+                mr.receiver_demuxer
+                    .demuxer
+                    .lock()
+                    .unwrap()
+                    .ipc_senders
+                    .clear();
             }
         }
         if let Some((_, ref mr)) = self.pending {
-            mr.receiver_demuxer.demuxer.lock().unwrap().ipc_senders.clear();
+            mr.receiver_demuxer
+                .demuxer
+                .lock()
+                .unwrap()
+                .ipc_senders
+                .clear();
         }
     }
 

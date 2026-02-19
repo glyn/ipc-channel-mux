@@ -214,7 +214,10 @@ impl RouterChannel {
     where
         T: Serialize + for<'de> Deserialize<'de> + 'static,
     {
-        let (tx, rx) = self.chan.sub_channel::<T>().map_err(|_| RouterError::ShuttingDown)?;
+        let (tx, rx) = self
+            .chan
+            .sub_channel::<T>()
+            .map_err(|_| RouterError::ShuttingDown)?;
         self.proxy.add_typed_route(rx, callback)?;
         Ok(tx)
     }
@@ -228,7 +231,10 @@ impl RouterChannel {
     where
         T: for<'de> Deserialize<'de> + Serialize + Send + 'static,
     {
-        let (tx, rx) = self.chan.sub_channel::<T>().map_err(|_| RouterError::ShuttingDown)?;
+        let (tx, rx) = self
+            .chan
+            .sub_channel::<T>()
+            .map_err(|_| RouterError::ShuttingDown)?;
         self.proxy
             .route_subreceiver_to_crossbeam_sender(rx, crossbeam_sender)?;
         Ok(tx)
@@ -242,7 +248,10 @@ impl RouterChannel {
     where
         T: for<'de> Deserialize<'de> + Serialize + Send + 'static,
     {
-        let (tx, rx) = self.chan.sub_channel::<T>().map_err(|_| RouterError::ShuttingDown)?;
+        let (tx, rx) = self
+            .chan
+            .sub_channel::<T>()
+            .map_err(|_| RouterError::ShuttingDown)?;
         Ok((
             tx,
             self.proxy.route_subreceiver_to_new_crossbeam_receiver(rx)?,
