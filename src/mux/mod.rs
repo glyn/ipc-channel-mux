@@ -165,7 +165,7 @@ pub struct Channel {
 /// Channel2 wraps an IPC channel and is used to construct subchannels.
 pub struct Channel2 {
     multi_sender: Arc<Mutex<MultiSender>>,
-    multi_receiver: Weak<MultiReceiver2>,
+    multi_receiver: Arc<MultiReceiver2>,
 }
 
 impl Channel {
@@ -215,7 +215,7 @@ impl Channel2 {
         let (ms, mr) = multi_channel2()?;
         Ok(Channel2 {
             multi_sender: ms,
-            multi_receiver: Arc::downgrade(&mr),
+            multi_receiver: mr,
         })
     }
 
@@ -226,7 +226,6 @@ impl Channel2 {
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {
-        let mr = self.multi_receiver.upgrade().ok_or(MuxError::Disconnected)?;
         let scs = SubChannelSender::new(Arc::clone(&self.multi_sender));
         let scid = scs.sub_channel_id();
         self.multi_sender
@@ -236,7 +235,7 @@ impl Channel2 {
             .lock()
             .unwrap()
             .insert(scid, subchannel_lifecycle::SubReceiverProxy::new());
-        let scr = MultiReceiver2::attach(&mr, scid);
+        let scr = MultiReceiver2::attach(&self.multi_receiver, scid);
         Ok((
             SubSender {
                 sub_channel_sender: scs,
@@ -1004,10 +1003,15 @@ impl Demuxer {
                         senders: srs,
                     },
                 ));
-                if let Some(result) = sent {
-                    result.map_err(|_| MuxError::Disconnected)
-                } else {
-                    Err(MuxError::Disconnected)
+                match sent {
+                    Some(Ok(())) => Ok(()),
+                    // SubSenderStateMachine's internal channel disconnected.
+                    // This can happen transiently between attach() and switch_sender()
+                    // when the receiver hasn't been added to a SubReceiverSet yet.
+                    // Drop the message rather than propagating a fatal error.
+                    Some(Err(_)) => Ok(()),
+                    // SubSenderStateMachine was already disconnected (maybe taken by poll).
+                    None => Err(MuxError::Disconnected),
                 }
             } else {
                 // Send ReceiveFailed to members of srs
@@ -1649,10 +1653,10 @@ impl Drop for SubChannelReceiver {
     }
 }
 
-// No custom Drop for SubChannelReceiver2: Channel2 holds only a Weak<MultiReceiver2>,
-// so dropping the last SubChannelReceiver2 (and MultiReceiverSet entry) drops the
-// MultiReceiver2 and its Demuxer, closing the response channel IPC senders.
-// is_receiver_connected detects this closure and returns false.
+// No custom Drop for SubChannelReceiver2: SubReceiverSet::drop calls
+// MultiReceiverSet::close() which clears the demuxer's ipc_senders,
+// closing the response channels. is_receiver_connected detects this
+// closure via IpcError and returns false.
 
 impl fmt::Debug for SubChannelReceiver {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -2116,6 +2120,14 @@ impl SubReceiverSet {
     }
 }
 
+impl Drop for SubReceiverSet {
+    fn drop(&mut self) {
+        // Close all MultiReceiver2s' response channels so that is_receiver_connected
+        // detects the disconnection via IpcError on the response channel.
+        self.multi_receiver_set.lock().unwrap().close();
+    }
+}
+
 struct MultiReceiverSet {
     ipc_receiver_set: IpcReceiverSet,
     // Weak refs to avoid a reference cycle: MultiReceiver2 → MultiReceiverSet → MultiReceiver2.
@@ -2160,6 +2172,21 @@ impl MultiReceiverSet {
             self.multi_receivers.insert(id, Arc::downgrade(&multi_receiver));
         }
         Ok(())
+    }
+
+    // Close all MultiReceiver2s in this set by clearing their demuxer's ipc_senders.
+    // This causes is_receiver_connected to detect IpcError on the response channel,
+    // signalling disconnection to MultiSenders without needing a SubReceiverDisconnected broadcast.
+    // Called from SubReceiverSet::drop to handle router shutdown.
+    fn close(&self) {
+        for mr in self.multi_receivers.values() {
+            if let Some(mr) = mr.upgrade() {
+                mr.receiver_demuxer.demuxer.lock().unwrap().ipc_senders.clear();
+            }
+        }
+        if let Some((_, ref mr)) = self.pending {
+            mr.receiver_demuxer.demuxer.lock().unwrap().ipc_senders.clear();
+        }
     }
 
     // Return true if and only if the MultiReceiverSet is empty (no IPC receivers

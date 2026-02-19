@@ -833,3 +833,43 @@ fn router_simple_global() {
     // Shutdown the router, again (should be a no-op).
     ROUTER.shutdown();
 }
+
+#[test]
+fn router_channel_usable_after_all_senders_dropped() {
+    let proxy = RouterProxy::new();
+    let channel = RouterProxy::new_router_channel(&proxy).unwrap();
+
+    // Create a routed subchannel.
+    let (callback_fired_sender, callback_fired_receiver) = crossbeam_channel::unbounded::<usize>();
+    let tx = channel
+        .add_typed_route(Box::new(move |message| {
+            callback_fired_sender.send(message.unwrap()).unwrap();
+        }))
+        .unwrap();
+
+    // Send and receive a message to confirm the route works.
+    tx.send(42).unwrap();
+    assert_eq!(callback_fired_receiver.recv().unwrap(), 42);
+
+    // Drop the sender. The router will process ChannelClosed, dropping
+    // the SubChannelReceiver2.
+    drop(tx);
+
+    // Wait for the router to process the disconnection.
+    thread::sleep(std::time::Duration::from_millis(100));
+
+    // The RouterChannel should still be usable to add new routes
+    // even though all previous senders were dropped.
+    let (callback_fired_sender2, callback_fired_receiver2) =
+        crossbeam_channel::unbounded::<usize>();
+    let tx2 = channel
+        .add_typed_route(Box::new(move |message| {
+            callback_fired_sender2.send(message.unwrap()).unwrap();
+        }))
+        .expect("RouterChannel should still be usable after all senders dropped");
+
+    tx2.send(99).unwrap();
+    assert_eq!(callback_fired_receiver2.recv().unwrap(), 99);
+
+    proxy.shutdown();
+}

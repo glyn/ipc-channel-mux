@@ -92,10 +92,16 @@ impl RouterProxy {
             return Err(RouterError::ShuttingDown);
         }
 
+        let (ack_sender, ack_receiver) = crossbeam_channel::bounded(1);
         comm.msg_sender
-            .send(RouterMsg::AddRoute(subreceiver, callback))
+            .send(RouterMsg::AddRoute(subreceiver, callback, ack_sender))
             .unwrap();
         comm.wakeup_sender.send(()).unwrap();
+        // Wait for the router to process the AddRoute (including switch_sender)
+        // before returning. This ensures that subsequent sends on the SubSender
+        // find a valid internal channel in the SubSenderStateMachine.
+        drop(comm);
+        ack_receiver.recv().unwrap();
         Ok(())
     }
 
@@ -298,10 +304,11 @@ impl Router {
                     // channel.
                     SubSelectionResult::MessageReceived(id, _) if id == self.msg_wakeup_id => {
                         match self.msg_receiver.recv().unwrap() {
-                            RouterMsg::AddRoute(receiver, handler) => {
+                            RouterMsg::AddRoute(receiver, handler, ack_sender) => {
                                 let new_receiver_id =
                                     self.subreceiver_set.add_opaque(receiver).unwrap();
                                 self.handlers.insert(new_receiver_id, handler);
+                                let _ = ack_sender.send(());
                             },
                             RouterMsg::Shutdown(sender) => {
                                 sender
@@ -327,7 +334,8 @@ impl Router {
 enum RouterMsg {
     /// Register the receiver OpaqueSubReceiver for listening for events on.
     /// When a message comes from this receiver, call RouterHandler.
-    AddRoute(OpaqueSubReceiver2, RouterHandler),
+    /// The Sender<()> is used to acknowledge that the route has been added.
+    AddRoute(OpaqueSubReceiver2, RouterHandler, Sender<()>),
     /// Shutdown the router, providing a sender to send an acknowledgement.
     Shutdown(Sender<()>),
 }
