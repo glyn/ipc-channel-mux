@@ -222,7 +222,7 @@ impl Channel2 {
     /// Construct a new subchannel of a [Channel]. The subchannel has
     /// a [SubSender] and a [SubReceiver].
     #[instrument(level = "debug", skip(self))]
-    pub fn sub_channel<T>(&self) -> Result<(SubSender<T>, SubReceiver2<T>), MuxError>
+    pub fn sub_channel<T>(&self) -> (SubSender<T>, SubReceiver2<T>)
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {
@@ -236,7 +236,7 @@ impl Channel2 {
             .unwrap()
             .insert(scid, subchannel_lifecycle::SubReceiverProxy::new());
         let scr = MultiReceiver2::attach(&self.multi_receiver, scid);
-        Ok((
+        (
             SubSender {
                 sub_channel_sender: scs,
                 phantom: PhantomData,
@@ -245,7 +245,7 @@ impl Channel2 {
                 sub_channel_receiver: scr,
                 phantom: PhantomData,
             },
-        ))
+        )
     }
 }
 

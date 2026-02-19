@@ -53,7 +53,7 @@ impl RouterProxy {
         // Router proxy takes both sending ends.
         let (msg_sender, msg_receiver) = crossbeam_channel::unbounded();
         let chan = mux::Channel2::new().unwrap();
-        let (wakeup_sender, wakeup_receiver) = chan.sub_channel().unwrap();
+        let (wakeup_sender, wakeup_receiver) = chan.sub_channel();
         let handle = thread::Builder::new()
             .name("router-proxy".to_string())
             .spawn(move || Router::new(msg_receiver, wakeup_receiver).run())
@@ -214,10 +214,7 @@ impl RouterChannel {
     where
         T: Serialize + for<'de> Deserialize<'de> + 'static,
     {
-        let (tx, rx) = self
-            .chan
-            .sub_channel::<T>()
-            .map_err(|_| RouterError::ShuttingDown)?;
+        let (tx, rx) = self.chan.sub_channel::<T>();
         self.proxy.add_typed_route(rx, callback)?;
         Ok(tx)
     }
@@ -231,10 +228,7 @@ impl RouterChannel {
     where
         T: for<'de> Deserialize<'de> + Serialize + Send + 'static,
     {
-        let (tx, rx) = self
-            .chan
-            .sub_channel::<T>()
-            .map_err(|_| RouterError::ShuttingDown)?;
+        let (tx, rx) = self.chan.sub_channel::<T>();
         self.proxy
             .route_subreceiver_to_crossbeam_sender(rx, crossbeam_sender)?;
         Ok(tx)
@@ -248,10 +242,7 @@ impl RouterChannel {
     where
         T: for<'de> Deserialize<'de> + Serialize + Send + 'static,
     {
-        let (tx, rx) = self
-            .chan
-            .sub_channel::<T>()
-            .map_err(|_| RouterError::ShuttingDown)?;
+        let (tx, rx) = self.chan.sub_channel::<T>();
         Ok((
             tx,
             self.proxy.route_subreceiver_to_new_crossbeam_receiver(rx)?,
