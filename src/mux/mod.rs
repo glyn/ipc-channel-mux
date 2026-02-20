@@ -136,7 +136,7 @@ use ipc_channel::ipc::{
 use log;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::{HashMap, VecDeque};
-use std::fmt::{self, Debug, Display, Formatter};
+use std::fmt::{self, Debug, Formatter};
 use std::io;
 use std::marker::PhantomData;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -149,14 +149,15 @@ use weak_table::WeakValueHashMap;
 
 mod channel_identification;
 mod error;
+mod protocol;
 mod subchannel_lifecycle;
 pub mod subchannel_router;
 
 pub use error::MuxError;
-
-const EMPTY_SUBCHANNEL_ID: SubChannelId =
-    SubChannelId(uuid::uuid!("11111111-10b1-428f-9447-cb680e5fe0c8"));
-const ORIGIN: Uuid = uuid::uuid!("00000000-10b1-428f-9447-cb680e5fe0c8");
+use protocol::{
+    ClientId, EMPTY_SUBCHANNEL_ID, IpcSenderAndOrId, MultiMessage, MultiResponse, ORIGIN,
+    SubChannelId, SubChannelSenderIds,
+};
 
 /// Channel wraps an IPC channel and is used to construct subchannels.
 pub struct Channel {
@@ -519,44 +520,6 @@ where
     }
 }
 
-#[derive(Eq, Clone, Copy, Debug, Hash, PartialEq, Serialize, Deserialize)]
-struct ClientId(Uuid);
-
-#[derive(Eq, Clone, Copy, Debug, Hash, PartialEq)]
-struct SubChannelId(Uuid);
-
-impl SubChannelId {
-    fn new() -> SubChannelId {
-        SubChannelId(Uuid::new_v4())
-    }
-}
-
-impl Serialize for SubChannelId {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        self.0.to_string().serialize(serializer)
-    }
-}
-
-impl Display for SubChannelId {
-    fn fmt(&self, formatter: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
-        std::fmt::Display::fmt(&self.0, formatter)
-    }
-}
-
-impl<'de> Deserialize<'de> for SubChannelId {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let content: String = String::deserialize(deserializer)?;
-        let uuid = Uuid::parse_str(&content).map_err(serde::de::Error::custom)?;
-        Ok(SubChannelId(uuid))
-    }
-}
-
 /// Sending end of a multiplexed channel.
 ///
 /// [MultiSender]: struct.MultiSender.html
@@ -577,7 +540,6 @@ impl fmt::Debug for MultiSender {
             .finish_non_exhaustive()
     }
 }
-
 
 impl MultiSender {
     #[instrument(level = "debug", ret, err(level = "debug"))]
@@ -1558,12 +1520,6 @@ impl Serialize for SubChannelSender {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
-struct SubChannelSenderIds {
-    sub_channel_id: SubChannelId,
-    ipc_sender_uuid: String,
-}
-
 struct SubChannelReceiver {
     multi_receiver: Arc<MultiReceiver>,
     sub_channel_id: SubChannelId,
@@ -1720,44 +1676,6 @@ impl SubChannelReceiver {
             }
         }
     }
-}
-
-/// MultiMessage is used to communicate across multiplexing channels.
-#[derive(Serialize, Deserialize, Debug)]
-enum MultiMessage {
-    Connect(IpcSender<MultiResponse>, ClientId),
-    Data(SubChannelId, Vec<u8>, Vec<(SubChannelId, IpcSenderAndOrId)>),
-    SubChannelId(SubChannelId, String),
-    Sending {
-        scid: SubChannelId,
-        via: SubChannelId,
-        via_chan: IpcSenderAndOrId,
-    },
-    ReceiveFailed {
-        scid: SubChannelId,
-        via: SubChannelId,
-    },
-    Received {
-        scid: SubChannelId,
-        via: SubChannelId,
-        new_source: Uuid,
-    },
-    Disconnect(SubChannelId, Uuid),
-    Probe(),
-}
-
-#[derive(Clone, Serialize, Deserialize, Debug)]
-enum IpcSenderAndOrId {
-    IpcSender(IpcSender<MultiMessage>, String),
-    IpcSenderId(String),
-}
-
-/// MultiResponse is used to communicate from the receiver of a multiplexing channel to the sender
-/// via an additional channel in the reverse direction.
-#[derive(Serialize, Deserialize, Debug)]
-enum MultiResponse {
-    /// The SubReceiver for the subchannel identified by the given subchannel id. has disconnected (been dropped).
-    SubReceiverDisconnected(SubChannelId),
 }
 
 /// Create a multiplexing channel that can be used to establish subchannels
