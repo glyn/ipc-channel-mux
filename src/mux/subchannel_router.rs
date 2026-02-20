@@ -145,10 +145,15 @@ impl RouterProxy {
     {
         self.add_typed_route(
             subreceiver,
-            Box::new(move |message| {
-                if let Ok(msg) = message {
-                    let _ = crossbeam_sender.send(msg);
-                }
+            Box::new(move |message| match message {
+                Ok(msg) => {
+                    if let Err(e) = crossbeam_sender.send(msg) {
+                        log::debug!("Failed to send routed message to crossbeam channel: {}", e);
+                    }
+                },
+                Err(e) => {
+                    log::debug!("Error deserializing routed message: {}", e);
+                },
             }),
         )
     }
@@ -180,13 +185,12 @@ impl RouterProxy {
         comm.shutdown = true;
 
         let (ack_sender, ack_receiver) = crossbeam_channel::unbounded();
-        if comm.wakeup_sender.send(()).is_ok() {
-            let _ = comm
-                .msg_sender
-                .send(RouterMsg::Shutdown(ack_sender))
-                .map(|()| {
-                    let _ = ack_receiver.recv();
-                });
+        if let Err(e) = comm.wakeup_sender.send(()) {
+            log::debug!("Failed to send wakeup during shutdown: {}", e);
+        } else if let Err(e) = comm.msg_sender.send(RouterMsg::Shutdown(ack_sender)) {
+            log::debug!("Failed to send shutdown message: {}", e);
+        } else if let Err(e) = ack_receiver.recv() {
+            log::debug!("Failed to receive shutdown ack: {}", e);
         }
         comm.handle
             .take()
@@ -324,20 +328,31 @@ impl Router {
                     // Message came from the RouterProxy. Listen on our `msg_receiver`
                     // channel.
                     SubSelectionResult::MessageReceived(id, _) if id == self.msg_wakeup_id => {
-                        let Ok(msg) = self.msg_receiver.recv() else {
-                            return;
+                        let msg = match self.msg_receiver.recv() {
+                            Ok(msg) => msg,
+                            Err(e) => {
+                                log::debug!("Router msg_receiver disconnected: {}", e);
+                                return;
+                            },
                         };
                         match msg {
                             RouterMsg::AddRoute(receiver, handler, ack_sender) => {
-                                if let Ok(new_receiver_id) =
-                                    self.subreceiver_set.add_opaque(receiver)
-                                {
-                                    self.handlers.insert(new_receiver_id, handler);
+                                match self.subreceiver_set.add_opaque(receiver) {
+                                    Ok(new_receiver_id) => {
+                                        self.handlers.insert(new_receiver_id, handler);
+                                    },
+                                    Err(e) => {
+                                        log::debug!("Failed to add route to subreceiver set: {}", e);
+                                    },
                                 }
-                                let _ = ack_sender.send(());
+                                if let Err(e) = ack_sender.send(()) {
+                                    log::debug!("Failed to send AddRoute ack: {}", e);
+                                }
                             },
                             RouterMsg::Shutdown(sender) => {
-                                let _ = sender.send(());
+                                if let Err(e) = sender.send(()) {
+                                    log::debug!("Failed to send shutdown ack: {}", e);
+                                }
                                 return;
                             },
                         }
