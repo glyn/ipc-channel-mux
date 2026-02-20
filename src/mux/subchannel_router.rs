@@ -342,7 +342,10 @@ impl Router {
                                         self.handlers.insert(new_receiver_id, handler);
                                     },
                                     Err(e) => {
-                                        log::debug!("Failed to add route to subreceiver set: {}", e);
+                                        log::debug!(
+                                            "Failed to add route to subreceiver set: {}",
+                                            e
+                                        );
                                     },
                                 }
                                 if let Err(e) = ack_sender.send(()) {

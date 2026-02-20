@@ -864,8 +864,7 @@ impl Demuxer {
                 if let Some(sm) = self.sub_channels.get(&scid) {
                     log::trace!("About to send disconnect to SubSenderStateMachine");
                     if let Some(sender) = sm.disconnect(source) {
-                        if let Err(e) = sender.send(ResolvedMessageOrDisconnect::Disconnect(scid))
-                        {
+                        if let Err(e) = sender.send(ResolvedMessageOrDisconnect::Disconnect(scid)) {
                             log::debug!("Failed to send disconnect: {}", e);
                         }
                     }
@@ -897,7 +896,10 @@ impl Demuxer {
                                 if let Err(e) =
                                     sender.send(ResolvedMessageOrDisconnect::Disconnect(scid))
                                 {
-                                    log::debug!("Failed to send disconnect after receive_failed: {}", e);
+                                    log::debug!(
+                                        "Failed to send disconnect after receive_failed: {}",
+                                        e
+                                    );
                                 }
                             }
                         },
@@ -909,9 +911,7 @@ impl Demuxer {
             MultiMessage::ReceiveFailed { scid, via } => {
                 if let Some(sm) = self.sub_channels.get(&scid) {
                     if let Some(sender) = sm.receive_failed(&via) {
-                        if let Err(e) =
-                            sender.send(ResolvedMessageOrDisconnect::Disconnect(scid))
-                        {
+                        if let Err(e) = sender.send(ResolvedMessageOrDisconnect::Disconnect(scid)) {
                             log::debug!("Failed to send disconnect after receive_failed: {}", e);
                         }
                     }
@@ -1307,7 +1307,10 @@ impl SubChannelDisconnector {
                 .ipc_sender
                 .send(MultiMessage::Disconnect(self.sub_channel_id, self.source))
             {
-                log::debug!("Failed to send disconnect (other end may have hung up): {}", e);
+                log::debug!(
+                    "Failed to send disconnect (other end may have hung up): {}",
+                    e
+                );
             }
         }
     }
@@ -1726,17 +1729,17 @@ impl SubChannelReceiver {
                     return result.map_err(From::from);
                 },
                 Err(mpsc::TryRecvError::Empty) => {
-                    let try_lock = self.multi_receiver.receiver_demuxer.demuxer.try_lock();
                     // If the mutex is locked, wait on the local channel.
-                    if try_lock.is_err() {
+                    let Ok(demuxer) = self.multi_receiver.receiver_demuxer.demuxer.try_lock()
+                    else {
                         wait_interval = Some(CONTENDED_WAIT_INTERVAL);
                         continue;
-                    }
+                    };
                     wait_interval = None;
                     // receive another message, possibly for another subchannel
                     let multi_receiver_result = MultiReceiver::try_recv_timeout(
                         &self.multi_receiver,
-                        try_lock.unwrap(),
+                        demuxer,
                         POLLING_INTERVAL,
                     );
                     log::trace!(
@@ -2084,7 +2087,12 @@ impl SubReceiverSet {
             let sub_sender_state_machine = demuxer
                 .sub_channels
                 .get(&receiver.sub_channel_receiver.sub_channel_id)
-                .unwrap();
+                .ok_or_else(|| {
+                    MuxError::InternalError(format!(
+                        "missing sub_channel for {}",
+                        receiver.sub_channel_receiver.sub_channel_id
+                    ))
+                })?;
             sub_sender_state_machine.switch_sender(self.tx.clone());
         }
 
@@ -2109,7 +2117,9 @@ impl SubReceiverSet {
                     payload,
                     senders,
                 })) => {
-                    let id = *self.ids.get(&scid).unwrap();
+                    let id = *self.ids.get(&scid).ok_or_else(|| {
+                        MuxError::InternalError(format!("missing id for subchannel {}", scid))
+                    })?;
                     results.push(SubSelectionResult::MessageReceived(
                         id,
                         RawMessage {
@@ -2120,7 +2130,12 @@ impl SubReceiverSet {
                     ));
                 },
                 Ok(ResolvedMessageOrDisconnect::Disconnect(scid)) => {
-                    let id = self.ids.remove(&scid).unwrap();
+                    let id = self.ids.remove(&scid).ok_or_else(|| {
+                        MuxError::InternalError(format!(
+                            "missing id for disconnected subchannel {}",
+                            scid
+                        ))
+                    })?;
                     self.rxs.remove(&id);
                     results.push(SubSelectionResult::ChannelClosed(id));
                 },
