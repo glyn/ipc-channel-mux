@@ -836,7 +836,7 @@ fn router_simple_global() {
 
 #[test]
 fn router_channel_usable_after_all_senders_dropped() {
-    let proxy = RouterProxy::new();
+    let proxy = RouterProxy::new().unwrap();
     let channel = RouterProxy::new_router_channel(&proxy).unwrap();
 
     // Create a routed subchannel.

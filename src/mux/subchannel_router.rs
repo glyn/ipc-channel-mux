@@ -29,7 +29,8 @@ use crate::mux::{
 /// Global object wrapping a `RouterProxy`.
 /// Add routes ([add_typed_route](RouterChannel::add_typed_route)), or route
 /// to crossbeam receivers (e.g. [route_to_new_crossbeam_receiver](RouterChannel::route_to_new_crossbeam_receiver)).
-pub static ROUTER: LazyLock<Arc<RouterProxy>> = LazyLock::new(RouterProxy::new);
+pub static ROUTER: LazyLock<Arc<RouterProxy>> =
+    LazyLock::new(|| RouterProxy::new().expect("Failed to create router"));
 
 /// A `RouterProxy` provides methods for establishing and talking to the router.
 pub struct RouterProxy {
@@ -47,25 +48,29 @@ impl RouterProxy {
     /// Spawn a router thread which waits for events on its registered `SubReceiver<T>`s.
     /// The `RouterProxy`'s methods communicate with the running router thread to
     /// register new `SubReceiver<T>`'s.
-    pub fn new() -> Arc<RouterProxy> {
+    pub fn new() -> Result<Arc<RouterProxy>, MuxError> {
         // Router acts like a receiver, running in its own thread with both
         // receiver ends.
         // Router proxy takes both sending ends.
         let (msg_sender, msg_receiver) = crossbeam_channel::unbounded();
-        let chan = mux::SelectableChannel::new().unwrap();
+        let chan = mux::SelectableChannel::new()?;
         let (wakeup_sender, wakeup_receiver) = chan.sub_channel();
         let handle = thread::Builder::new()
             .name("router-proxy".to_string())
-            .spawn(move || Router::new(msg_receiver, wakeup_receiver).run())
+            .spawn(move || {
+                Router::new(msg_receiver, wakeup_receiver)
+                    .expect("Failed to create router")
+                    .run();
+            })
             .expect("Failed to spawn router proxy thread");
-        Arc::new(RouterProxy {
+        Ok(Arc::new(RouterProxy {
             comm: Mutex::new(RouterProxyComm {
                 msg_sender,
                 wakeup_sender,
                 shutdown: false,
                 handle: Some(handle),
             }),
-        })
+        }))
     }
 
     /// Create a new `RouterChannel`, which is used to construct routed subchannels.
@@ -95,13 +100,17 @@ impl RouterProxy {
         let (ack_sender, ack_receiver) = crossbeam_channel::bounded(1);
         comm.msg_sender
             .send(RouterMsg::AddRoute(subreceiver, callback, ack_sender))
-            .unwrap();
-        comm.wakeup_sender.send(()).unwrap();
+            .map_err(|e| RouterError::CommError(format!("failed to send route: {}", e)))?;
+        comm.wakeup_sender
+            .send(())
+            .map_err(|e| RouterError::CommError(format!("failed to send wakeup: {}", e)))?;
         // Wait for the router to process the AddRoute (including switch_sender)
         // before returning. This ensures that subsequent sends on the SubSender
         // find a valid internal channel in the SubSenderStateMachine.
         drop(comm);
-        ack_receiver.recv().unwrap();
+        ack_receiver
+            .recv()
+            .map_err(|e| RouterError::CommError(format!("failed to receive ack: {}", e)))?;
         Ok(())
     }
 
@@ -136,7 +145,16 @@ impl RouterProxy {
     {
         self.add_typed_route(
             subreceiver,
-            Box::new(move |message| drop(crossbeam_sender.send(message.unwrap()))),
+            Box::new(move |message| match message {
+                Ok(msg) => {
+                    if let Err(e) = crossbeam_sender.send(msg) {
+                        log::debug!("Failed to send routed message to crossbeam channel: {}", e);
+                    }
+                },
+                Err(e) => {
+                    log::debug!("Error deserializing routed message: {}", e);
+                },
+            }),
         )
     }
 
@@ -167,15 +185,13 @@ impl RouterProxy {
         comm.shutdown = true;
 
         let (ack_sender, ack_receiver) = crossbeam_channel::unbounded();
-        comm.wakeup_sender
-            .send(())
-            .map(|()| {
-                comm.msg_sender
-                    .send(RouterMsg::Shutdown(ack_sender))
-                    .unwrap();
-                ack_receiver.recv().unwrap();
-            })
-            .unwrap();
+        if let Err(e) = comm.wakeup_sender.send(()) {
+            log::debug!("Failed to send wakeup during shutdown: {}", e);
+        } else if let Err(e) = comm.msg_sender.send(RouterMsg::Shutdown(ack_sender)) {
+            log::debug!("Failed to send shutdown message: {}", e);
+        } else if let Err(e) = ack_receiver.recv() {
+            log::debug!("Failed to receive shutdown ack: {}", e);
+        }
         comm.handle
             .take()
             .expect("Should have a join handle at shutdown")
@@ -201,6 +217,12 @@ pub enum RouterError {
     /// The router is shutting down.
     #[error("Router shutting down")]
     ShuttingDown,
+    /// An error occurred communicating with the router thread.
+    #[error("Router communication error: {0}")]
+    CommError(String),
+    /// An error from the underlying mux layer.
+    #[error("Mux error: {0}")]
+    MuxError(#[from] MuxError),
 }
 
 impl RouterChannel {
@@ -274,15 +296,15 @@ impl Router {
     fn new(
         msg_receiver: Receiver<RouterMsg>,
         wakeup_receiver: SelectableSubReceiver<()>,
-    ) -> Router {
-        let mut subreceiver_set = SubReceiverSet::new().unwrap();
-        let msg_wakeup_id = subreceiver_set.add(wakeup_receiver).unwrap();
-        Router {
+    ) -> Result<Router, MuxError> {
+        let mut subreceiver_set = SubReceiverSet::new()?;
+        let msg_wakeup_id = subreceiver_set.add(wakeup_receiver)?;
+        Ok(Router {
             msg_receiver,
             msg_wakeup_id,
             subreceiver_set,
             handlers: HashMap::new(),
-        }
+        })
     }
 
     /// Continuously loop waiting for wakeup signals from router proxy.
@@ -306,27 +328,46 @@ impl Router {
                     // Message came from the RouterProxy. Listen on our `msg_receiver`
                     // channel.
                     SubSelectionResult::MessageReceived(id, _) if id == self.msg_wakeup_id => {
-                        match self.msg_receiver.recv().unwrap() {
+                        let msg = match self.msg_receiver.recv() {
+                            Ok(msg) => msg,
+                            Err(e) => {
+                                log::debug!("Router msg_receiver disconnected: {}", e);
+                                return;
+                            },
+                        };
+                        match msg {
                             RouterMsg::AddRoute(receiver, handler, ack_sender) => {
-                                let new_receiver_id =
-                                    self.subreceiver_set.add_opaque(receiver).unwrap();
-                                self.handlers.insert(new_receiver_id, handler);
-                                let _ = ack_sender.send(());
+                                match self.subreceiver_set.add_opaque(receiver) {
+                                    Ok(new_receiver_id) => {
+                                        self.handlers.insert(new_receiver_id, handler);
+                                    },
+                                    Err(e) => {
+                                        log::debug!(
+                                            "Failed to add route to subreceiver set: {}",
+                                            e
+                                        );
+                                    },
+                                }
+                                if let Err(e) = ack_sender.send(()) {
+                                    log::debug!("Failed to send AddRoute ack: {}", e);
+                                }
                             },
                             RouterMsg::Shutdown(sender) => {
-                                sender
-                                    .send(())
-                                    .expect("Failed to send comfirmation of shutdown.");
+                                if let Err(e) = sender.send(()) {
+                                    log::debug!("Failed to send shutdown ack: {}", e);
+                                }
                                 return;
                             },
                         }
                     },
                     // Event from one of our registered receivers, call callback.
                     SubSelectionResult::MessageReceived(id, message) => {
-                        self.handlers.get_mut(&id).unwrap()(message);
+                        if let Some(handler) = self.handlers.get_mut(&id) {
+                            handler(message);
+                        }
                     },
                     SubSelectionResult::ChannelClosed(id) => {
-                        let _ = self.handlers.remove(&id).unwrap();
+                        self.handlers.remove(&id);
                     },
                 }
             }

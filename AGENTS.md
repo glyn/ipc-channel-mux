@@ -1,0 +1,9 @@
+# Policies
+
+## Error handling
+
+The code should return errors rather than use unwrap(), except in examples, tests, benchmarks, spawned threads and processes, and for unwrapping MutexGuards.
+
+In spawned threads and processes using except() rather than unwrap().
+
+Do not swallow errors, log them using log::debug!().

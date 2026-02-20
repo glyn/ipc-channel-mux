@@ -16,7 +16,7 @@ fn router_throughput(c: &mut Criterion) {
     group.throughput(Throughput::Elements(50u64));
     group.sampling_mode(SamplingMode::Flat);
     group.measurement_time(Duration::from_secs(40));
-    let router_proxy = ipc_channel_mux::mux::subchannel_router::RouterProxy::new();
+    let router_proxy = ipc_channel_mux::mux::subchannel_router::RouterProxy::new().unwrap();
     let data =
         ipc_channel_mux::mux::subchannel_router::RouterProxy::new_router_channel(&router_proxy)
             .unwrap();
