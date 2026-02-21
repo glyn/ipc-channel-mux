@@ -10,22 +10,20 @@
 use crate::mux::channel_identification::{Source, Target};
 use crate::mux::error::MuxError;
 use crate::mux::protocol::{
-    ClientId, IpcSenderAndOrId, MultiMessage, MultiResponse, SubChannelId, SubChannelSenderIds,
-    EMPTY_SUBCHANNEL_ID, ORIGIN,
+    ClientId, EMPTY_SUBCHANNEL_ID, IpcSenderAndOrId, MultiMessage, MultiResponse, ORIGIN,
+    SubChannelId, SubChannelSenderIds,
 };
-use crate::mux::sender::{probe, MultiSender, SubChannelDisconnector, SubChannelSender};
+use crate::mux::sender::{MultiSender, SubChannelDisconnector, SubChannelSender, probe};
 use crate::mux::subchannel_lifecycle::SubSenderTracker;
 use ipc_channel::IpcError;
-use ipc_channel::ipc::{
-    IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender,
-};
+use ipc_channel::ipc::{IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fmt::{self, Formatter};
+use std::io;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
-use std::io;
 use tracing::instrument;
 use uuid::Uuid;
 use weak_table::WeakValueHashMap;
@@ -523,9 +521,7 @@ impl MultiReceiver {
             .sub_channels
             .insert(
                 sub_channel_id,
-                Arc::new(crate::mux::subchannel_lifecycle::SubSenderStateMachine::new(
-                    tx, ORIGIN,
-                )),
+                Arc::new(crate::mux::subchannel_lifecycle::SubSenderStateMachine::new(tx, ORIGIN)),
             );
         SubChannelReceiver {
             multi_receiver: Arc::clone(mr),
@@ -649,9 +645,7 @@ impl SelectableMultiReceiver {
             .sub_channels
             .insert(
                 sub_channel_id,
-                Arc::new(crate::mux::subchannel_lifecycle::SubSenderStateMachine::new(
-                    tx, ORIGIN,
-                )),
+                Arc::new(crate::mux::subchannel_lifecycle::SubSenderStateMachine::new(tx, ORIGIN)),
             );
         SelectableSubChannelReceiver {
             multi_receiver: Arc::clone(mr),
