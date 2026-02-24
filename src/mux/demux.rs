@@ -28,8 +28,8 @@ use tracing::instrument;
 use uuid::Uuid;
 use weak_table::WeakValueHashMap;
 
-pub(crate) const POLLING_INTERVAL: Duration = Duration::from_millis(100);
-pub(crate) const CONTENDED_WAIT_INTERVAL: Duration = Duration::from_micros(100);
+const POLLING_INTERVAL: Duration = Duration::from_millis(100);
+const CONTENDED_WAIT_INTERVAL: Duration = Duration::from_micros(100);
 
 pub(crate) type ProtoSender = (
     SubChannelId,
@@ -55,14 +55,14 @@ pub(crate) enum ResolvedMessageOrDisconnect {
     Disconnect(SubChannelId),
 }
 
-pub(crate) type IdSenders = VecDeque<(
+type IdSenders = VecDeque<(
     SubChannelId,
     Arc<Mutex<MultiSender>>,
     Uuid,
     Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
 )>;
 
-pub(crate) type IdSenderResults = VecDeque<(
+type IdSenderResults = VecDeque<(
     SubChannelId,
     Result<Arc<Mutex<MultiSender>>, MuxError>,
     Uuid,
@@ -70,7 +70,7 @@ pub(crate) type IdSenderResults = VecDeque<(
 )>;
 
 #[derive(Debug)]
-pub(crate) enum TryRecvError {
+enum TryRecvError {
     MuxError(MuxError),
     Empty,
     Handled,
@@ -88,7 +88,7 @@ impl fmt::Display for TryRecvError {
     }
 }
 
-pub(crate) type SubSenderStateMachine = crate::mux::subchannel_lifecycle::SubSenderStateMachine<
+type SubSenderStateMachine = crate::mux::subchannel_lifecycle::SubSenderStateMachine<
     mpsc::Sender<ResolvedMessageOrDisconnect>,
     ResolvedMessageOrDisconnect,
     mpsc::SendError<ResolvedMessageOrDisconnect>,
@@ -149,7 +149,7 @@ impl Demuxer {
 
     #[instrument(level = "debug", ret, err(level = "debug"))]
     #[allow(clippy::too_many_lines)]
-    pub(crate) fn handle(
+    fn handle(
         self: &mut Demuxer,
         msg: MultiMessage,
         multi_receiver_uuid: Uuid,
@@ -306,7 +306,7 @@ impl Demuxer {
         }
     }
 
-    pub(crate) fn process_results(results: IdSenderResults) -> Result<IdSenders, MuxError> {
+    fn process_results(results: IdSenderResults) -> Result<IdSenders, MuxError> {
         let mut srs: IdSenders = VecDeque::new();
         for (scid, res, uuid, disc) in results {
             srs.push_back((scid, res?, uuid, disc));
@@ -314,7 +314,7 @@ impl Demuxer {
         Ok(srs)
     }
 
-    pub(crate) fn ipcsender_from_sender_and_or_id(
+    fn ipcsender_from_sender_and_or_id(
         self: &mut Demuxer,
         s: &IpcSenderAndOrId,
     ) -> Result<Arc<Mutex<MultiSender>>, MuxError> {
@@ -344,7 +344,7 @@ impl Demuxer {
         }
     }
 
-    pub(crate) fn send(
+    fn send(
         self: &mut Demuxer,
         scid: SubChannelId,
         payload: Vec<u8>,
@@ -599,7 +599,7 @@ impl MultiReceiver {
     }
 
     #[instrument(level = "debug", err(level = "debug"))]
-    pub(crate) fn try_recv(mr: &Arc<MultiReceiver>) -> Result<(), TryRecvError> {
+    fn try_recv(mr: &Arc<MultiReceiver>) -> Result<(), TryRecvError> {
         let mut demuxer = mr.receiver_demuxer.demuxer.lock().unwrap();
         let result = mr.receiver_demuxer.ipc_receiver.try_recv();
         match result {
@@ -620,7 +620,7 @@ impl MultiReceiver {
 
     //#[instrument(level = "debug", err(level = "debug"))]
     #[inline(always)]
-    pub(crate) fn try_recv_timeout(
+    fn try_recv_timeout(
         mr: &Arc<MultiReceiver>,
         mut demuxer: MutexGuard<'_, Demuxer>,
         duration: Duration,
@@ -641,7 +641,7 @@ impl MultiReceiver {
     }
 
     #[instrument(level = "debug")]
-    pub(crate) fn drain(mr: &Arc<MultiReceiver>) {
+    fn drain(mr: &Arc<MultiReceiver>) {
         loop {
             let result = Self::try_recv(mr);
             match result {
@@ -668,7 +668,7 @@ impl MultiReceiver {
 
     // poll returns true if and only if a probe failed.
     #[instrument(level = "trace", ret)]
-    pub(crate) fn poll(&self, demuxer: MutexGuard<'_, Demuxer>) -> bool {
+    fn poll(&self, demuxer: MutexGuard<'_, Demuxer>) -> bool {
         // Snapshot Arc refs while holding the lock, then drop the lock before
         // running probes. This prevents a probe from blocking indefinitely
         // (e.g. when the remote socket buffer is full) while holding the
@@ -732,10 +732,7 @@ impl SelectableMultiReceiver {
     }
 
     #[instrument(level = "debug", ret, err(level = "debug"))]
-    pub(crate) fn handle(
-        mr: Arc<SelectableMultiReceiver>,
-        msg: MultiMessage,
-    ) -> Result<(), MuxError> {
+    fn handle(mr: Arc<SelectableMultiReceiver>, msg: MultiMessage) -> Result<(), MuxError> {
         let demuxer = &mut mr.receiver_demuxer.demuxer.lock().unwrap();
         if let MultiMessage::Data(scid, payload, ipc_senders) = msg {
             demuxer.send(scid, payload, &ipc_senders, &mr)
@@ -746,7 +743,7 @@ impl SelectableMultiReceiver {
 
     // poll returns true if and only if a probe failed.
     #[instrument(level = "trace", ret)]
-    pub(crate) fn poll(&self) -> bool {
+    fn poll(&self) -> bool {
         // Snapshot Arc refs while holding the lock, then drop the lock before
         // running probes. This prevents a probe from blocking indefinitely
         // (e.g. when the remote socket buffer is full) while holding the

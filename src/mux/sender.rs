@@ -351,9 +351,9 @@ impl fmt::Debug for SubChannelSender {
     }
 }
 
-pub(crate) type SubChannelSenderSendDetails = (SubChannelId, Uuid, Arc<IpcSender<MultiMessage>>);
+type SubChannelSenderSendDetails = (SubChannelId, Uuid, Arc<IpcSender<MultiMessage>>);
 
-pub(crate) type SubChannelSenderSerializedDetails = (
+type SubChannelSenderSerializedDetails = (
     SubChannelId,
     Arc<IpcSender<MultiMessage>>,
     Arc<Mutex<Source<Weak<IpcSender<MultiMessage>>>>>,
