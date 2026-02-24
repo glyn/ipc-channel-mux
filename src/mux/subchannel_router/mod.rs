@@ -23,7 +23,7 @@ use thiserror::Error;
 
 mod receiver_set;
 
-pub(crate) use receiver_set::{RawMessage, SubReceiverSet, SubSelectionResult};
+use receiver_set::{RawMessage, SubReceiverSet, SubSelectionResult};
 
 use crate::mux::{self, MuxError, OpaqueSelectableSubReceiver, SelectableSubReceiver, SubSender};
 
