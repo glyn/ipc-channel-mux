@@ -44,7 +44,7 @@ pub(crate) struct SubReceiverSet {
 ///
 /// [SubReceiverSet::select]: struct.SubReceiverSet.html#method.select
 #[derive(Debug)]
-pub enum SubSelectionResult {
+pub(crate) enum SubSelectionResult {
     /// A message received from the [`SubReceiver`] in the [`RawMessage`] form,
     /// identified by the `u64` value.
     MessageReceived(u64, RawMessage),
@@ -56,7 +56,7 @@ pub enum SubSelectionResult {
 
 /// A message received on a subchannel prior to deserialisation.
 #[derive(Debug)]
-pub struct RawMessage {
+pub(crate) struct RawMessage {
     payload: Vec<u8>,
     senders: VecDeque<ProtoSender>,
     scid: SubChannelId,

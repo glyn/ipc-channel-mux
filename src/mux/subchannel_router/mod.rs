@@ -21,10 +21,11 @@ use crossbeam_channel::{self, Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::mux::{
-    self, MuxError, OpaqueSelectableSubReceiver, RawMessage, SelectableSubReceiver, SubReceiverSet,
-    SubSelectionResult, SubSender,
-};
+mod receiver_set;
+
+pub(crate) use receiver_set::{RawMessage, SubReceiverSet, SubSelectionResult};
+
+use crate::mux::{self, MuxError, OpaqueSelectableSubReceiver, SelectableSubReceiver, SubSender};
 
 /// Global object wrapping a `RouterProxy`.
 /// Add routes ([add_typed_route](RouterChannel::add_typed_route)), or route
@@ -385,7 +386,7 @@ enum RouterMsg {
 }
 
 /// Function to call when a new event is received from the corresponding receiver.
-pub type RouterHandler = Box<dyn FnMut(RawMessage) + Send>;
+type RouterHandler = Box<dyn FnMut(RawMessage) + Send>;
 
 /// Like [RouterHandler] but includes the type that will be passed to the callback
 pub type TypedRouterHandler<T> = Box<dyn FnMut(Result<T, MuxError>) + Send>;

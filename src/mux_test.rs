@@ -8,8 +8,8 @@
 // except according to those terms.
 
 use crate::mux::{
-    self, SubOneShotServer, SubReceiver, SubSelectionResult, SubSender,
-    subchannel_router::{ROUTER, RouterError, RouterProxy},
+    self, SubOneShotServer, SubReceiver, SubSender,
+    subchannel_router::{ROUTER, RouterError, RouterProxy, SubReceiverSet, SubSelectionResult},
 };
 use std::thread;
 use test_log::test;
@@ -512,7 +512,7 @@ fn receiver_set_homogeneous() {
     let channel = mux::SelectableChannel::new().unwrap();
     let (tx1, rx1) = channel.sub_channel::<i32>();
 
-    let mut rx_set = mux::SubReceiverSet::new().unwrap();
+    let mut rx_set = SubReceiverSet::new().unwrap();
     let rx1_id = rx_set.add(rx1).unwrap();
 
     let (tx2, rx2) = channel.sub_channel::<String>();
@@ -554,7 +554,7 @@ fn receiver_set_heterogeneous() {
     let channel1 = mux::SelectableChannel::new().unwrap();
     let (tx1, rx1) = channel1.sub_channel::<i32>();
 
-    let mut rx_set = mux::SubReceiverSet::new().unwrap();
+    let mut rx_set = SubReceiverSet::new().unwrap();
     let rx1_id = rx_set.add(rx1).unwrap();
 
     let channel2 = mux::SelectableChannel::new().unwrap();
@@ -596,7 +596,7 @@ fn receiver_set_disconnect() {
     let channel = mux::SelectableChannel::new().unwrap();
     let (tx, rx) = channel.sub_channel::<i32>();
 
-    let mut rx_set = mux::SubReceiverSet::new().unwrap();
+    let mut rx_set = SubReceiverSet::new().unwrap();
     let rx_id = rx_set.add(rx).unwrap();
 
     drop(tx);
@@ -624,7 +624,7 @@ fn receiver_set_homogeneous_blocking() {
         let (tx2, rx2) = channel.sub_channel();
         bootstrap_sub_sender.send(tx2).unwrap();
 
-        let mut rx_set = mux::SubReceiverSet::new().unwrap();
+        let mut rx_set = SubReceiverSet::new().unwrap();
         let rx1_id = rx_set.add(rx1).unwrap();
         let rx2_id = rx_set.add(rx2).unwrap();
 
@@ -682,7 +682,7 @@ fn receiver_set_heterogeneous_blocking() {
         let (tx2, rx2) = channel2.sub_channel();
         bootstrap_sub_sender.send(tx2).unwrap();
 
-        let mut rx_set = mux::SubReceiverSet::new().unwrap();
+        let mut rx_set = SubReceiverSet::new().unwrap();
         let rx1_id = rx_set.add(rx1).unwrap();
         let rx2_id = rx_set.add(rx2).unwrap();
 
@@ -731,10 +731,10 @@ fn subreceivers_sharing_ipc_channel_cannot_belong_to_distinct_subreceiversets_wi
     let (_tx1, rx1) = channel.sub_channel::<i32>();
     let (_tx2, rx2) = channel.sub_channel::<i32>();
 
-    let mut rx_set1 = mux::SubReceiverSet::new().unwrap();
+    let mut rx_set1 = SubReceiverSet::new().unwrap();
     let _rx1_id = rx_set1.add(rx1).unwrap();
 
-    let mut rx_set2 = mux::SubReceiverSet::new().unwrap();
+    let mut rx_set2 = SubReceiverSet::new().unwrap();
 
     // Ensure rx_set2 has a non-empty IpcReceiverSet.
     let channel2 = mux::SelectableChannel::new().unwrap();
@@ -753,10 +753,10 @@ fn receiver_sets_with_subreceivers_sharing_ipc_channel() {
     let channel = mux::SelectableChannel::new().unwrap();
     let (tx1, rx1) = channel.sub_channel::<i32>();
 
-    let mut rx_set1 = mux::SubReceiverSet::new().unwrap();
+    let mut rx_set1 = SubReceiverSet::new().unwrap();
     let rx1_id = rx_set1.add(rx1).unwrap();
 
-    let mut rx_set2 = mux::SubReceiverSet::new().unwrap();
+    let mut rx_set2 = SubReceiverSet::new().unwrap();
     let (tx2, rx2) = channel.sub_channel::<String>();
     let rx2_id = rx_set2.add(rx2).unwrap();
 
