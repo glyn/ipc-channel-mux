@@ -26,12 +26,12 @@ use uuid::Uuid;
 ///
 /// [MultiSender]: struct.MultiSender.html
 pub(crate) struct MultiSender {
-    pub(crate) client_id: ClientId,
-    pub(crate) ipc_sender: Arc<IpcSender<MultiMessage>>,
-    pub(crate) uuid: Uuid,
-    pub(crate) sender_id: Arc<Mutex<Source<Weak<IpcSender<MultiMessage>>>>>,
-    pub(crate) response_receiver: IpcReceiver<MultiResponse>,
-    pub(crate) sub_receiver_proxies: Mutex<HashMap<SubChannelId, SubReceiverProxy>>,
+    client_id: ClientId,
+    ipc_sender: Arc<IpcSender<MultiMessage>>,
+    uuid: Uuid,
+    sender_id: Arc<Mutex<Source<Weak<IpcSender<MultiMessage>>>>>,
+    response_receiver: IpcReceiver<MultiResponse>,
+    sub_receiver_proxies: Mutex<HashMap<SubChannelId, SubReceiverProxy>>,
 }
 
 impl fmt::Debug for MultiSender {
@@ -44,6 +44,46 @@ impl fmt::Debug for MultiSender {
 }
 
 impl MultiSender {
+    pub(crate) fn new(
+        client_id: ClientId,
+        ipc_sender: Arc<IpcSender<MultiMessage>>,
+        uuid: Uuid,
+        sender_id: Arc<Mutex<Source<Weak<IpcSender<MultiMessage>>>>>,
+        response_receiver: IpcReceiver<MultiResponse>,
+    ) -> Self {
+        MultiSender {
+            client_id,
+            ipc_sender,
+            uuid,
+            sender_id,
+            response_receiver,
+            sub_receiver_proxies: Mutex::new(HashMap::new()),
+        }
+    }
+
+    pub(crate) fn clone_ipc_sender(&self) -> Arc<IpcSender<MultiMessage>> {
+        Arc::clone(&self.ipc_sender)
+    }
+
+    pub(crate) fn uuid(&self) -> Uuid {
+        self.uuid
+    }
+
+    pub(crate) fn send_message(&self, msg: MultiMessage) -> Result<(), MuxError> {
+        self.ipc_sender.send(msg).map_err(From::from)
+    }
+
+    pub(crate) fn probe(&self) -> bool {
+        self.ipc_sender.send(MultiMessage::Probe()).is_ok()
+    }
+
+    pub(crate) fn insert_sub_receiver_proxy(&self, scid: SubChannelId, proxy: SubReceiverProxy) {
+        self.sub_receiver_proxies
+            .lock()
+            .unwrap()
+            .insert(scid, proxy);
+    }
+
     #[instrument(level = "debug", ret, err(level = "debug"))]
     pub(crate) fn connect(name: String) -> Result<Arc<Mutex<MultiSender>>, MuxError> {
         let sender = Arc::new(IpcSender::connect(name)?);
@@ -56,7 +96,7 @@ impl MultiSender {
         ipc_sender_uuid: Uuid,
     ) -> Result<Arc<Mutex<MultiSender>>, MuxError> {
         let (response_sender, response_receiver) = ipc::channel()?;
-        let client_id = ClientId(Uuid::new_v4());
+        let client_id = ClientId::new();
         sender.send(MultiMessage::Connect(response_sender, client_id))?;
         Ok(Arc::new(Mutex::new(MultiSender {
             client_id,
@@ -107,19 +147,28 @@ impl MultiSender {
     }
 }
 
-#[instrument(level = "trace", ret)]
-pub(crate) fn probe(ipc_sender: Arc<IpcSender<MultiMessage>>) -> bool {
-    ipc_sender.send(MultiMessage::Probe()).is_ok()
-}
-
 pub(crate) struct SubChannelDisconnector {
-    pub(crate) sub_channel_id: SubChannelId,
-    pub(crate) ipc_sender: Arc<IpcSender<MultiMessage>>,
-    pub(crate) source: Uuid,
-    pub(crate) multi_sender: Arc<Mutex<MultiSender>>,
+    sub_channel_id: SubChannelId,
+    ipc_sender: Arc<IpcSender<MultiMessage>>,
+    source: Uuid,
+    multi_sender: Arc<Mutex<MultiSender>>,
 }
 
 impl SubChannelDisconnector {
+    pub(crate) fn new(
+        sub_channel_id: SubChannelId,
+        ipc_sender: Arc<IpcSender<MultiMessage>>,
+        source: Uuid,
+        multi_sender: Arc<Mutex<MultiSender>>,
+    ) -> Self {
+        SubChannelDisconnector {
+            sub_channel_id,
+            ipc_sender,
+            source,
+            multi_sender,
+        }
+    }
+
     pub(crate) fn dropped(&self) {
         if self
             .multi_sender
@@ -141,12 +190,12 @@ impl SubChannelDisconnector {
 }
 
 pub(crate) struct SubChannelSender {
-    pub(crate) sub_channel_id: SubChannelId,
-    pub(crate) ipc_sender: Arc<IpcSender<MultiMessage>>,
-    pub(crate) disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
-    pub(crate) ipc_sender_uuid: Uuid,
-    pub(crate) sender_id: Arc<Mutex<Source<Weak<IpcSender<MultiMessage>>>>>,
-    pub(crate) multi_sender: Arc<Mutex<MultiSender>>,
+    sub_channel_id: SubChannelId,
+    ipc_sender: Arc<IpcSender<MultiMessage>>,
+    disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
+    ipc_sender_uuid: Uuid,
+    sender_id: Arc<Mutex<Source<Weak<IpcSender<MultiMessage>>>>>,
+    multi_sender: Arc<Mutex<MultiSender>>,
 }
 
 impl Clone for SubChannelSender {
@@ -167,23 +216,40 @@ impl SubChannelSender {
     pub(crate) fn new(raw_self: Arc<Mutex<MultiSender>>) -> Self {
         let locked_self = raw_self.lock().unwrap();
         let scid = SubChannelId::new();
-        let sender_clone = locked_self.ipc_sender.clone();
+        let sender_clone = locked_self.clone_ipc_sender();
         let multi_sender_clone = raw_self.clone();
         SubChannelSender {
             sub_channel_id: scid,
-            ipc_sender: locked_self.ipc_sender.clone(),
+            ipc_sender: locked_self.clone_ipc_sender(),
             disconnector: Arc::new(SubSenderTracker::new(Box::new(move || {
-                let d = SubChannelDisconnector {
-                    sub_channel_id: scid,
-                    ipc_sender: sender_clone.clone(),
-                    source: ORIGIN,
-                    multi_sender: multi_sender_clone.clone(),
-                };
-                d.dropped();
+                SubChannelDisconnector::new(
+                    scid,
+                    sender_clone.clone(),
+                    ORIGIN,
+                    multi_sender_clone.clone(),
+                )
+                .dropped();
             }))),
-            ipc_sender_uuid: locked_self.uuid,
+            ipc_sender_uuid: locked_self.uuid(),
             sender_id: Arc::clone(&locked_self.sender_id),
             multi_sender: Arc::clone(&raw_self),
+        }
+    }
+
+    pub(crate) fn from_deserialized(
+        sub_channel_id: SubChannelId,
+        ipc_sender: Arc<IpcSender<MultiMessage>>,
+        disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
+        ipc_sender_uuid: Uuid,
+        multi_sender: Arc<Mutex<MultiSender>>,
+    ) -> Self {
+        SubChannelSender {
+            sub_channel_id,
+            ipc_sender,
+            disconnector,
+            ipc_sender_uuid,
+            sender_id: Arc::new(Mutex::new(Source::new())),
+            multi_sender,
         }
     }
 
@@ -357,10 +423,7 @@ impl Serialize for SubChannelSender {
             ));
         });
 
-        let scsi = SubChannelSenderIds {
-            sub_channel_id: self.sub_channel_id,
-            ipc_sender_uuid: self.ipc_sender_uuid.to_string(),
-        };
+        let scsi = SubChannelSenderIds::new(self.sub_channel_id, self.ipc_sender_uuid.to_string());
         log::trace!("Serializing {:?}", scsi);
         scsi.serialize(serializer)
     }

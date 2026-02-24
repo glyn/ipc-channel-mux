@@ -17,10 +17,16 @@ pub(crate) const EMPTY_SUBCHANNEL_ID: SubChannelId =
 pub(crate) const ORIGIN: Uuid = uuid::uuid!("00000000-10b1-428f-9447-cb680e5fe0c8");
 
 #[derive(Eq, Clone, Copy, Debug, Hash, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ClientId(pub(crate) Uuid);
+pub(crate) struct ClientId(Uuid);
+
+impl ClientId {
+    pub(crate) fn new() -> ClientId {
+        ClientId(Uuid::new_v4())
+    }
+}
 
 #[derive(Eq, Clone, Copy, Debug, Hash, PartialEq)]
-pub(crate) struct SubChannelId(pub(crate) Uuid);
+pub(crate) struct SubChannelId(Uuid);
 
 impl SubChannelId {
     pub(crate) fn new() -> SubChannelId {
@@ -56,8 +62,21 @@ impl<'de> Deserialize<'de> for SubChannelId {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub(crate) struct SubChannelSenderIds {
-    pub(crate) sub_channel_id: SubChannelId,
-    pub(crate) ipc_sender_uuid: String,
+    sub_channel_id: SubChannelId,
+    ipc_sender_uuid: String,
+}
+
+impl SubChannelSenderIds {
+    pub(crate) fn new(sub_channel_id: SubChannelId, ipc_sender_uuid: String) -> Self {
+        SubChannelSenderIds {
+            sub_channel_id,
+            ipc_sender_uuid,
+        }
+    }
+
+    pub(crate) fn sub_channel_id(&self) -> SubChannelId {
+        self.sub_channel_id
+    }
 }
 
 /// MultiMessage is used to communicate across multiplexing channels.

@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::mux::channel_identification::{Source, Target};
+use crate::mux::channel_identification::Source;
 use crate::mux::demux::{
     Demuxer, MultiReceiver, MultiReceiverSet, ReceiverDemuxer, SelectableMultiReceiver,
     SelectableReceiverDemuxer,
@@ -19,14 +19,12 @@ use crate::mux::subchannel_endpoint::{SelectableSubReceiver, SubReceiver, SubSen
 use crate::mux::subchannel_lifecycle;
 use ipc_channel::ipc::{self, IpcOneShotServer, IpcReceiver};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::fmt;
 use std::io;
 use std::marker::PhantomData;
 use std::sync::{Arc, Mutex};
 use tracing::instrument;
 use uuid::Uuid;
-use weak_table::WeakValueHashMap;
 
 /// Channel wraps an IPC channel and is used to construct subchannels.
 pub struct Channel {
@@ -63,21 +61,9 @@ impl Channel {
         self.multi_sender
             .lock()
             .unwrap()
-            .sub_receiver_proxies
-            .lock()
-            .unwrap()
-            .insert(scid, subchannel_lifecycle::SubReceiverProxy::new());
+            .insert_sub_receiver_proxy(scid, subchannel_lifecycle::SubReceiverProxy::new());
         let scr = MultiReceiver::attach(&self.multi_receiver, scid);
-        (
-            SubSender {
-                sub_channel_sender: scs,
-                phantom: PhantomData,
-            },
-            SubReceiver {
-                sub_channel_receiver: scr,
-                phantom: PhantomData,
-            },
-        )
+        (SubSender::from_sender(scs), SubReceiver::from_receiver(scr))
     }
 }
 impl SelectableChannel {
@@ -103,20 +89,11 @@ impl SelectableChannel {
         self.multi_sender
             .lock()
             .unwrap()
-            .sub_receiver_proxies
-            .lock()
-            .unwrap()
-            .insert(scid, subchannel_lifecycle::SubReceiverProxy::new());
+            .insert_sub_receiver_proxy(scid, subchannel_lifecycle::SubReceiverProxy::new());
         let scr = SelectableMultiReceiver::attach(&self.multi_receiver, scid);
         (
-            SubSender {
-                sub_channel_sender: scs,
-                phantom: PhantomData,
-            },
-            SelectableSubReceiver {
-                sub_channel_receiver: scr,
-                phantom: PhantomData,
-            },
+            SubSender::from_sender(scs),
+            SelectableSubReceiver::from_receiver(scr),
         )
     }
 }
@@ -183,13 +160,7 @@ where
         }
         let sub_receiver = MultiReceiver::attach(&multi_receiver, subchannel_id);
         let msg: T = sub_receiver.recv()?;
-        Ok((
-            SubReceiver {
-                sub_channel_receiver: sub_receiver,
-                phantom: PhantomData,
-            },
-            msg,
-        ))
+        Ok((SubReceiver::from_receiver(sub_receiver), msg))
     }
 }
 
@@ -206,30 +177,25 @@ where
 fn multi_channel() -> Result<(Arc<Mutex<MultiSender>>, Arc<MultiReceiver>), io::Error> {
     let (ipc_sender, ipc_receiver) = ipc::channel()?;
     let (ipc_response_sender, ipc_response_receiver) = ipc::channel()?;
-    let client_id = ClientId(Uuid::new_v4());
-    let mut senders = HashMap::new();
-    senders.insert(client_id, ipc_response_sender);
-    let multi_receiver = MultiReceiver {
-        ipc_receiver_uuid: Uuid::new_v4(),
-        receiver_demuxer: ReceiverDemuxer {
+    let client_id = ClientId::new();
+    let multi_receiver = MultiReceiver::new(
+        Uuid::new_v4(),
+        ReceiverDemuxer::new(
             ipc_receiver,
-            demuxer: Arc::new(Mutex::new(Demuxer {
-                ipc_senders: senders,
-                sub_channels: HashMap::new(),
-                disconnectors: WeakValueHashMap::new(),
-                ipc_senders_by_id: Target::new(),
-            })),
-        },
-    };
+            Arc::new(Mutex::new(Demuxer::with_sender(
+                client_id,
+                ipc_response_sender,
+            ))),
+        ),
+    );
     let multi_receiver_rc = Arc::new(multi_receiver);
-    let multi_sender = MultiSender {
+    let multi_sender = MultiSender::new(
         client_id,
-        ipc_sender: Arc::new(ipc_sender),
-        uuid: Uuid::new_v4(),
-        sender_id: Arc::new(Mutex::new(Source::new())),
-        response_receiver: ipc_response_receiver,
-        sub_receiver_proxies: Mutex::new(HashMap::new()),
-    };
+        Arc::new(ipc_sender),
+        Uuid::new_v4(),
+        Arc::new(Mutex::new(Source::new())),
+        ipc_response_receiver,
+    );
     Ok((Arc::new(Mutex::new(multi_sender)), multi_receiver_rc))
 }
 
@@ -238,35 +204,29 @@ fn selectable_multi_channel()
 -> Result<(Arc<Mutex<MultiSender>>, Arc<SelectableMultiReceiver>), io::Error> {
     let (ipc_sender, ipc_receiver) = ipc::channel()?;
     let (ipc_response_sender, ipc_response_receiver) = ipc::channel()?;
-    let client_id = ClientId(Uuid::new_v4());
-    let mut senders = HashMap::new();
-    senders.insert(client_id, ipc_response_sender);
+    let client_id = ClientId::new();
     #[allow(clippy::arc_with_non_send_sync)]
     let mrs = Arc::new(Mutex::new(MultiReceiverSet::new()?));
-    let multi_receiver_rc = Arc::new(SelectableMultiReceiver {
-        ipc_receiver_uuid: Uuid::new_v4(),
-        receiver_demuxer: SelectableReceiverDemuxer {
-            multi_receiver_set: Arc::clone(&mrs),
-            demuxer: Arc::new(Mutex::new(Demuxer {
-                ipc_senders: senders,
-                sub_channels: HashMap::new(),
-                disconnectors: WeakValueHashMap::new(),
-                ipc_senders_by_id: Target::new(),
-            })),
-        },
-    });
-    {
-        let mut mrs_mut = mrs.lock().unwrap();
-        mrs_mut.pending = Some((ipc_receiver, Arc::clone(&multi_receiver_rc)));
-    }
-    let multi_sender = MultiSender {
+    let multi_receiver_rc = Arc::new(SelectableMultiReceiver::new(
+        Uuid::new_v4(),
+        SelectableReceiverDemuxer::new(
+            Arc::clone(&mrs),
+            Arc::new(Mutex::new(Demuxer::with_sender(
+                client_id,
+                ipc_response_sender,
+            ))),
+        ),
+    ));
+    mrs.lock()
+        .unwrap()
+        .set_pending(ipc_receiver, Arc::clone(&multi_receiver_rc));
+    let multi_sender = MultiSender::new(
         client_id,
-        ipc_sender: Arc::new(ipc_sender),
-        uuid: Uuid::new_v4(),
-        sender_id: Arc::new(Mutex::new(Source::new())),
-        response_receiver: ipc_response_receiver,
-        sub_receiver_proxies: Mutex::new(HashMap::new()),
-    };
+        Arc::new(ipc_sender),
+        Uuid::new_v4(),
+        Arc::new(Mutex::new(Source::new())),
+        ipc_response_receiver,
+    );
     Ok((Arc::new(Mutex::new(multi_sender)), multi_receiver_rc))
 }
 
@@ -286,25 +246,12 @@ impl OneShotMultiServer {
         let (ipc_receiver, multi_message): (IpcReceiver<MultiMessage>, MultiMessage) =
             self.multi_server.accept()?;
 
-        let mr = MultiReceiver {
-            ipc_receiver_uuid: Uuid::new_v4(),
-            receiver_demuxer: ReceiverDemuxer {
-                ipc_receiver,
-                demuxer: Arc::new(Mutex::new(Demuxer {
-                    ipc_senders: HashMap::new(),
-                    sub_channels: HashMap::new(),
-                    disconnectors: WeakValueHashMap::new(),
-                    ipc_senders_by_id: Target::new(),
-                })),
-            },
-        };
+        let mr = MultiReceiver::new(
+            Uuid::new_v4(),
+            ReceiverDemuxer::new(ipc_receiver, Arc::new(Mutex::new(Demuxer::empty()))),
+        );
         let mr_rc = Arc::new(mr);
-        mr_rc
-            .receiver_demuxer
-            .demuxer
-            .lock()
-            .unwrap()
-            .handle(multi_message, mr_rc.ipc_receiver_uuid)?;
+        mr_rc.handle_initial_message(multi_message)?;
         Ok(mr_rc)
     }
 }

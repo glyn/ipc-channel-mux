@@ -8,8 +8,8 @@
 // except according to those terms.
 
 use crate::mux::demux::{
-    MultiReceiverSet, ProtoSender, ResolvedMessage, ResolvedMessageOrDisconnect,
-    SelectableSubChannelReceiver, clear_deserialization_context, establish_deserialization_context,
+    MultiReceiverSet, ProtoSender, ResolvedMessageOrDisconnect, SelectableSubChannelReceiver,
+    clear_deserialization_context, establish_deserialization_context,
 };
 use crate::mux::error::MuxError;
 use crate::mux::protocol::SubChannelId;
@@ -132,13 +132,7 @@ impl SubReceiverSet {
     #[instrument(level = "debug", skip(receiver), ret, err(level = "debug"))]
     pub fn add_opaque(&mut self, receiver: OpaqueSelectableSubReceiver) -> Result<u64, MuxError> {
         // The subreceiver is associated with a MultiReceiverSet from construction.
-        let incoming_multi_receiver_set = Arc::clone(
-            &receiver
-                .sub_channel_receiver
-                .multi_receiver
-                .receiver_demuxer
-                .multi_receiver_set,
-        );
+        let incoming_multi_receiver_set = receiver.multi_receiver_set();
 
         // If this SubReceiverSet's MultiReceiverSet is the same as the MultiReceiverSet associated
         // with the subreceiver being added, do nothing.
@@ -152,30 +146,21 @@ impl SubReceiverSet {
         } else {
             // Check if the incoming MRS was already merged into ours (e.g. a second subreceiver
             // from the same heterogeneous channel being added to this SubReceiverSet).
-            let already_merged = {
-                let incoming_locked = incoming_multi_receiver_set.lock().unwrap();
-                #[allow(clippy::map_unwrap_or)]
-                incoming_locked
-                    .merged_into
-                    .as_ref()
-                    .and_then(std::sync::Weak::upgrade)
-                    .map(|arc| Arc::ptr_eq(&arc, &self.multi_receiver_set))
-                    .unwrap_or(false)
-            };
+            let already_merged = incoming_multi_receiver_set
+                .lock()
+                .unwrap()
+                .is_merged_into(&self.multi_receiver_set);
             if !already_merged {
                 // Merge: take the pending IPC receiver from the incoming MRS and register it in
                 // ours. IpcReceiverSets cannot be merged, so we only support merging an incoming
                 // MRS that has a pending (not yet registered) IPC receiver.
                 let mut incoming_locked = incoming_multi_receiver_set.lock().unwrap();
-                if let Some((ipc_receiver, multi_receiver)) = incoming_locked.pending.take() {
-                    {
-                        let mut self_locked = self.multi_receiver_set.lock().unwrap();
-                        let id = self_locked.ipc_receiver_set.add(ipc_receiver)?;
-                        self_locked
-                            .multi_receivers
-                            .insert(id, Arc::downgrade(&multi_receiver));
-                    }
-                    incoming_locked.merged_into = Some(Arc::downgrade(&self.multi_receiver_set));
+                if let Some((ipc_receiver, multi_receiver)) = incoming_locked.take_pending() {
+                    self.multi_receiver_set
+                        .lock()
+                        .unwrap()
+                        .merge_receiver(ipc_receiver, &multi_receiver)?;
+                    incoming_locked.set_merged_into(&self.multi_receiver_set);
                 } else {
                     return Err(MuxError::InternalError(
                         "Cannot merge non-empty MultiReceiverSets".to_string(),
@@ -185,31 +170,17 @@ impl SubReceiverSet {
         }
 
         // Modify MultiReceiver so that messages for the subchannel are sent to the set.
-        {
-            let demuxer = receiver
-                .sub_channel_receiver
-                .multi_receiver
-                .receiver_demuxer
-                .demuxer
-                .lock()
-                .unwrap();
-            let sub_sender_state_machine = demuxer
-                .sub_channels
-                .get(&receiver.sub_channel_receiver.sub_channel_id)
-                .ok_or_else(|| {
-                    MuxError::InternalError(format!(
-                        "missing sub_channel for {}",
-                        receiver.sub_channel_receiver.sub_channel_id
-                    ))
-                })?;
-            sub_sender_state_machine.switch_sender(self.tx.clone());
-        }
+        let scid = receiver.sub_channel_id();
+        receiver
+            .demuxer()
+            .lock()
+            .unwrap()
+            .switch_sub_channel_sender(scid, self.tx.clone())?;
 
         let id = self.next_id;
         self.next_id += 1;
-        self.ids
-            .insert(receiver.sub_channel_receiver.sub_channel_id, id);
-        self.rxs.insert(id, receiver.sub_channel_receiver);
+        self.ids.insert(scid, id);
+        self.rxs.insert(id, receiver.into_inner());
         Ok(id)
     }
 
@@ -221,11 +192,8 @@ impl SubReceiverSet {
         let mut results = Vec::new();
         loop {
             match self.rx.try_recv() {
-                Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
-                    scid,
-                    payload,
-                    senders,
-                })) => {
+                Ok(ResolvedMessageOrDisconnect::ResolvedMessage(resolved)) => {
+                    let (scid, payload, senders) = resolved.into_parts();
                     let id = *self.ids.get(&scid).ok_or_else(|| {
                         MuxError::InternalError(format!("missing id for subchannel {}", scid))
                     })?;

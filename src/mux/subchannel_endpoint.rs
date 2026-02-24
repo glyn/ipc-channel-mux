@@ -12,6 +12,7 @@ use crate::mux::error::MuxError;
 use crate::mux::sender::SubChannelSender;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
+use std::sync::{Arc, Mutex};
 use tracing::instrument;
 
 /// SubSender is the sending end of a subchannel, used to serialize and send messages of a given type.
@@ -22,8 +23,20 @@ pub struct SubSender<T>
 where
     T: Serialize,
 {
-    pub(crate) sub_channel_sender: SubChannelSender,
-    pub(crate) phantom: PhantomData<T>,
+    sub_channel_sender: SubChannelSender,
+    phantom: PhantomData<T>,
+}
+
+impl<T> SubSender<T>
+where
+    T: Serialize,
+{
+    pub(crate) fn from_sender(sub_channel_sender: SubChannelSender) -> Self {
+        SubSender {
+            sub_channel_sender,
+            phantom: PhantomData,
+        }
+    }
 }
 
 impl<T> Clone for SubSender<T>
@@ -120,8 +133,20 @@ pub struct SubReceiver<T>
 where
     T: for<'x> Deserialize<'x> + Serialize,
 {
-    pub(crate) sub_channel_receiver: SubChannelReceiver,
-    pub(crate) phantom: PhantomData<T>,
+    sub_channel_receiver: SubChannelReceiver,
+    phantom: PhantomData<T>,
+}
+
+impl<T> SubReceiver<T>
+where
+    T: for<'x> Deserialize<'x> + Serialize,
+{
+    pub(crate) fn from_receiver(sub_channel_receiver: SubChannelReceiver) -> Self {
+        SubReceiver {
+            sub_channel_receiver,
+            phantom: PhantomData,
+        }
+    }
 }
 
 /// SelectableSubReceiver is the receiving end of a subchannel which will be added to a SubReceiverSet.
@@ -130,8 +155,20 @@ pub(crate) struct SelectableSubReceiver<T>
 where
     T: for<'x> Deserialize<'x> + Serialize,
 {
-    pub(crate) sub_channel_receiver: SelectableSubChannelReceiver,
-    pub(crate) phantom: PhantomData<T>,
+    sub_channel_receiver: SelectableSubChannelReceiver,
+    phantom: PhantomData<T>,
+}
+
+impl<T> SelectableSubReceiver<T>
+where
+    T: for<'x> Deserialize<'x> + Serialize,
+{
+    pub(crate) fn from_receiver(sub_channel_receiver: SelectableSubChannelReceiver) -> Self {
+        SelectableSubReceiver {
+            sub_channel_receiver,
+            phantom: PhantomData,
+        }
+    }
 }
 
 impl<T> SubReceiver<T>
@@ -195,7 +232,25 @@ pub struct OpaqueSubReceiver {
 /// passed around in a message type independent manner, but must be converted
 /// into a SelectableSubReceiver before it can be used to receive messages.
 pub(crate) struct OpaqueSelectableSubReceiver {
-    pub(crate) sub_channel_receiver: SelectableSubChannelReceiver,
+    sub_channel_receiver: SelectableSubChannelReceiver,
+}
+
+impl OpaqueSelectableSubReceiver {
+    pub(crate) fn multi_receiver_set(&self) -> Arc<Mutex<crate::mux::demux::MultiReceiverSet>> {
+        self.sub_channel_receiver.multi_receiver_set()
+    }
+
+    pub(crate) fn demuxer(&self) -> Arc<Mutex<crate::mux::demux::Demuxer>> {
+        self.sub_channel_receiver.demuxer()
+    }
+
+    pub(crate) fn sub_channel_id(&self) -> crate::mux::protocol::SubChannelId {
+        self.sub_channel_receiver.sub_channel_id()
+    }
+
+    pub(crate) fn into_inner(self) -> SelectableSubChannelReceiver {
+        self.sub_channel_receiver
+    }
 }
 
 impl OpaqueSubReceiver {
