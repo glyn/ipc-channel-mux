@@ -143,6 +143,6 @@ pub(crate) use channel::SelectableChannel;
 pub use channel::{Channel, SubOneShotServer};
 pub use error::MuxError;
 pub(crate) use receiver_set::SubReceiverSet;
-pub use receiver_set::{RawMessage, SubSelectionResult};
+pub(crate) use receiver_set::{RawMessage, SubSelectionResult};
 pub(crate) use subchannel_endpoint::{OpaqueSelectableSubReceiver, SelectableSubReceiver};
 pub use subchannel_endpoint::{OpaqueSubReceiver, OpaqueSubSender, SubReceiver, SubSender};
