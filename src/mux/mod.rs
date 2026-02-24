@@ -138,8 +138,6 @@ mod subchannel_endpoint;
 mod subchannel_lifecycle;
 pub mod subchannel_router;
 
-pub(crate) use channel::SelectableChannel;
 pub use channel::{Channel, SubOneShotServer};
 pub use error::MuxError;
-pub(crate) use subchannel_endpoint::{OpaqueSelectableSubReceiver, SelectableSubReceiver};
 pub use subchannel_endpoint::{OpaqueSubReceiver, OpaqueSubSender, SubReceiver, SubSender};

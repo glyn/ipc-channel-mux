@@ -8,12 +8,15 @@
 // except according to those terms.
 
 use crate::mux::demux::{
-    MultiReceiverSet, ProtoSender, ResolvedMessageOrDisconnect, SelectableSubChannelReceiver,
-    clear_deserialization_context, establish_deserialization_context,
+    ProtoSender, ResolvedMessageOrDisconnect, clear_deserialization_context,
+    establish_deserialization_context,
 };
 use crate::mux::error::MuxError;
 use crate::mux::protocol::SubChannelId;
-use crate::mux::subchannel_endpoint::{OpaqueSelectableSubReceiver, SelectableSubReceiver};
+use crate::mux::subchannel_router::select::{
+    MultiReceiverSet, OpaqueSelectableSubReceiver, SelectableSubChannelReceiver,
+    SelectableSubReceiver,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::io;
@@ -242,14 +245,16 @@ impl Drop for SubReceiverSet {
 mod tests {
     use std::thread;
 
-    use crate::mux::{self, SubOneShotServer, SubReceiver, SubSender};
+    use crate::mux::{
+        SubOneShotServer, SubReceiver, SubSender, subchannel_router::select::SelectableChannel,
+    };
 
     use super::*;
 
     #[test]
     // A homogeneous SubReceiverSet is one whose SubReceivers all have the same underlying IpcChannel.
     fn receiver_set_homogeneous() {
-        let channel = mux::SelectableChannel::new().unwrap();
+        let channel = SelectableChannel::new().unwrap();
         let (tx1, rx1) = channel.sub_channel::<i32>();
 
         let mut rx_set = SubReceiverSet::new().unwrap();
@@ -291,13 +296,13 @@ mod tests {
     #[test]
     // A heterogeneous SubReceiverSet is one with SubReceivers having distinct underlying IpcChannels.
     fn receiver_set_heterogeneous() {
-        let channel1 = mux::SelectableChannel::new().unwrap();
+        let channel1 = SelectableChannel::new().unwrap();
         let (tx1, rx1) = channel1.sub_channel::<i32>();
 
         let mut rx_set = SubReceiverSet::new().unwrap();
         let rx1_id = rx_set.add(rx1).unwrap();
 
-        let channel2 = mux::SelectableChannel::new().unwrap();
+        let channel2 = SelectableChannel::new().unwrap();
         let (tx2, rx2) = channel2.sub_channel::<String>();
         let rx2_id = rx_set.add(rx2).unwrap();
 
@@ -333,7 +338,7 @@ mod tests {
 
     #[test]
     fn receiver_set_disconnect() {
-        let channel = mux::SelectableChannel::new().unwrap();
+        let channel = SelectableChannel::new().unwrap();
         let (tx, rx) = channel.sub_channel::<i32>();
 
         let mut rx_set = SubReceiverSet::new().unwrap();
@@ -358,7 +363,7 @@ mod tests {
             let bootstrap_sub_sender: SubSender<SubSender<i32>> =
                 SubSender::connect(bootstrap_token).unwrap();
 
-            let channel = mux::SelectableChannel::new().unwrap();
+            let channel = SelectableChannel::new().unwrap();
             let (tx1, rx1) = channel.sub_channel();
             bootstrap_sub_sender.send(tx1).unwrap();
             let (tx2, rx2) = channel.sub_channel();
@@ -414,11 +419,11 @@ mod tests {
             let bootstrap_sub_sender: SubSender<SubSender<i32>> =
                 SubSender::connect(bootstrap_token).unwrap();
 
-            let channel1 = mux::SelectableChannel::new().unwrap();
+            let channel1 = SelectableChannel::new().unwrap();
             let (tx1, rx1) = channel1.sub_channel();
             bootstrap_sub_sender.send(tx1).unwrap();
 
-            let channel2 = mux::SelectableChannel::new().unwrap();
+            let channel2 = SelectableChannel::new().unwrap();
             let (tx2, rx2) = channel2.sub_channel();
             bootstrap_sub_sender.send(tx2).unwrap();
 
@@ -467,7 +472,7 @@ mod tests {
     // Test SubReceivers sharing an IPC channel belonging to distinct SubReceiverSets with distinct IpcReceiverSets.
     fn subreceivers_sharing_ipc_channel_cannot_belong_to_distinct_subreceiversets_with_distinct_ipcreceiversets()
      {
-        let channel = mux::SelectableChannel::new().unwrap();
+        let channel = SelectableChannel::new().unwrap();
         let (_tx1, rx1) = channel.sub_channel::<i32>();
         let (_tx2, rx2) = channel.sub_channel::<i32>();
 
@@ -477,7 +482,7 @@ mod tests {
         let mut rx_set2 = SubReceiverSet::new().unwrap();
 
         // Ensure rx_set2 has a non-empty IpcReceiverSet.
-        let channel2 = mux::SelectableChannel::new().unwrap();
+        let channel2 = SelectableChannel::new().unwrap();
         let (_tx3, rx3) = channel2.sub_channel::<i32>();
         let _rx3_id = rx_set2.add(rx3).unwrap();
 
@@ -490,7 +495,7 @@ mod tests {
     #[test]
     // A homogeneous SubReceiverSet is one whose SubReceivers all have the same underlying IpcChannel.
     fn receiver_sets_with_subreceivers_sharing_ipc_channel() {
-        let channel = mux::SelectableChannel::new().unwrap();
+        let channel = SelectableChannel::new().unwrap();
         let (tx1, rx1) = channel.sub_channel::<i32>();
 
         let mut rx_set1 = SubReceiverSet::new().unwrap();

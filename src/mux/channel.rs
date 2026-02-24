@@ -8,14 +8,11 @@
 // except according to those terms.
 
 use crate::mux::channel_identification::Source;
-use crate::mux::demux::{
-    Demuxer, MultiReceiver, MultiReceiverSet, ReceiverDemuxer, SelectableMultiReceiver,
-    SelectableReceiverDemuxer,
-};
+use crate::mux::demux::{Demuxer, MultiReceiver, ReceiverDemuxer};
 use crate::mux::error::MuxError;
 use crate::mux::protocol::{ClientId, MultiMessage};
 use crate::mux::sender::{MultiSender, SubChannelSender};
-use crate::mux::subchannel_endpoint::{SelectableSubReceiver, SubReceiver, SubSender};
+use crate::mux::subchannel_endpoint::{SubReceiver, SubSender};
 use crate::mux::subchannel_lifecycle;
 use ipc_channel::ipc::{self, IpcOneShotServer, IpcReceiver};
 use serde::{Deserialize, Serialize};
@@ -30,12 +27,6 @@ use uuid::Uuid;
 pub struct Channel {
     multi_sender: Arc<Mutex<MultiSender>>,
     multi_receiver: Arc<MultiReceiver>,
-}
-
-/// SelectableChannel wraps an IPC channel and is used to construct subchannels.
-pub(crate) struct SelectableChannel {
-    multi_sender: Arc<Mutex<MultiSender>>,
-    multi_receiver: Arc<SelectableMultiReceiver>,
 }
 
 impl Channel {
@@ -64,37 +55,6 @@ impl Channel {
             .insert_sub_receiver_proxy(scid, subchannel_lifecycle::SubReceiverProxy::new());
         let scr = MultiReceiver::attach(&self.multi_receiver, scid);
         (SubSender::from_sender(scs), SubReceiver::from_receiver(scr))
-    }
-}
-impl SelectableChannel {
-    /// Construct a new [SelectableChannel].
-    #[instrument(level = "debug", err(level = "debug"))]
-    pub fn new() -> Result<SelectableChannel, MuxError> {
-        let (ms, mr) = selectable_multi_channel()?;
-        Ok(SelectableChannel {
-            multi_sender: ms,
-            multi_receiver: mr,
-        })
-    }
-
-    /// Construct a new subchannel of a [Channel]. The subchannel has
-    /// a [SubSender] and a [SubReceiver].
-    #[instrument(level = "debug", skip(self))]
-    pub fn sub_channel<T>(&self) -> (SubSender<T>, SelectableSubReceiver<T>)
-    where
-        T: for<'de> Deserialize<'de> + Serialize,
-    {
-        let scs = SubChannelSender::new(Arc::clone(&self.multi_sender));
-        let scid = scs.sub_channel_id();
-        self.multi_sender
-            .lock()
-            .unwrap()
-            .insert_sub_receiver_proxy(scid, subchannel_lifecycle::SubReceiverProxy::new());
-        let scr = SelectableMultiReceiver::attach(&self.multi_receiver, scid);
-        (
-            SubSender::from_sender(scs),
-            SelectableSubReceiver::from_receiver(scr),
-        )
     }
 }
 
@@ -189,37 +149,6 @@ fn multi_channel() -> Result<(Arc<Mutex<MultiSender>>, Arc<MultiReceiver>), io::
         ),
     );
     let multi_receiver_rc = Arc::new(multi_receiver);
-    let multi_sender = MultiSender::new(
-        client_id,
-        Arc::new(ipc_sender),
-        Uuid::new_v4(),
-        Arc::new(Mutex::new(Source::new())),
-        ipc_response_receiver,
-    );
-    Ok((Arc::new(Mutex::new(multi_sender)), multi_receiver_rc))
-}
-
-#[instrument(level = "debug", ret, err(level = "debug"))]
-fn selectable_multi_channel()
--> Result<(Arc<Mutex<MultiSender>>, Arc<SelectableMultiReceiver>), io::Error> {
-    let (ipc_sender, ipc_receiver) = ipc::channel()?;
-    let (ipc_response_sender, ipc_response_receiver) = ipc::channel()?;
-    let client_id = ClientId::new();
-    #[allow(clippy::arc_with_non_send_sync)]
-    let mrs = Arc::new(Mutex::new(MultiReceiverSet::new()?));
-    let multi_receiver_rc = Arc::new(SelectableMultiReceiver::new(
-        Uuid::new_v4(),
-        SelectableReceiverDemuxer::new(
-            Arc::clone(&mrs),
-            Arc::new(Mutex::new(Demuxer::with_sender(
-                client_id,
-                ipc_response_sender,
-            ))),
-        ),
-    ));
-    mrs.lock()
-        .unwrap()
-        .set_pending(ipc_receiver, Arc::clone(&multi_receiver_rc));
     let multi_sender = MultiSender::new(
         client_id,
         Arc::new(ipc_sender),

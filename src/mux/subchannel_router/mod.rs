@@ -22,10 +22,12 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 mod receiver_set;
+mod select;
 
 use receiver_set::{RawMessage, SubReceiverSet, SubSelectionResult};
+use select::{OpaqueSelectableSubReceiver, SelectableChannel, SelectableSubReceiver};
 
-use crate::mux::{self, MuxError, OpaqueSelectableSubReceiver, SelectableSubReceiver, SubSender};
+use crate::mux::{MuxError, SubSender};
 
 /// Global object wrapping a `RouterProxy`.
 /// Add routes ([add_typed_route](RouterChannel::add_typed_route)), or route
@@ -54,7 +56,7 @@ impl RouterProxy {
         // receiver ends.
         // Router proxy takes both sending ends.
         let (msg_sender, msg_receiver) = crossbeam_channel::unbounded();
-        let chan = mux::SelectableChannel::new()?;
+        let chan = SelectableChannel::new()?;
         let (wakeup_sender, wakeup_receiver) = chan.sub_channel();
         let handle = thread::Builder::new()
             .name("router-proxy".to_string())
@@ -77,7 +79,7 @@ impl RouterProxy {
     /// Create a new `RouterChannel`, which is used to construct routed subchannels.
     pub fn new_router_channel(proxy: &Arc<RouterProxy>) -> Result<RouterChannel, MuxError> {
         Ok(RouterChannel {
-            chan: mux::SelectableChannel::new()?,
+            chan: SelectableChannel::new()?,
             proxy: proxy.clone(),
         })
     }
@@ -208,7 +210,7 @@ impl RouterProxy {
 /// sharing an underlying IPC channel with non-routed subchannels, which would give rise to
 /// liveness and fairness issues.
 pub struct RouterChannel {
-    chan: mux::SelectableChannel,
+    chan: SelectableChannel,
     proxy: Arc<RouterProxy>,
 }
 

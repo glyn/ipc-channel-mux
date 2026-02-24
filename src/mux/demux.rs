@@ -15,12 +15,10 @@ use crate::mux::protocol::{
 };
 use crate::mux::sender::{MultiSender, SubChannelDisconnector, SubChannelSender};
 use crate::mux::subchannel_lifecycle::SubSenderTracker;
-use ipc_channel::IpcError;
-use ipc_channel::ipc::{IpcReceiver, IpcReceiverSet, IpcSelectionResult, IpcSender};
+use ipc_channel::ipc::{IpcReceiver, IpcSender};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{HashMap, VecDeque};
-use std::fmt::{self, Formatter};
-use std::io;
+use std::fmt;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
 use std::time::Duration;
@@ -147,9 +145,20 @@ impl Demuxer {
         Ok(())
     }
 
+    pub fn insert_state_machine(
+        &mut self,
+        sub_channel_id: SubChannelId,
+        tx: Sender<ResolvedMessageOrDisconnect>,
+    ) {
+        self.sub_channels.insert(
+            sub_channel_id,
+            Arc::new(crate::mux::subchannel_lifecycle::SubSenderStateMachine::new(tx, ORIGIN)),
+        );
+    }
+
     #[instrument(level = "debug", ret, err(level = "debug"))]
     #[allow(clippy::too_many_lines)]
-    fn handle(
+    pub fn handle(
         self: &mut Demuxer,
         msg: MultiMessage,
         multi_receiver_uuid: Uuid,
@@ -344,12 +353,12 @@ impl Demuxer {
         }
     }
 
-    fn send(
+    pub fn send(
         self: &mut Demuxer,
         scid: SubChannelId,
         payload: Vec<u8>,
         ipc_senders: &[(SubChannelId, IpcSenderAndOrId)],
-        mr_clone: &Arc<SelectableMultiReceiver>,
+        ipc_receiver_uuid: Uuid,
     ) -> Result<(), MuxError> {
         let mut id_sender_results: IdSenderResults = VecDeque::new();
         for (scid, s) in ipc_senders {
@@ -359,7 +368,7 @@ impl Demuxer {
             id_sender_results.push_back((
                 *scid,
                 self.ipcsender_from_sender_and_or_id(s),
-                mr_clone.ipc_receiver_uuid,
+                ipc_receiver_uuid,
                 disc,
             ));
         }
@@ -400,6 +409,38 @@ impl Demuxer {
         } else {
             srs.map(|_| ())
         }
+    }
+
+    pub fn poll_all_subchannels(demuxer: &Arc<Mutex<Demuxer>>) -> bool {
+        // Snapshot Arc refs while holding the lock, then drop the lock before
+        // running probes. This prevents a probe from blocking indefinitely
+        // (e.g. when the remote socket buffer is full) while holding the
+        // demuxer mutex.
+        let state_machines: Vec<(SubChannelId, Arc<SubSenderStateMachine>)> = demuxer
+            .lock()
+            .unwrap()
+            .sub_channels
+            .iter()
+            .map(|(scid, sm)| (*scid, Arc::clone(sm)))
+            .collect();
+
+        let mut probe_failed = false;
+        for (scid, subsender_state_machine) in state_machines {
+            let (poll, v) = subsender_state_machine.poll();
+            if !poll {
+                if let Some(sender) = v {
+                    if let Err(e) = sender.send(ResolvedMessageOrDisconnect::Disconnect(scid)) {
+                        log::debug!("Failed to send disconnect after poll: {}", e);
+                    }
+                }
+                probe_failed = true;
+            }
+        }
+        probe_failed
+    }
+
+    pub fn clear_ipc_senders(self: &mut Demuxer) {
+        self.ipc_senders.clear();
     }
 }
 
@@ -508,22 +549,10 @@ pub(crate) struct MultiReceiver {
 }
 
 #[derive(Debug)]
-pub(crate) struct SelectableMultiReceiver {
-    ipc_receiver_uuid: Uuid,
-    receiver_demuxer: SelectableReceiverDemuxer,
-}
-
-#[derive(Debug)]
 pub(crate) struct ReceiverDemuxer {
     // When receiving from the IPC receiver, the Demuxer must be locked to
     // ensure messages are received in order.
     ipc_receiver: IpcReceiver<MultiMessage>,
-    demuxer: Arc<Mutex<Demuxer>>,
-}
-
-#[derive(Debug)]
-pub(crate) struct SelectableReceiverDemuxer {
-    multi_receiver_set: Arc<Mutex<MultiReceiverSet>>,
     demuxer: Arc<Mutex<Demuxer>>,
 }
 
@@ -539,23 +568,8 @@ impl ReceiverDemuxer {
     }
 }
 
-impl SelectableReceiverDemuxer {
-    pub(crate) fn new(
-        multi_receiver_set: Arc<Mutex<MultiReceiverSet>>,
-        demuxer: Arc<Mutex<Demuxer>>,
-    ) -> Self {
-        SelectableReceiverDemuxer {
-            multi_receiver_set,
-            demuxer,
-        }
-    }
-}
-
 unsafe impl Send for MultiReceiver {}
 unsafe impl Sync for MultiReceiver {}
-
-unsafe impl Send for SelectableMultiReceiver {}
-unsafe impl Sync for SelectableMultiReceiver {}
 
 impl MultiReceiver {
     pub(crate) fn new(ipc_receiver_uuid: Uuid, receiver_demuxer: ReceiverDemuxer) -> Self {
@@ -696,84 +710,6 @@ impl MultiReceiver {
     }
 }
 
-impl SelectableMultiReceiver {
-    pub(crate) fn new(
-        ipc_receiver_uuid: Uuid,
-        receiver_demuxer: SelectableReceiverDemuxer,
-    ) -> Self {
-        SelectableMultiReceiver {
-            ipc_receiver_uuid,
-            receiver_demuxer,
-        }
-    }
-
-    #[instrument(level = "debug", ret)]
-    pub(crate) fn attach(
-        mr: &Arc<SelectableMultiReceiver>,
-        sub_channel_id: SubChannelId,
-    ) -> SelectableSubChannelReceiver {
-        let (tx, _rx): (
-            Sender<ResolvedMessageOrDisconnect>,
-            Receiver<ResolvedMessageOrDisconnect>,
-        ) = mpsc::channel();
-        mr.receiver_demuxer
-            .demuxer
-            .lock()
-            .unwrap()
-            .sub_channels
-            .insert(
-                sub_channel_id,
-                Arc::new(crate::mux::subchannel_lifecycle::SubSenderStateMachine::new(tx, ORIGIN)),
-            );
-        SelectableSubChannelReceiver {
-            multi_receiver: Arc::clone(mr),
-            sub_channel_id,
-        }
-    }
-
-    #[instrument(level = "debug", ret, err(level = "debug"))]
-    fn handle(mr: Arc<SelectableMultiReceiver>, msg: MultiMessage) -> Result<(), MuxError> {
-        let demuxer = &mut mr.receiver_demuxer.demuxer.lock().unwrap();
-        if let MultiMessage::Data(scid, payload, ipc_senders) = msg {
-            demuxer.send(scid, payload, &ipc_senders, &mr)
-        } else {
-            demuxer.handle(msg, mr.ipc_receiver_uuid)
-        }
-    }
-
-    // poll returns true if and only if a probe failed.
-    #[instrument(level = "trace", ret)]
-    fn poll(&self) -> bool {
-        // Snapshot Arc refs while holding the lock, then drop the lock before
-        // running probes. This prevents a probe from blocking indefinitely
-        // (e.g. when the remote socket buffer is full) while holding the
-        // demuxer mutex.
-        let state_machines: Vec<(SubChannelId, Arc<SubSenderStateMachine>)> = self
-            .receiver_demuxer
-            .demuxer
-            .lock()
-            .unwrap()
-            .sub_channels
-            .iter()
-            .map(|(scid, sm)| (*scid, Arc::clone(sm)))
-            .collect();
-
-        let mut probe_failed = false;
-        for (scid, subsender_state_machine) in state_machines {
-            let (poll, v) = subsender_state_machine.poll();
-            if !poll {
-                if let Some(sender) = v {
-                    if let Err(e) = sender.send(ResolvedMessageOrDisconnect::Disconnect(scid)) {
-                        log::debug!("Failed to send disconnect after poll: {}", e);
-                    }
-                }
-                probe_failed = true;
-            }
-        }
-        probe_failed
-    }
-}
-
 pub(crate) struct SubChannelReceiver {
     multi_receiver: Arc<MultiReceiver>,
     sub_channel_id: SubChannelId,
@@ -782,28 +718,6 @@ pub(crate) struct SubChannelReceiver {
 
 unsafe impl Send for SubChannelReceiver {}
 unsafe impl Sync for SubChannelReceiver {}
-
-pub(crate) struct SelectableSubChannelReceiver {
-    multi_receiver: Arc<SelectableMultiReceiver>,
-    sub_channel_id: SubChannelId,
-}
-
-impl SelectableSubChannelReceiver {
-    pub(crate) fn multi_receiver_set(&self) -> Arc<Mutex<MultiReceiverSet>> {
-        Arc::clone(&self.multi_receiver.receiver_demuxer.multi_receiver_set)
-    }
-
-    pub(crate) fn demuxer(&self) -> Arc<Mutex<Demuxer>> {
-        Arc::clone(&self.multi_receiver.receiver_demuxer.demuxer)
-    }
-
-    pub(crate) fn sub_channel_id(&self) -> SubChannelId {
-        self.sub_channel_id
-    }
-}
-
-unsafe impl Send for SelectableSubChannelReceiver {}
-unsafe impl Sync for SelectableSubChannelReceiver {}
 
 impl Drop for SubChannelReceiver {
     fn drop(&mut self) {
@@ -858,21 +772,9 @@ impl Drop for SubChannelReceiver {
     }
 }
 
-// No custom Drop for SelectableSubChannelReceiver: SubReceiverSet::drop calls
-// MultiReceiverSet::close() which clears the demuxer's ipc_senders,
-// closing the response channels. is_receiver_connected detects this
-// closure via IpcError and returns false.
-
 impl fmt::Debug for SubChannelReceiver {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SubChannelReceiver")
-            .field("sub_channel_id", &self.sub_channel_id)
-            .finish_non_exhaustive()
-    }
-}
-impl fmt::Debug for SelectableSubChannelReceiver {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SelectableSubChannelReceiver")
             .field("sub_channel_id", &self.sub_channel_id)
             .finish_non_exhaustive()
     }
@@ -937,181 +839,5 @@ impl SubChannelReceiver {
                 },
             }
         }
-    }
-}
-
-pub(crate) struct MultiReceiverSet {
-    ipc_receiver_set: IpcReceiverSet,
-    // Weak refs to avoid a reference cycle: SelectableMultiReceiver → MultiReceiverSet → SelectableMultiReceiver.
-    // The strong refs are held by SelectableSubChannelReceiver instances.
-    multi_receivers: HashMap<u64, Weak<SelectableMultiReceiver>>,
-    // IPC receiver not yet registered in ipc_receiver_set, waiting to be registered
-    // when the first subreceiver from this channel is added to a SubReceiverSet.
-    // Uses a strong Arc to keep SelectableMultiReceiver alive until subchannels are created
-    // (this creates a temporary reference cycle that is broken by register_pending).
-    pending: Option<(IpcReceiver<MultiMessage>, Arc<SelectableMultiReceiver>)>,
-    // After this MRS is merged into another, records which MRS it was merged into.
-    merged_into: Option<Weak<Mutex<MultiReceiverSet>>>,
-}
-
-impl fmt::Debug for MultiReceiverSet {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.debug_struct("MultiReceiverSet")
-            .field("multi_receivers", &self.multi_receivers)
-            .finish_non_exhaustive()
-    }
-}
-
-impl MultiReceiverSet {
-    // Create a new empty MultiReceiverSet.
-    //
-    // Receivers may then be added to the set with the add method.
-    pub(crate) fn new() -> Result<MultiReceiverSet, io::Error> {
-        Ok(MultiReceiverSet {
-            ipc_receiver_set: IpcReceiverSet::new()?,
-            multi_receivers: HashMap::new(),
-            pending: None,
-            merged_into: None,
-        })
-    }
-
-    // Register a pending IPC receiver into the IpcReceiverSet.
-    // This breaks the temporary reference cycle by dropping the strong Arc<SelectableMultiReceiver>
-    // from pending and storing only a Weak ref in multi_receivers.
-    pub(crate) fn register_pending(&mut self) -> Result<(), MuxError> {
-        if let Some((ipc_receiver, multi_receiver)) = self.pending.take() {
-            let id = self.ipc_receiver_set.add(ipc_receiver)?;
-            self.multi_receivers
-                .insert(id, Arc::downgrade(&multi_receiver));
-        }
-        Ok(())
-    }
-
-    // Close all SelectableMultiReceivers in this set by clearing their demuxer's ipc_senders.
-    // This causes is_receiver_connected to detect IpcError on the response channel,
-    // signalling disconnection to MultiSenders without needing a SubReceiverDisconnected broadcast.
-    // Called from SubReceiverSet::drop to handle router shutdown.
-    pub(crate) fn close(&self) {
-        for mr in self.multi_receivers.values() {
-            if let Some(mr) = mr.upgrade() {
-                mr.receiver_demuxer
-                    .demuxer
-                    .lock()
-                    .unwrap()
-                    .ipc_senders
-                    .clear();
-            }
-        }
-        if let Some((_, ref mr)) = self.pending {
-            mr.receiver_demuxer
-                .demuxer
-                .lock()
-                .unwrap()
-                .ipc_senders
-                .clear();
-        }
-    }
-
-    pub(crate) fn set_pending(
-        &mut self,
-        ipc_receiver: IpcReceiver<MultiMessage>,
-        multi_receiver: Arc<SelectableMultiReceiver>,
-    ) {
-        self.pending = Some((ipc_receiver, multi_receiver));
-    }
-
-    pub(crate) fn is_merged_into(&self, target: &Arc<Mutex<MultiReceiverSet>>) -> bool {
-        #[allow(clippy::map_unwrap_or)]
-        self.merged_into
-            .as_ref()
-            .and_then(std::sync::Weak::upgrade)
-            .map(|arc| Arc::ptr_eq(&arc, target))
-            .unwrap_or(false)
-    }
-
-    pub(crate) fn take_pending(
-        &mut self,
-    ) -> Option<(IpcReceiver<MultiMessage>, Arc<SelectableMultiReceiver>)> {
-        self.pending.take()
-    }
-
-    pub(crate) fn merge_receiver(
-        &mut self,
-        ipc_receiver: IpcReceiver<MultiMessage>,
-        multi_receiver: &Arc<SelectableMultiReceiver>,
-    ) -> Result<(), MuxError> {
-        let id = self.ipc_receiver_set.add(ipc_receiver)?;
-        self.multi_receivers
-            .insert(id, Arc::downgrade(multi_receiver));
-        Ok(())
-    }
-
-    pub(crate) fn set_merged_into(&mut self, target: &Arc<Mutex<MultiReceiverSet>>) {
-        self.merged_into = Some(Arc::downgrade(target));
-    }
-
-    // Return true if and only if the MultiReceiverSet is empty (no IPC receivers
-    // registered or pending registration).
-    pub(crate) fn is_empty(mrs: &Arc<Mutex<MultiReceiverSet>>) -> bool {
-        let mrs_locked = mrs.lock().unwrap();
-        mrs_locked.multi_receivers.is_empty() && mrs_locked.pending.is_none()
-    }
-
-    // Obtain one or more incoming messages and handle them.
-    #[instrument(level = "trace", ret, err(level = "trace"))]
-    pub(crate) fn select(mrs: &Arc<Mutex<MultiReceiverSet>>) -> Result<(), MuxError> {
-        let polling_interval = Duration::new(1, 0);
-        let mut mrs_mut = mrs.lock().unwrap();
-        loop {
-            let results = mrs_mut
-                .ipc_receiver_set
-                .try_select_timeout(polling_interval);
-            match results {
-                Ok(results) => {
-                    log::trace!(
-                        "MultiReceiverSet::select processing {} results",
-                        results.len()
-                    );
-                    for result in results {
-                        match result {
-                            IpcSelectionResult::MessageReceived(id, ipc_message) => {
-                                if let Some(multi_receiver) =
-                                    mrs_mut.multi_receivers.get(&id).and_then(Weak::upgrade)
-                                {
-                                    SelectableMultiReceiver::handle(
-                                        multi_receiver,
-                                        ipc_message.to().map_err(|e| {
-                                            MuxError::IpcError(IpcError::SerializationError(e))
-                                        })?,
-                                    )?;
-                                }
-                            },
-                            IpcSelectionResult::ChannelClosed(id) => {
-                                mrs_mut.multi_receivers.remove(&id);
-                            },
-                        }
-                    }
-                    break;
-                },
-                Err(ipc_channel::TrySelectError::Empty) => {
-                    let mut probe_failed = false;
-                    for weak_mr in mrs_mut.multi_receivers.values() {
-                        if let Some(mr) = weak_mr.upgrade() {
-                            if mr.poll() {
-                                probe_failed = true;
-                            }
-                        }
-                    }
-                    if probe_failed {
-                        // At least one probe failed, so return to caller.
-                        return Ok(());
-                    }
-                },
-                Err(ipc_channel::TrySelectError::IoError(e)) => {
-                    return Err(e.into());
-                },
-            }
-        }
-        Ok(())
     }
 }

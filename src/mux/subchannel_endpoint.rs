@@ -7,12 +7,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::mux::demux::{SelectableSubChannelReceiver, SubChannelReceiver};
+use crate::mux::demux::SubChannelReceiver;
 use crate::mux::error::MuxError;
 use crate::mux::sender::SubChannelSender;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
 use tracing::instrument;
 
 /// SubSender is the sending end of a subchannel, used to serialize and send messages of a given type.
@@ -149,28 +148,6 @@ where
     }
 }
 
-/// SelectableSubReceiver is the receiving end of a subchannel which will be added to a SubReceiverSet.
-#[derive(Debug)]
-pub(crate) struct SelectableSubReceiver<T>
-where
-    T: for<'x> Deserialize<'x> + Serialize,
-{
-    sub_channel_receiver: SelectableSubChannelReceiver,
-    phantom: PhantomData<T>,
-}
-
-impl<T> SelectableSubReceiver<T>
-where
-    T: for<'x> Deserialize<'x> + Serialize,
-{
-    pub(crate) fn from_receiver(sub_channel_receiver: SelectableSubChannelReceiver) -> Self {
-        SelectableSubReceiver {
-            sub_channel_receiver,
-            phantom: PhantomData,
-        }
-    }
-}
-
 impl<T> SubReceiver<T>
 where
     T: for<'de> Deserialize<'de> + Serialize,
@@ -206,51 +183,11 @@ where
     }
 }
 
-impl<T> SelectableSubReceiver<T>
-where
-    T: for<'de> Deserialize<'de> + Serialize,
-{
-    /// Convert a SelectableSubReceiver to an OpaqueSelectableSubReceiver by erasing its message type.
-    ///
-    /// Useful for adding routes to a `RouterProxy`.
-    #[allow(clippy::wrong_self_convention)]
-    pub(crate) fn to_opaque(self) -> OpaqueSelectableSubReceiver {
-        OpaqueSelectableSubReceiver {
-            sub_channel_receiver: self.sub_channel_receiver,
-        }
-    }
-}
-
 /// OpaqueSubReceiver is a SubReceiver with the message type erased. It can be
 /// passed around in a message type independent manner, but must be converted
 /// into a SubReceiver before it can be used to receive messages.
 pub struct OpaqueSubReceiver {
     sub_channel_receiver: SubChannelReceiver,
-}
-
-/// OpaqueSelectableSubReceiver is a SelectableSubReceiver with the message type erased. It can be
-/// passed around in a message type independent manner, but must be converted
-/// into a SelectableSubReceiver before it can be used to receive messages.
-pub(crate) struct OpaqueSelectableSubReceiver {
-    sub_channel_receiver: SelectableSubChannelReceiver,
-}
-
-impl OpaqueSelectableSubReceiver {
-    pub(crate) fn multi_receiver_set(&self) -> Arc<Mutex<crate::mux::demux::MultiReceiverSet>> {
-        self.sub_channel_receiver.multi_receiver_set()
-    }
-
-    pub(crate) fn demuxer(&self) -> Arc<Mutex<crate::mux::demux::Demuxer>> {
-        self.sub_channel_receiver.demuxer()
-    }
-
-    pub(crate) fn sub_channel_id(&self) -> crate::mux::protocol::SubChannelId {
-        self.sub_channel_receiver.sub_channel_id()
-    }
-
-    pub(crate) fn into_inner(self) -> SelectableSubChannelReceiver {
-        self.sub_channel_receiver
-    }
 }
 
 impl OpaqueSubReceiver {
