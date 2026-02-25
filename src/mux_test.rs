@@ -711,6 +711,20 @@ fn shmem_deref_mut() {
 }
 
 #[test]
+fn shmem_take() {
+    let data = SharedMemory::from_bytes(b"take me");
+    let bytes = data.take();
+    assert_eq!(bytes, Some(b"take me".to_vec()));
+}
+
+#[test]
+fn shmem_take_empty() {
+    let data = SharedMemory::from_bytes(b"");
+    let bytes = data.take();
+    assert_eq!(bytes, Some(vec![]));
+}
+
+#[test]
 fn shmem_ipc_conversion() {
     let original = SharedMemory::from_bytes(b"roundtrip");
     let ipc: IpcSharedMemory = original.clone().into();

@@ -57,6 +57,15 @@ impl SharedMemory {
     pub unsafe fn deref_mut(&mut self) -> &mut [u8] {
         unsafe { self.0.deref_mut() }
     }
+
+    /// Takes the bytes from the shared memory, consuming it.
+    ///
+    /// This does not make any guarantees about what happens to other
+    /// instances that share the same resources. Depending on the
+    /// implementation this might clone the data.
+    pub fn take(self) -> Option<Vec<u8>> {
+        self.0.take()
+    }
 }
 
 impl Deref for SharedMemory {
