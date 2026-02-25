@@ -47,15 +47,13 @@ impl MultiSender {
     pub(crate) fn new(
         client_id: ClientId,
         ipc_sender: Arc<IpcSender<MultiMessage>>,
-        uuid: Uuid,
-        sender_id: Arc<Mutex<Source<Weak<IpcSender<MultiMessage>>>>>,
         response_receiver: IpcReceiver<MultiResponse>,
     ) -> Self {
         MultiSender {
             client_id,
             ipc_sender,
-            uuid,
-            sender_id,
+            uuid: Uuid::new_v4(),
+            sender_id: Arc::new(Mutex::new(Source::new())),
             response_receiver,
             sub_receiver_proxies: Mutex::new(HashMap::new()),
         }

@@ -7,7 +7,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::mux::channel_identification::Source;
 use crate::mux::demux::{Demuxer, MultiReceiver, ReceiverDemuxer};
 use crate::mux::error::MuxError;
 use crate::mux::protocol::{ClientId, MultiMessage};
@@ -149,13 +148,7 @@ fn multi_channel() -> Result<(Arc<Mutex<MultiSender>>, Arc<MultiReceiver>), io::
         ),
     );
     let multi_receiver_rc = Arc::new(multi_receiver);
-    let multi_sender = MultiSender::new(
-        client_id,
-        Arc::new(ipc_sender),
-        Uuid::new_v4(),
-        Arc::new(Mutex::new(Source::new())),
-        ipc_response_receiver,
-    );
+    let multi_sender = MultiSender::new(client_id, Arc::new(ipc_sender), ipc_response_receiver);
     Ok((Arc::new(Mutex::new(multi_sender)), multi_receiver_rc))
 }
 

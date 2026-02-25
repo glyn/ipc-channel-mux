@@ -25,7 +25,6 @@ use crate::mux::demux::ResolvedMessageOrDisconnect;
 use crate::mux::protocol::{MultiMessage, SubChannelId};
 use crate::mux::{
     MuxError, SubSender,
-    channel_identification::Source,
     demux::Demuxer,
     protocol::ClientId,
     sender::{MultiSender, SubChannelSender},
@@ -91,13 +90,7 @@ fn selectable_multi_channel()
     mrs.lock()
         .unwrap()
         .set_pending(ipc_receiver, Arc::clone(&multi_receiver_rc));
-    let multi_sender = MultiSender::new(
-        client_id,
-        Arc::new(ipc_sender),
-        Uuid::new_v4(),
-        Arc::new(Mutex::new(Source::new())),
-        ipc_response_receiver,
-    );
+    let multi_sender = MultiSender::new(client_id, Arc::new(ipc_sender), ipc_response_receiver);
     Ok((Arc::new(Mutex::new(multi_sender)), multi_receiver_rc))
 }
 
