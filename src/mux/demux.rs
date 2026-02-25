@@ -14,8 +14,9 @@ use crate::mux::protocol::{
 };
 use crate::mux::sender::Target;
 use crate::mux::sender::{MultiSender, SubChannelDisconnector, SubChannelSender};
+use crate::mux::shared_memory::{clear_shmem_deserialization_context, set_shmems_for_recv};
 use crate::mux::subchannel_lifecycle::SubSenderTracker;
-use ipc_channel::ipc::{IpcReceiver, IpcSender};
+use ipc_channel::ipc::{IpcReceiver, IpcSender, IpcSharedMemory};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -40,11 +41,19 @@ pub struct ResolvedMessage {
     scid: SubChannelId,
     payload: Vec<u8>,
     senders: VecDeque<ProtoSender>,
+    shmems: Vec<IpcSharedMemory>,
 }
 
 impl ResolvedMessage {
-    pub fn into_parts(self) -> (SubChannelId, Vec<u8>, VecDeque<ProtoSender>) {
-        (self.scid, self.payload, self.senders)
+    pub fn into_parts(
+        self,
+    ) -> (
+        SubChannelId,
+        Vec<u8>,
+        VecDeque<ProtoSender>,
+        Vec<IpcSharedMemory>,
+    ) {
+        (self.scid, self.payload, self.senders, self.shmems)
     }
 }
 
@@ -169,7 +178,7 @@ impl Demuxer {
                 Ok(())
             },
 
-            MultiMessage::Data(scid, payload, ipc_senders) => {
+            MultiMessage::Data(scid, payload, ipc_senders, shmems) => {
                 let srs: VecDeque<ProtoSender> = ipc_senders
                     .clone()
                     .iter()
@@ -210,6 +219,7 @@ impl Demuxer {
                                 scid,
                                 payload,
                                 senders: srs,
+                                shmems,
                             },
                         ))
                     } else {
@@ -356,6 +366,7 @@ impl Demuxer {
         payload: Vec<u8>,
         ipc_senders: &[(SubChannelId, IpcSenderAndOrId)],
         ipc_receiver_uuid: Uuid,
+        shmems: Vec<IpcSharedMemory>,
     ) -> Result<(), MuxError> {
         let mut id_sender_results: IdSenderResults = VecDeque::new();
         for (scid, s) in ipc_senders {
@@ -377,6 +388,7 @@ impl Demuxer {
                         scid,
                         payload,
                         senders: srs,
+                        shmems,
                     },
                 ));
                 match sent {
@@ -743,6 +755,7 @@ impl Drop for SubChannelReceiver {
             scid: via,
             payload: _,
             senders: scids_and_multi_senders,
+            shmems: _,
         })) = self.channel.try_recv()
         {
             // log::trace!(
@@ -791,14 +804,17 @@ impl SubChannelReceiver {
                     scid,
                     payload,
                     senders: multi_senders,
+                    shmems,
                 })) => {
                     log::trace!("SubChannelReceiver::recv received = {payload:#?}");
 
                     establish_deserialization_context(multi_senders, scid);
+                    set_shmems_for_recv(shmems);
 
                     let result = postcard::from_bytes::<T>(payload.as_slice());
 
                     clear_deserialization_context();
+                    clear_shmem_deserialization_context();
 
                     return result.map_err(From::from);
                 },

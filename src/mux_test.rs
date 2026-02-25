@@ -8,9 +8,11 @@
 // except according to those terms.
 
 use crate::mux::{
-    self, SubOneShotServer, SubReceiver, SubSender,
+    self, SharedMemory, SubOneShotServer, SubReceiver, SubSender,
     subchannel_router::{ROUTER, RouterError, RouterProxy},
 };
+use ipc_channel::ipc::IpcSharedMemory;
+use serde::{Deserialize, Serialize};
 use std::thread;
 use test_log::test;
 
@@ -583,6 +585,144 @@ fn router_channel_usable_after_all_senders_dropped() {
 
     tx2.send(99).unwrap();
     assert_eq!(callback_fired_receiver2.recv().unwrap(), 99);
+
+    proxy.shutdown();
+}
+
+#[test]
+fn shmem_simple() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel();
+    let data = SharedMemory::from_bytes(b"hello world");
+    tx.send(data.clone()).unwrap();
+    let received: SharedMemory = rx.recv().unwrap();
+    assert_eq!(&*received, b"hello world");
+    assert_eq!(data, received);
+}
+
+#[test]
+fn shmem_from_byte() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel();
+    let data = SharedMemory::from_byte(0xAB, 1024);
+    tx.send(data).unwrap();
+    let received: SharedMemory = rx.recv().unwrap();
+    assert_eq!(received.len(), 1024);
+    assert!(received.iter().all(|&b| b == 0xAB));
+}
+
+#[test]
+fn shmem_empty() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel();
+    let data = SharedMemory::from_bytes(&[]);
+    tx.send(data).unwrap();
+    let received: SharedMemory = rx.recv().unwrap();
+    assert!(received.is_empty());
+}
+
+#[test]
+fn shmem_large() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel();
+    let size = 4 * 1024 * 1024; // 4MB
+    let data = SharedMemory::from_byte(0x42, size);
+    tx.send(data).unwrap();
+    let received: SharedMemory = rx.recv().unwrap();
+    assert_eq!(received.len(), size);
+    assert!(received.iter().all(|&b| b == 0x42));
+}
+
+#[test]
+fn shmem_multiple_in_message() {
+    #[derive(Serialize, Deserialize, Debug)]
+    struct TwoRegions {
+        a: SharedMemory,
+        b: SharedMemory,
+    }
+
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel();
+    let msg = TwoRegions {
+        a: SharedMemory::from_bytes(b"first"),
+        b: SharedMemory::from_bytes(b"second"),
+    };
+    tx.send(msg).unwrap();
+    let received: TwoRegions = rx.recv().unwrap();
+    assert_eq!(&*received.a, b"first");
+    assert_eq!(&*received.b, b"second");
+}
+
+#[test]
+fn shmem_with_subsender() {
+    #[derive(Serialize, Deserialize)]
+    struct MsgWithShmemAndSender {
+        data: SharedMemory,
+        sender: SubSender<i32>,
+    }
+
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel();
+    let (inner_tx, inner_rx) = channel.sub_channel::<i32>();
+
+    let msg = MsgWithShmemAndSender {
+        data: SharedMemory::from_bytes(b"payload"),
+        sender: inner_tx,
+    };
+    tx.send(msg).unwrap();
+
+    let received: MsgWithShmemAndSender = rx.recv().unwrap();
+    assert_eq!(&*received.data, b"payload");
+    received.sender.send(42).unwrap();
+    assert_eq!(inner_rx.recv().unwrap(), 42);
+}
+
+#[test]
+fn shmem_cross_thread() {
+    let (server, name) = SubOneShotServer::<SharedMemory>::new().unwrap();
+
+    thread::spawn(move || {
+        let tx = SubSender::connect(name).unwrap();
+        tx.send(SharedMemory::from_bytes(b"cross-thread")).unwrap();
+    });
+
+    let (rx, first) = server.accept().unwrap();
+    assert_eq!(&*first, b"cross-thread");
+    drop(rx);
+}
+
+#[test]
+fn shmem_deref() {
+    let data = SharedMemory::from_bytes(b"abcdef");
+    assert_eq!(data.len(), 6);
+    assert_eq!(data[0], b'a');
+    assert_eq!(&data[2..4], b"cd");
+}
+
+#[test]
+fn shmem_ipc_conversion() {
+    let original = SharedMemory::from_bytes(b"roundtrip");
+    let ipc: IpcSharedMemory = original.clone().into();
+    let back: SharedMemory = ipc.into();
+    assert_eq!(&*original, &*back);
+}
+
+#[test]
+fn shmem_via_router() {
+    let proxy = RouterProxy::new().unwrap();
+    let channel = RouterProxy::new_router_channel(&proxy).unwrap();
+
+    let (callback_sender, callback_receiver) = crossbeam_channel::unbounded::<SharedMemory>();
+    let tx = channel
+        .add_typed_route(Box::new(move |message| {
+            callback_sender.send(message.unwrap()).unwrap();
+        }))
+        .unwrap();
+
+    tx.send(SharedMemory::from_bytes(b"routed")).unwrap();
+
+    let received = callback_receiver.recv().unwrap();
+    assert_eq!(&*received, b"routed");
 
     proxy.shutdown();
 }
