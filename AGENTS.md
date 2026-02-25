@@ -7,3 +7,7 @@ The code should return errors rather than use unwrap(), except in examples, test
 In spawned threads and processes using except() rather than unwrap().
 
 Do not swallow errors, log them using log::debug!().
+
+## Encapsulation
+
+Keep struct fields private.

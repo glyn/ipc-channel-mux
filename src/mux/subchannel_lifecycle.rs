@@ -75,6 +75,12 @@ impl SubReceiverProxy {
     }
 }
 
+impl Default for SubReceiverProxy {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub trait Sender<M, Error> {
     fn send(&self, msg: M) -> Result<(), Error>;
 }

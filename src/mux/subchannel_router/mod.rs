@@ -21,10 +21,13 @@ use crossbeam_channel::{self, Receiver, Sender};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::mux::{
-    self, MuxError, OpaqueSelectableSubReceiver, RawMessage, SelectableSubReceiver, SubReceiverSet,
-    SubSelectionResult, SubSender,
-};
+mod receiver_set;
+mod select;
+
+use receiver_set::{RawMessage, SubReceiverSet, SubSelectionResult};
+use select::{OpaqueSelectableSubReceiver, SelectableChannel, SelectableSubReceiver};
+
+use crate::mux::{MuxError, SubSender};
 
 /// Global object wrapping a `RouterProxy`.
 /// Add routes ([add_typed_route](RouterChannel::add_typed_route)), or route
@@ -53,7 +56,7 @@ impl RouterProxy {
         // receiver ends.
         // Router proxy takes both sending ends.
         let (msg_sender, msg_receiver) = crossbeam_channel::unbounded();
-        let chan = mux::SelectableChannel::new()?;
+        let chan = SelectableChannel::new()?;
         let (wakeup_sender, wakeup_receiver) = chan.sub_channel();
         let handle = thread::Builder::new()
             .name("router-proxy".to_string())
@@ -76,7 +79,7 @@ impl RouterProxy {
     /// Create a new `RouterChannel`, which is used to construct routed subchannels.
     pub fn new_router_channel(proxy: &Arc<RouterProxy>) -> Result<RouterChannel, MuxError> {
         Ok(RouterChannel {
-            chan: mux::SelectableChannel::new()?,
+            chan: SelectableChannel::new()?,
             proxy: proxy.clone(),
         })
     }
@@ -200,14 +203,14 @@ impl RouterProxy {
     }
 }
 
-/// A RouterChannel is analogous to [mux::Channel], but is used to construct routed subchannels.
+/// A RouterChannel is analogous to [crate::mux::channel::Channel], but is used to construct routed subchannels.
 /// All SubChannels created using a given RouterChannel share an underlying IPC channel.
 ///
 /// RouterChannel is the only way to construct routed subchannels and avoids routed subchannels
 /// sharing an underlying IPC channel with non-routed subchannels, which would give rise to
 /// liveness and fairness issues.
 pub struct RouterChannel {
-    chan: mux::SelectableChannel,
+    chan: SelectableChannel,
     proxy: Arc<RouterProxy>,
 }
 
@@ -385,7 +388,7 @@ enum RouterMsg {
 }
 
 /// Function to call when a new event is received from the corresponding receiver.
-pub type RouterHandler = Box<dyn FnMut(RawMessage) + Send>;
+type RouterHandler = Box<dyn FnMut(RawMessage) + Send>;
 
-/// Like [RouterHandler] but includes the type that will be passed to the callback
+/// Typed function to call when a new event is received from the corresponding receiver.
 pub type TypedRouterHandler<T> = Box<dyn FnMut(Result<T, MuxError>) + Send>;
