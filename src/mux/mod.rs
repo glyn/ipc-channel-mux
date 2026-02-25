@@ -129,7 +129,6 @@
 #![warn(missing_docs)]
 
 mod channel;
-mod channel_identification;
 mod demux;
 mod error;
 mod protocol;

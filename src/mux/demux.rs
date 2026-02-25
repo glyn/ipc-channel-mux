@@ -7,12 +7,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use crate::mux::channel_identification::Target;
 use crate::mux::error::MuxError;
 use crate::mux::protocol::{
     ClientId, EMPTY_SUBCHANNEL_ID, IpcSenderAndOrId, MultiMessage, MultiResponse, ORIGIN,
     SubChannelId, SubChannelSenderIds,
 };
+use crate::mux::sender::Target;
 use crate::mux::sender::{MultiSender, SubChannelDisconnector, SubChannelSender};
 use crate::mux::subchannel_lifecycle::SubSenderTracker;
 use ipc_channel::ipc::{IpcReceiver, IpcSender};
@@ -99,7 +99,7 @@ pub(crate) struct Demuxer {
     ipc_senders: HashMap<ClientId, IpcSender<MultiResponse>>,
     sub_channels: HashMap<SubChannelId, Arc<SubSenderStateMachine>>,
     disconnectors: WeakValueHashMap<SubChannelId, Weak<SubSenderTracker<dyn Fn() + Send + Sync>>>,
-    ipc_senders_by_id: Target<Arc<Mutex<MultiSender>>>,
+    ipc_senders_by_id: Target,
 }
 
 impl std::fmt::Debug for Demuxer {
