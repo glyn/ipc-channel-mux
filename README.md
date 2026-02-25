@@ -258,7 +258,6 @@ Fortunately, a multireceiver will tend to drain messages when receiving on behal
 ## Major missing features
 
 * Non-blocking subreceivers.
-* Transmission of shared memory.
 * Each one-shot server accepts only one client connect request. This is fine if you simply want to use this API to split your application up into a fixed number of mutually untrusting processes, but it's not suitable for implementing a system service.
 
 ## Related
