@@ -12,24 +12,24 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::{Display, Formatter};
 use uuid::Uuid;
 
-pub(crate) const EMPTY_SUBCHANNEL_ID: SubChannelId =
+pub const EMPTY_SUBCHANNEL_ID: SubChannelId =
     SubChannelId(uuid::uuid!("11111111-10b1-428f-9447-cb680e5fe0c8"));
-pub(crate) const ORIGIN: Uuid = uuid::uuid!("00000000-10b1-428f-9447-cb680e5fe0c8");
+pub const ORIGIN: Uuid = uuid::uuid!("00000000-10b1-428f-9447-cb680e5fe0c8");
 
 #[derive(Eq, Clone, Copy, Debug, Hash, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ClientId(Uuid);
+pub struct ClientId(Uuid);
 
 impl ClientId {
-    pub(crate) fn new() -> ClientId {
+    pub fn new() -> ClientId {
         ClientId(Uuid::new_v4())
     }
 }
 
 #[derive(Eq, Clone, Copy, Debug, Hash, PartialEq)]
-pub(crate) struct SubChannelId(Uuid);
+pub struct SubChannelId(Uuid);
 
 impl SubChannelId {
-    pub(crate) fn new() -> SubChannelId {
+    pub fn new() -> SubChannelId {
         SubChannelId(Uuid::new_v4())
     }
 }
@@ -61,27 +61,27 @@ impl<'de> Deserialize<'de> for SubChannelId {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub(crate) struct SubChannelSenderIds {
+pub struct SubChannelSenderIds {
     sub_channel_id: SubChannelId,
     ipc_sender_uuid: String,
 }
 
 impl SubChannelSenderIds {
-    pub(crate) fn new(sub_channel_id: SubChannelId, ipc_sender_uuid: String) -> Self {
+    pub fn new(sub_channel_id: SubChannelId, ipc_sender_uuid: String) -> Self {
         SubChannelSenderIds {
             sub_channel_id,
             ipc_sender_uuid,
         }
     }
 
-    pub(crate) fn sub_channel_id(&self) -> SubChannelId {
+    pub fn sub_channel_id(&self) -> SubChannelId {
         self.sub_channel_id
     }
 }
 
 /// MultiMessage is used to communicate across multiplexing channels.
 #[derive(Serialize, Deserialize, Debug)]
-pub(crate) enum MultiMessage {
+pub enum MultiMessage {
     Connect(IpcSender<MultiResponse>, ClientId),
     Data(SubChannelId, Vec<u8>, Vec<(SubChannelId, IpcSenderAndOrId)>),
     SubChannelId(SubChannelId, String),
@@ -104,7 +104,7 @@ pub(crate) enum MultiMessage {
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
-pub(crate) enum IpcSenderAndOrId {
+pub enum IpcSenderAndOrId {
     IpcSender(IpcSender<MultiMessage>, String),
     IpcSenderId(String),
 }
@@ -112,7 +112,7 @@ pub(crate) enum IpcSenderAndOrId {
 /// MultiResponse is used to communicate from the receiver of a multiplexing channel to the sender
 /// via an additional channel in the reverse direction.
 #[derive(Serialize, Deserialize, Debug)]
-pub(crate) enum MultiResponse {
+pub enum MultiResponse {
     /// The SubReceiver for the subchannel identified by the given subchannel id. has disconnected (been dropped).
     SubReceiverDisconnected(SubChannelId),
 }

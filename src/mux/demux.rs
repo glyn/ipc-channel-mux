@@ -29,26 +29,26 @@ use weak_table::WeakValueHashMap;
 const POLLING_INTERVAL: Duration = Duration::from_millis(100);
 const CONTENDED_WAIT_INTERVAL: Duration = Duration::from_micros(100);
 
-pub(crate) type ProtoSender = (
+pub type ProtoSender = (
     SubChannelId,
     Arc<Mutex<MultiSender>>,
     Uuid,
     Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
 );
 
-pub(crate) struct ResolvedMessage {
+pub struct ResolvedMessage {
     scid: SubChannelId,
     payload: Vec<u8>,
     senders: VecDeque<ProtoSender>,
 }
 
 impl ResolvedMessage {
-    pub(crate) fn into_parts(self) -> (SubChannelId, Vec<u8>, VecDeque<ProtoSender>) {
+    pub fn into_parts(self) -> (SubChannelId, Vec<u8>, VecDeque<ProtoSender>) {
         (self.scid, self.payload, self.senders)
     }
 }
 
-pub(crate) enum ResolvedMessageOrDisconnect {
+pub enum ResolvedMessageOrDisconnect {
     ResolvedMessage(ResolvedMessage),
     Disconnect(SubChannelId),
 }
@@ -95,7 +95,7 @@ type SubSenderStateMachine = crate::mux::subchannel_lifecycle::SubSenderStateMac
     dyn Fn() -> bool + Send,
 >;
 
-pub(crate) struct Demuxer {
+pub struct Demuxer {
     ipc_senders: HashMap<ClientId, IpcSender<MultiResponse>>,
     sub_channels: HashMap<SubChannelId, Arc<SubSenderStateMachine>>,
     disconnectors: WeakValueHashMap<SubChannelId, Weak<SubSenderTracker<dyn Fn() + Send + Sync>>>,
@@ -112,7 +112,7 @@ impl std::fmt::Debug for Demuxer {
 }
 
 impl Demuxer {
-    pub(crate) fn empty() -> Self {
+    pub fn empty() -> Self {
         Demuxer {
             ipc_senders: HashMap::new(),
             sub_channels: HashMap::new(),
@@ -121,7 +121,7 @@ impl Demuxer {
         }
     }
 
-    pub(crate) fn with_sender(client_id: ClientId, sender: IpcSender<MultiResponse>) -> Self {
+    pub fn with_sender(client_id: ClientId, sender: IpcSender<MultiResponse>) -> Self {
         let mut ipc_senders = HashMap::new();
         ipc_senders.insert(client_id, sender);
         Demuxer {
@@ -132,7 +132,7 @@ impl Demuxer {
         }
     }
 
-    pub(crate) fn switch_sub_channel_sender(
+    pub fn switch_sub_channel_sender(
         &self,
         scid: SubChannelId,
         sender: Sender<ResolvedMessageOrDisconnect>,
@@ -449,7 +449,7 @@ thread_local! {
     static VIA: Mutex<SubChannelId> = const { Mutex::new(EMPTY_SUBCHANNEL_ID) };
 }
 
-pub(crate) fn establish_deserialization_context(
+pub fn establish_deserialization_context(
     mut multi_senders: VecDeque<ProtoSender>,
     via: SubChannelId,
 ) {
@@ -463,7 +463,7 @@ pub(crate) fn establish_deserialization_context(
     });
 }
 
-pub(crate) fn clear_deserialization_context() {
+pub fn clear_deserialization_context() {
     VIA.with(|via| {
         let mut v = via.lock().unwrap();
         *v = EMPTY_SUBCHANNEL_ID;
@@ -543,13 +543,13 @@ impl<'de> Deserialize<'de> for SubChannelSender {
 ///
 /// [MultiReceiver]: struct.MultiReceiver.html
 #[derive(Debug)]
-pub(crate) struct MultiReceiver {
+pub struct MultiReceiver {
     ipc_receiver_uuid: Uuid,
     receiver_demuxer: ReceiverDemuxer,
 }
 
 #[derive(Debug)]
-pub(crate) struct ReceiverDemuxer {
+pub struct ReceiverDemuxer {
     // When receiving from the IPC receiver, the Demuxer must be locked to
     // ensure messages are received in order.
     ipc_receiver: IpcReceiver<MultiMessage>,
@@ -557,10 +557,7 @@ pub(crate) struct ReceiverDemuxer {
 }
 
 impl ReceiverDemuxer {
-    pub(crate) fn new(
-        ipc_receiver: IpcReceiver<MultiMessage>,
-        demuxer: Arc<Mutex<Demuxer>>,
-    ) -> Self {
+    pub fn new(ipc_receiver: IpcReceiver<MultiMessage>, demuxer: Arc<Mutex<Demuxer>>) -> Self {
         ReceiverDemuxer {
             ipc_receiver,
             demuxer,
@@ -572,14 +569,14 @@ unsafe impl Send for MultiReceiver {}
 unsafe impl Sync for MultiReceiver {}
 
 impl MultiReceiver {
-    pub(crate) fn new(ipc_receiver_uuid: Uuid, receiver_demuxer: ReceiverDemuxer) -> Self {
+    pub fn new(ipc_receiver_uuid: Uuid, receiver_demuxer: ReceiverDemuxer) -> Self {
         MultiReceiver {
             ipc_receiver_uuid,
             receiver_demuxer,
         }
     }
 
-    pub(crate) fn handle_initial_message(&self, msg: MultiMessage) -> Result<(), MuxError> {
+    pub fn handle_initial_message(&self, msg: MultiMessage) -> Result<(), MuxError> {
         self.receiver_demuxer
             .demuxer
             .lock()
@@ -588,10 +585,7 @@ impl MultiReceiver {
     }
 
     #[instrument(level = "debug", ret)]
-    pub(crate) fn attach(
-        mr: &Arc<MultiReceiver>,
-        sub_channel_id: SubChannelId,
-    ) -> SubChannelReceiver {
+    pub fn attach(mr: &Arc<MultiReceiver>, sub_channel_id: SubChannelId) -> SubChannelReceiver {
         let (tx, rx): (
             Sender<ResolvedMessageOrDisconnect>,
             Receiver<ResolvedMessageOrDisconnect>,
@@ -666,7 +660,7 @@ impl MultiReceiver {
     }
 
     #[instrument(level = "debug", ret, err(level = "debug"))]
-    pub(crate) fn receive_sub_channel(
+    pub fn receive_sub_channel(
         mr: &Arc<MultiReceiver>,
     ) -> Result<(SubChannelId, String), MuxError> {
         let _unused = mr.receiver_demuxer.demuxer.lock().unwrap();
@@ -710,7 +704,7 @@ impl MultiReceiver {
     }
 }
 
-pub(crate) struct SubChannelReceiver {
+pub struct SubChannelReceiver {
     multi_receiver: Arc<MultiReceiver>,
     sub_channel_id: SubChannelId,
     channel: Receiver<ResolvedMessageOrDisconnect>,
@@ -782,7 +776,7 @@ impl fmt::Debug for SubChannelReceiver {
 
 impl SubChannelReceiver {
     #[instrument(level = "debug", err(level = "debug"))]
-    pub(crate) fn recv<T>(&self) -> Result<T, MuxError>
+    pub fn recv<T>(&self) -> Result<T, MuxError>
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {

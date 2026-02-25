@@ -30,7 +30,8 @@ impl<T> SubSender<T>
 where
     T: Serialize,
 {
-    pub(crate) fn from_sender(sub_channel_sender: SubChannelSender) -> Self {
+    /// Convert a SubChannelSender to a SubSender.
+    pub fn from_sender(sub_channel_sender: SubChannelSender) -> Self {
         SubSender {
             sub_channel_sender,
             phantom: PhantomData,
@@ -141,7 +142,8 @@ impl<T> SubReceiver<T>
 where
     T: for<'x> Deserialize<'x> + Serialize,
 {
-    pub(crate) fn from_receiver(sub_channel_receiver: SubChannelReceiver) -> Self {
+    /// Convert a SubChannelReceiver to a SubReceiver.
+    pub fn from_receiver(sub_channel_receiver: SubChannelReceiver) -> Self {
         SubReceiver {
             sub_channel_receiver,
             phantom: PhantomData,
