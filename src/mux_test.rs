@@ -700,6 +700,17 @@ fn shmem_deref() {
 }
 
 #[test]
+fn shmem_deref_mut() {
+    let mut data = SharedMemory::from_bytes(b"hello");
+    assert_eq!(&*data, b"hello");
+    // SAFETY: we have the only reference and don't clone or serialize.
+    let bytes = unsafe { data.deref_mut() };
+    bytes[0] = b'H';
+    bytes[4] = b'O';
+    assert_eq!(&*data, b"HellO");
+}
+
+#[test]
 fn shmem_ipc_conversion() {
     let original = SharedMemory::from_bytes(b"roundtrip");
     let ipc: IpcSharedMemory = original.clone().into();

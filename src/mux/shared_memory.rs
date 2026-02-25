@@ -45,6 +45,18 @@ impl SharedMemory {
     pub fn from_byte(byte: u8, length: usize) -> SharedMemory {
         SharedMemory(IpcSharedMemory::from_byte(byte, length))
     }
+
+    /// Returns a mutable reference to the shared memory bytes.
+    ///
+    /// # Safety
+    ///
+    /// This is safe if there is only one reader/writer on the data.
+    /// The caller can achieve this by not cloning the [`SharedMemory`]
+    /// and serializing/deserializing only once.
+    #[inline]
+    pub unsafe fn deref_mut(&mut self) -> &mut [u8] {
+        unsafe { self.0.deref_mut() }
+    }
 }
 
 impl Deref for SharedMemory {
