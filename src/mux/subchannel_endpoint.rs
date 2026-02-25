@@ -60,7 +60,8 @@ where
     /// otherwise the behaviour is unpredictable.
     /// For more information, see [issue 378](https://github.com/servo/ipc-channel/issues/378).
     ///
-    /// [new]: crate::mux::SubOneShotServer::new
+    /// [new]: crate::mux::channel::SubOneShotServer::new
+    /// [SubOneShotServer]: crate::mux::channel::SubOneShotServer
     #[instrument(level = "debug", err(level = "debug"))]
     pub fn connect(name: String) -> Result<SubSender<T>, MuxError> {
         let multi_sender = super::sender::MultiSender::connect(name.clone())?;

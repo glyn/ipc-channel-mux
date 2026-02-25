@@ -203,7 +203,7 @@ impl RouterProxy {
     }
 }
 
-/// A RouterChannel is analogous to [mux::Channel], but is used to construct routed subchannels.
+/// A RouterChannel is analogous to [crate::mux::channel::Channel], but is used to construct routed subchannels.
 /// All SubChannels created using a given RouterChannel share an underlying IPC channel.
 ///
 /// RouterChannel is the only way to construct routed subchannels and avoids routed subchannels
@@ -390,5 +390,5 @@ enum RouterMsg {
 /// Function to call when a new event is received from the corresponding receiver.
 type RouterHandler = Box<dyn FnMut(RawMessage) + Send>;
 
-/// Like [RouterHandler] but includes the type that will be passed to the callback
+/// Typed function to call when a new event is received from the corresponding receiver.
 pub type TypedRouterHandler<T> = Box<dyn FnMut(Result<T, MuxError>) + Send>;

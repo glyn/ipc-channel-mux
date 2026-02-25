@@ -27,9 +27,11 @@ pub enum MuxError {
     /// Returned from [recv] or [accept] when all the subchannel's [SubSender]s have disconnected (have been
     /// deallocated or their processes have terminated) and no more messages are available to be received.
     ///
-    /// [send]: crate::mux::SubSender::send
-    /// [recv]: crate::mux::SubReceiver::recv
     /// [accept]: crate::mux::SubOneShotServer::accept
+    /// [recv]: crate::mux::SubReceiver::recv
+    /// [send]: crate::mux::SubSender::send
+    /// [SubReceiver]: crate::mux::SubReceiver
+    /// [SubSender]: crate::mux::SubSender
     #[error("Disconnected")]
     Disconnected,
     /// An internal logic error has occurred.
