@@ -75,6 +75,25 @@ This allows receiving code to utilise Crossbeam features.
 
 The router is in the `mux::subchannel_router` module.
 
+### Shared memory
+
+`mux::SharedMemory` is a shared memory region that can be sent over subchannels. It is analogous to `ipc-channel`'s `IpcSharedMemory` and is transported efficiently via OS shared memory primitives:
+
+~~~Rust
+use ipc_channel_mux::mux;
+
+let channel = mux::Channel::new().unwrap();
+let (tx, rx) = channel.sub_channel();
+
+let shmem = mux::SharedMemory::from_bytes(b"hello shared world");
+tx.send(shmem).unwrap();
+
+let received: mux::SharedMemory = rx.recv().unwrap();
+assert_eq!(&*received, b"hello shared world");
+~~~
+
+`SharedMemory` can also be included as a field in user-defined message types that derive `Serialize` and `Deserialize`.
+
 ### Opaque senders and receivers
 
 `OpaqueSubSender` and `OpaqueSubReceiver` are type-erased versions of `SubSender<T>` and `SubReceiver<T>`. They are useful when the message type is not known statically or when handling heterogeneous channels. For example, the router uses `OpaqueSubReceiver` internally so it can manage receivers of different message types together.
@@ -221,6 +240,16 @@ It would be incorrect to report a subchannel as disconnected while a subsender i
 
 A subchannel is only considered disconnected when all sources have dropped their copies _and_ no copies are in-flight. Periodic probing detects process crashes that might prevent in-flight subsenders from ever being received.
 
+### Shared memory transport
+
+`SharedMemory` is a thin wrapper around `IpcSharedMemory` with custom serialization that works with the mux's two-stage serialization model. `ipc-channel` uses thread-local storage to transport `IpcSharedMemory` values out-of-band via OS shared memory primitives. The mux's inner serialization (using postcard) would lose these values, so `SharedMemory` uses its own thread-local mechanism:
+
+1. **Serialization (send path)**: When a `SharedMemory` value is serialized during inner (postcard) serialization, the underlying `IpcSharedMemory` is captured into a mux-managed thread-local and only an index is written into the payload bytes. After inner serialization completes, the captured values are included in the protocol message as `Vec<IpcSharedMemory>`, so that `ipc-channel`'s outer serialization transports them efficiently via OS shared memory.
+
+2. **Deserialization (receive path)**: The outer deserialization reconstructs the `Vec<IpcSharedMemory>` from the protocol message. Before inner (postcard) deserialization, these values are placed in a mux-managed thread-local. The `SharedMemory` deserializer reads the index from the payload and retrieves the corresponding `IpcSharedMemory` from the thread-local.
+
+This approach avoids any modifications to `ipc-channel` while still benefiting from its efficient OS-level shared memory transport.
+
 ### When to block
 
 Generally, sends are non-blocking (but see below) so the main blocking consideration is for receives.
@@ -258,7 +287,6 @@ Fortunately, a multireceiver will tend to drain messages when receiving on behal
 ## Major missing features
 
 * Non-blocking subreceivers.
-* Transmission of shared memory.
 * Each one-shot server accepts only one client connect request. This is fine if you simply want to use this API to split your application up into a fixed number of mutually untrusting processes, but it's not suitable for implementing a system service.
 
 ## Related

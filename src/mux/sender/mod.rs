@@ -14,6 +14,7 @@ use crate::mux::protocol::{
     ClientId, IpcSenderAndOrId, MultiMessage, MultiResponse, ORIGIN, SubChannelId,
     SubChannelSenderIds,
 };
+use crate::mux::shared_memory::{clear_shmem_serialization_context, take_shmems_for_send};
 use crate::mux::subchannel_lifecycle::{SubReceiverProxy, SubSenderTracker};
 use ipc_channel::ipc::{self, IpcReceiver, IpcSender};
 use sender_id::Source;
@@ -267,9 +268,11 @@ impl SubChannelSender {
             return Err(MuxError::Disconnected);
         }
         clear_serialization_context();
+        clear_shmem_serialization_context();
 
         let payload = postcard::to_stdvec(&msg).map_err(MuxError::from)?;
 
+        let shmems = take_shmems_for_send();
         let (serialized_subchannel_senders, ipc_senders_to_send) = take_serialization_context();
 
         // Notify transmission of any subchannel senders so that they are counted during transmission.
@@ -302,9 +305,12 @@ impl SubChannelSender {
                 )
             })
             .collect();
-        let result = self
-            .ipc_sender
-            .send(MultiMessage::Data(self.sub_channel_id, payload, srs));
+        let result = self.ipc_sender.send(MultiMessage::Data(
+            self.sub_channel_id,
+            payload,
+            srs,
+            shmems,
+        ));
         log::debug!("<SubChannelSender::send -> {:#?}", result.as_ref());
         result.map_err(From::from)
     }

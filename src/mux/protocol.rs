@@ -7,7 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ipc_channel::ipc::IpcSender;
+use ipc_channel::ipc::{IpcSender, IpcSharedMemory};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::{Display, Formatter};
 use uuid::Uuid;
@@ -95,7 +95,12 @@ impl SubChannelSenderIds {
 #[derive(Serialize, Deserialize, Debug)]
 pub enum MultiMessage {
     Connect(IpcSender<MultiResponse>, ClientId),
-    Data(SubChannelId, Vec<u8>, Vec<(SubChannelId, IpcSenderAndOrId)>),
+    Data(
+        SubChannelId,
+        Vec<u8>,
+        Vec<(SubChannelId, IpcSenderAndOrId)>,
+        Vec<IpcSharedMemory>,
+    ),
     SubChannelId(SubChannelId, String),
     Sending {
         scid: SubChannelId,

@@ -133,10 +133,12 @@ mod demux;
 mod error;
 mod protocol;
 mod sender;
+pub(crate) mod shared_memory;
 mod subchannel_endpoint;
 mod subchannel_lifecycle;
 pub mod subchannel_router;
 
 pub use channel::{Channel, SubOneShotServer};
 pub use error::MuxError;
+pub use shared_memory::SharedMemory;
 pub use subchannel_endpoint::{OpaqueSubReceiver, OpaqueSubSender, SubReceiver, SubSender};
