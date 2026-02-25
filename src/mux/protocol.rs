@@ -25,12 +25,24 @@ impl ClientId {
     }
 }
 
+impl Default for ClientId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Eq, Clone, Copy, Debug, Hash, PartialEq)]
 pub struct SubChannelId(Uuid);
 
 impl SubChannelId {
     pub fn new() -> SubChannelId {
         SubChannelId(Uuid::new_v4())
+    }
+}
+
+impl Default for SubChannelId {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
