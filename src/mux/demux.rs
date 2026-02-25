@@ -78,7 +78,7 @@ impl fmt::Display for TryRecvError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             TryRecvError::MuxError(multiplex_error) => {
-                write!(f, "TryRecvError::MuxError({})", multiplex_error)
+                write!(f, "TryRecvError::MuxError({multiplex_error})")
             },
             TryRecvError::Empty => write!(f, "TryRecvError::Empty"),
             TryRecvError::Handled => write!(f, "TryRecvError::Handled"),
@@ -140,7 +140,7 @@ impl Demuxer {
         let sub_sender_state_machine = self
             .sub_channels
             .get(&scid)
-            .ok_or_else(|| MuxError::InternalError(format!("missing sub_channel for {}", scid)))?;
+            .ok_or_else(|| MuxError::InternalError(format!("missing sub_channel for {scid}")))?;
         sub_sender_state_machine.switch_sender(sender);
         Ok(())
     }
@@ -222,12 +222,11 @@ impl Demuxer {
                                     via: scid,
                                 },
                             ) {
-                                log::debug!("Failed to send ReceiveFailed: {}", e);
+                                log::debug!("Failed to send ReceiveFailed: {e}");
                             }
                         }
                         Err(MuxError::InternalError(format!(
-                            "invalid subchannel id {}",
-                            scid
+                            "invalid subchannel id {scid}"
                         )))?
                     };
 
@@ -244,7 +243,7 @@ impl Demuxer {
                     log::trace!("About to send disconnect to SubSenderStateMachine");
                     if let Some(sender) = sm.disconnect(source) {
                         if let Err(e) = sender.send(ResolvedMessageOrDisconnect::Disconnect(scid)) {
-                            log::debug!("Failed to send disconnect: {}", e);
+                            log::debug!("Failed to send disconnect: {e}");
                         }
                     }
                 }
@@ -267,15 +266,14 @@ impl Demuxer {
                             );
                         },
                         Err(e) => {
-                            log::trace!("Error processing Sending message: {:?}", e);
+                            log::trace!("Error processing Sending message: {e:?}");
                             sm.to_be_sent(via, Box::new(|| false));
                             if let Some(sender) = sm.receive_failed(&via) {
                                 if let Err(e) =
                                     sender.send(ResolvedMessageOrDisconnect::Disconnect(scid))
                                 {
                                     log::debug!(
-                                        "Failed to send disconnect after receive_failed: {}",
-                                        e
+                                        "Failed to send disconnect after receive_failed: {e}"
                                     );
                                 }
                             }
@@ -289,7 +287,7 @@ impl Demuxer {
                 if let Some(sm) = self.sub_channels.get(&scid) {
                     if let Some(sender) = sm.receive_failed(&via) {
                         if let Err(e) = sender.send(ResolvedMessageOrDisconnect::Disconnect(scid)) {
-                            log::debug!("Failed to send disconnect after receive_failed: {}", e);
+                            log::debug!("Failed to send disconnect after receive_failed: {e}");
                         }
                     }
                 }
@@ -309,8 +307,7 @@ impl Demuxer {
             },
             MultiMessage::Probe() => Ok(()), // ignore probe messages
             m @ MultiMessage::SubChannelId(..) => Err(MuxError::InternalError(format!(
-                "unexpected multi message {:?}",
-                m
+                "unexpected multi message {m:?}"
             ))),
         }
     }
@@ -330,20 +327,20 @@ impl Demuxer {
         match s {
             IpcSenderAndOrId::IpcSender(s, id) => {
                 let uuid = Uuid::parse_str(id)
-                    .map_err(|e| MuxError::InternalError(format!("invalid UUID: {}", e)))?;
+                    .map_err(|e| MuxError::InternalError(format!("invalid UUID: {e}")))?;
                 let multi_sender = MultiSender::connect_sender(Arc::new(s.clone()), uuid)?;
-                log::trace!("associating {} with a MultiSender", uuid);
+                log::trace!("associating {uuid} with a MultiSender");
                 self.ipc_senders_by_id.add(uuid, &multi_sender);
                 log::trace!("association complete");
                 Ok(multi_sender)
             },
             IpcSenderAndOrId::IpcSenderId(id) => {
                 let uuid = Uuid::parse_str(id)
-                    .map_err(|e| MuxError::InternalError(format!("invalid UUID: {}", e)))?;
-                log::trace!("looking up MultiSender associated with {}", uuid);
+                    .map_err(|e| MuxError::InternalError(format!("invalid UUID: {e}")))?;
+                log::trace!("looking up MultiSender associated with {uuid}");
                 let maybe_sender: Option<Arc<Mutex<MultiSender>>> =
                     self.ipc_senders_by_id.look_up(uuid);
-                log::trace!("result of looking up MultiSender is {:?}", maybe_sender);
+                log::trace!("result of looking up MultiSender is {maybe_sender:?}");
                 if let Some(sender) = maybe_sender {
                     Ok(sender)
                 } else {
@@ -363,7 +360,7 @@ impl Demuxer {
         let mut id_sender_results: IdSenderResults = VecDeque::new();
         for (scid, s) in ipc_senders {
             let disc = self.disconnectors.get(scid).ok_or_else(|| {
-                MuxError::InternalError(format!("missing disconnector for subchannel {}", scid))
+                MuxError::InternalError(format!("missing disconnector for subchannel {scid}"))
             })?;
             id_sender_results.push_back((
                 *scid,
@@ -401,7 +398,7 @@ impl Demuxer {
                             via: scid,
                         },
                     ) {
-                        log::debug!("Failed to send ReceiveFailed: {}", e);
+                        log::debug!("Failed to send ReceiveFailed: {e}");
                     }
                 }
                 Err(MuxError::Disconnected)
@@ -430,7 +427,7 @@ impl Demuxer {
             if !poll {
                 if let Some(sender) = v {
                     if let Err(e) = sender.send(ResolvedMessageOrDisconnect::Disconnect(scid)) {
-                        log::debug!("Failed to send disconnect after poll: {}", e);
+                        log::debug!("Failed to send disconnect after poll: {e}");
                     }
                 }
                 probe_failed = true;
@@ -668,8 +665,7 @@ impl MultiReceiver {
         match msg {
             MultiMessage::SubChannelId(sub_channel_id, name) => Ok((sub_channel_id, name)),
             m => Err(MuxError::InternalError(format!(
-                "unexpected multi message {:?}",
-                m
+                "unexpected multi message {m:?}"
             ))),
         }
     }
@@ -694,7 +690,7 @@ impl MultiReceiver {
             if !poll {
                 if let Some(sender) = v {
                     if let Err(e) = sender.send(ResolvedMessageOrDisconnect::Disconnect(scid)) {
-                        log::debug!("Failed to send disconnect after poll: {}", e);
+                        log::debug!("Failed to send disconnect after poll: {e}");
                     }
                 }
                 probe_failed = true;
@@ -735,7 +731,7 @@ impl Drop for SubChannelReceiver {
                 client_id
             );
             let result = sender.send(MultiResponse::SubReceiverDisconnected(self.sub_channel_id));
-            log::trace!("Result of sending SubReceiverDisconnected was {:?}", result);
+            log::trace!("Result of sending SubReceiverDisconnected was {result:?}");
         }
 
         // Drain the multireceiver.
@@ -759,7 +755,7 @@ impl Drop for SubChannelReceiver {
                     .unwrap()
                     .send_message(MultiMessage::ReceiveFailed { scid, via })
                 {
-                    log::debug!("Failed to send ReceiveFailed during drop: {}", e);
+                    log::debug!("Failed to send ReceiveFailed during drop: {e}");
                 }
             }
         }
@@ -796,7 +792,7 @@ impl SubChannelReceiver {
                     payload,
                     senders: multi_senders,
                 })) => {
-                    log::trace!("SubChannelReceiver::recv received = {:#?}", payload);
+                    log::trace!("SubChannelReceiver::recv received = {payload:#?}");
 
                     establish_deserialization_context(multi_senders, scid);
 

@@ -182,10 +182,7 @@ impl SubChannelDisconnector {
                 .ipc_sender
                 .send(MultiMessage::Disconnect(self.sub_channel_id, self.source))
             {
-                log::debug!(
-                    "Failed to send disconnect (other end may have hung up): {}",
-                    e
-                );
+                log::debug!("Failed to send disconnect (other end may have hung up): {e}");
             }
         }
     }
@@ -287,7 +284,7 @@ impl SubChannelSender {
                         self.ipc_sender_uuid,
                     ),
                 }) {
-                    log::debug!("Failed to send Sending notification: {}", e);
+                    log::debug!("Failed to send Sending notification: {e}");
                 }
             }
         }
@@ -324,13 +321,10 @@ impl SubChannelSender {
         and the UUID. */
         let already_sent = sender_id.lock().unwrap().insert(ipc_sender.clone());
         if already_sent {
-            log::trace!(
-                "sending UUID {} associated with previously sent IpcSender",
-                ipc_sender_uuid
-            );
+            log::trace!("sending UUID {ipc_sender_uuid} associated with previously sent IpcSender");
             IpcSenderAndOrId::IpcSenderId(ipc_sender_uuid.to_string())
         } else {
-            log::trace!("sending IpcSender with UUID {}", ipc_sender_uuid);
+            log::trace!("sending IpcSender with UUID {ipc_sender_uuid}");
             IpcSenderAndOrId::IpcSender(
                 Arc::<IpcSender<MultiMessage>>::unwrap_or_clone(ipc_sender.clone()),
                 ipc_sender_uuid.to_string(),
@@ -426,7 +420,7 @@ impl Serialize for SubChannelSender {
         });
 
         let scsi = SubChannelSenderIds::new(self.sub_channel_id, self.ipc_sender_uuid.to_string());
-        log::trace!("Serializing {:?}", scsi);
+        log::trace!("Serializing {scsi:?}");
         scsi.serialize(serializer)
     }
 }

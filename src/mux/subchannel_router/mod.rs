@@ -103,17 +103,17 @@ impl RouterProxy {
         let (ack_sender, ack_receiver) = crossbeam_channel::bounded(1);
         comm.msg_sender
             .send(RouterMsg::AddRoute(subreceiver, callback, ack_sender))
-            .map_err(|e| RouterError::CommError(format!("failed to send route: {}", e)))?;
+            .map_err(|e| RouterError::CommError(format!("failed to send route: {e}")))?;
         comm.wakeup_sender
             .send(())
-            .map_err(|e| RouterError::CommError(format!("failed to send wakeup: {}", e)))?;
+            .map_err(|e| RouterError::CommError(format!("failed to send wakeup: {e}")))?;
         // Wait for the router to process the AddRoute (including switch_sender)
         // before returning. This ensures that subsequent sends on the SubSender
         // find a valid internal channel in the SubSenderStateMachine.
         drop(comm);
         ack_receiver
             .recv()
-            .map_err(|e| RouterError::CommError(format!("failed to receive ack: {}", e)))?;
+            .map_err(|e| RouterError::CommError(format!("failed to receive ack: {e}")))?;
         Ok(())
     }
 
@@ -151,11 +151,11 @@ impl RouterProxy {
             Box::new(move |message| match message {
                 Ok(msg) => {
                     if let Err(e) = crossbeam_sender.send(msg) {
-                        log::debug!("Failed to send routed message to crossbeam channel: {}", e);
+                        log::debug!("Failed to send routed message to crossbeam channel: {e}");
                     }
                 },
                 Err(e) => {
-                    log::debug!("Error deserializing routed message: {}", e);
+                    log::debug!("Error deserializing routed message: {e}");
                 },
             }),
         )
@@ -189,11 +189,11 @@ impl RouterProxy {
 
         let (ack_sender, ack_receiver) = crossbeam_channel::unbounded();
         if let Err(e) = comm.wakeup_sender.send(()) {
-            log::debug!("Failed to send wakeup during shutdown: {}", e);
+            log::debug!("Failed to send wakeup during shutdown: {e}");
         } else if let Err(e) = comm.msg_sender.send(RouterMsg::Shutdown(ack_sender)) {
-            log::debug!("Failed to send shutdown message: {}", e);
+            log::debug!("Failed to send shutdown message: {e}");
         } else if let Err(e) = ack_receiver.recv() {
-            log::debug!("Failed to receive shutdown ack: {}", e);
+            log::debug!("Failed to receive shutdown ack: {e}");
         }
         comm.handle
             .take()
@@ -334,7 +334,7 @@ impl Router {
                         let msg = match self.msg_receiver.recv() {
                             Ok(msg) => msg,
                             Err(e) => {
-                                log::debug!("Router msg_receiver disconnected: {}", e);
+                                log::debug!("Router msg_receiver disconnected: {e}");
                                 return;
                             },
                         };
@@ -345,19 +345,16 @@ impl Router {
                                         self.handlers.insert(new_receiver_id, handler);
                                     },
                                     Err(e) => {
-                                        log::debug!(
-                                            "Failed to add route to subreceiver set: {}",
-                                            e
-                                        );
+                                        log::debug!("Failed to add route to subreceiver set: {e}");
                                     },
                                 }
                                 if let Err(e) = ack_sender.send(()) {
-                                    log::debug!("Failed to send AddRoute ack: {}", e);
+                                    log::debug!("Failed to send AddRoute ack: {e}");
                                 }
                             },
                             RouterMsg::Shutdown(sender) => {
                                 if let Err(e) = sender.send(()) {
-                                    log::debug!("Failed to send shutdown ack: {}", e);
+                                    log::debug!("Failed to send shutdown ack: {e}");
                                 }
                                 return;
                             },

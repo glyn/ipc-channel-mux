@@ -198,7 +198,7 @@ impl SubReceiverSet {
                 Ok(ResolvedMessageOrDisconnect::ResolvedMessage(resolved)) => {
                     let (scid, payload, senders) = resolved.into_parts();
                     let id = *self.ids.get(&scid).ok_or_else(|| {
-                        MuxError::InternalError(format!("missing id for subchannel {}", scid))
+                        MuxError::InternalError(format!("missing id for subchannel {scid}"))
                     })?;
                     results.push(SubSelectionResult::MessageReceived(
                         id,
@@ -212,8 +212,7 @@ impl SubReceiverSet {
                 Ok(ResolvedMessageOrDisconnect::Disconnect(scid)) => {
                     let id = self.ids.remove(&scid).ok_or_else(|| {
                         MuxError::InternalError(format!(
-                            "missing id for disconnected subchannel {}",
-                            scid
+                            "missing id for disconnected subchannel {scid}"
                         ))
                     })?;
                     self.rxs.remove(&id);

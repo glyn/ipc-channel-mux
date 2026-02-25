@@ -113,8 +113,7 @@ where
             .expect("receive sub channel failed");
         if name != self.name {
             return Err(MuxError::InternalError(format!(
-                "unexpected sub channel name {}",
-                name
+                "unexpected sub channel name {name}"
             )));
         }
         let sub_receiver = MultiReceiver::attach(&multi_receiver, subchannel_id);
