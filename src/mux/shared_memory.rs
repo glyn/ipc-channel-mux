@@ -1,4 +1,4 @@
-// Copyright 2025 The Servo Project Developers. See the COPYRIGHT
+// Copyright 2026 The Servo Project Developers. See the COPYRIGHT
 // file at the top-level directory of this distribution.
 //
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
