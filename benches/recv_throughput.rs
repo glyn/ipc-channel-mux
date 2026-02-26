@@ -26,7 +26,7 @@ fn recv_throughput(c: &mut Criterion) {
                     match main_rx.recv() {
                         Ok(()) => {},
                         Err(IpcError::Disconnected) => break 42,
-                        result => panic!("unexpected result {:?}", result),
+                        result => panic!("unexpected result {result:?}"),
                     }
                 }
             });
@@ -51,7 +51,7 @@ fn recv_throughput(c: &mut Criterion) {
                     match main_rx.recv() {
                         Ok(()) => {},
                         Err(MuxError::Disconnected) => break 42,
-                        result => panic!("unexpected result {:?}", result),
+                        result => panic!("unexpected result {result:?}"),
                     }
                 }
             });
@@ -74,7 +74,7 @@ fn recv_throughput(c: &mut Criterion) {
 
             let join_handle = thread::spawn(move || match other_rx.recv() {
                 Err(MuxError::Disconnected) => 42,
-                result => panic!("unexpected result {:?}", result),
+                result => panic!("unexpected result {result:?}"),
             });
 
             let join_handle2 = thread::spawn(move || {
@@ -82,7 +82,7 @@ fn recv_throughput(c: &mut Criterion) {
                     match main_rx.recv() {
                         Ok(()) => {},
                         Err(MuxError::Disconnected) => break 42,
-                        result => panic!("unexpected result {:?}", result),
+                        result => panic!("unexpected result {result:?}"),
                     }
                 }
             });

@@ -96,6 +96,6 @@ fn subsender_drop_inflight_early() {
 
     match transmit_rx.recv() {
         Err(mux::MuxError::Disconnected) => {},
-        result => panic!("unexpected result {:?}", result),
+        result => panic!("unexpected result {result:?}"),
     }
 }

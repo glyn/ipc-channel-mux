@@ -56,7 +56,7 @@ fn subsender_drop_inflight() {
 
     match transmit_rx.recv() {
         Err(MuxError::Disconnected) => {},
-        result => panic!("unexpected result {:?}", result),
+        result => panic!("unexpected result {result:?}"),
     }
 }
 
@@ -88,7 +88,7 @@ fn subsender_drop_inflight_subreceiver_receiving() {
 
     let join_handle = thread::spawn(move || match transmit_rx.recv() {
         Err(MuxError::Disconnected) => 42,
-        result => panic!("unexpected result {:?}", result),
+        result => panic!("unexpected result {result:?}"),
     });
 
     // Give the spawned thread time to block. Although this isn't guaranteed,

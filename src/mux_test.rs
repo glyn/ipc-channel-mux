@@ -28,7 +28,7 @@ fn multiplex_simple() {
     drop(tx);
     match rx.recv().unwrap_err() {
         mux::MuxError::Disconnected => (),
-        e => panic!("expected disconnected error, got {:?}", e),
+        e => panic!("expected disconnected error, got {e:?}"),
     }
 }
 
@@ -256,7 +256,7 @@ fn creating_many_subchannels() {
     for i in 0..10000 {
         let subchannel = channel.sub_channel::<i32>();
         subchannels.push(subchannel);
-        println!("{}", i);
+        println!("{i}");
     }
 }
 
@@ -270,14 +270,14 @@ fn sender_transmission_dropped_in_flight() {
 
     // match sub_rx.try_recv().unwrap_err() { // try_recv not yet implemented
     //     ipc::TryRecvError::Empty => (),
-    //     e => assert!(false, "unexpected error {:?}", e),
+    //     e => assert!(false, "unexpected error {e:?}"),
     // }
 
     drop(super_rx);
 
     match sub_rx.recv().unwrap_err() {
         mux::MuxError::Disconnected => (),
-        e => panic!("expected disconnected error, got {:?}", e),
+        e => panic!("expected disconnected error, got {e:?}"),
     }
 }
 
@@ -290,7 +290,7 @@ fn multiplex_drop_only_subsender_for_dropped_channel() {
     drop(tx);
     match rx.recv().unwrap_err() {
         mux::MuxError::Disconnected => (),
-        e => panic!("expected send error, got {:?}", e),
+        e => panic!("expected send error, got {e:?}"),
     }
 }
 
@@ -302,7 +302,7 @@ fn multiplex_drop_only_subsender_for_channel() {
     drop(tx);
     match rx.recv().unwrap_err() {
         mux::MuxError::Disconnected => (),
-        e => panic!("expected disconnected error, got {:?}", e),
+        e => panic!("expected disconnected error, got {e:?}"),
     }
 }
 
@@ -315,7 +315,7 @@ fn multiplex_drop_only_subsender_for_subchannel_of_dropped_channel() {
     drop(tx1);
     match rx1.recv().unwrap_err() {
         mux::MuxError::Disconnected => (),
-        e => panic!("expected disconnected error, got {:?}", e),
+        e => panic!("expected disconnected error, got {e:?}"),
     }
 
     // check other subchannel is still working
@@ -343,7 +343,7 @@ fn multiplex_drop_only_subsender_for_subchannel() {
     drop(tx1);
     match rx1.recv().unwrap_err() {
         mux::MuxError::Disconnected => (),
-        e => panic!("expected disconnected error, got {:?}", e),
+        e => panic!("expected disconnected error, got {e:?}"),
     }
 
     // check other subchannel is still working
@@ -362,7 +362,7 @@ fn drop_transmitted_subsender() {
 
     match sub_rx.recv().unwrap_err() {
         mux::MuxError::Disconnected => (),
-        e => panic!("expected Disconnected, got {:?}", e),
+        e => panic!("expected Disconnected, got {e:?}"),
     }
 }
 
@@ -465,7 +465,7 @@ fn compare_base_transmission_failure() {
     log::trace!("POINT D");
     match rx.recv().unwrap_err() {
         mux::MuxError::Disconnected => (),
-        e => panic!("expected Disconnected, got {:?}", e),
+        e => panic!("expected Disconnected, got {e:?}"),
     }
 }
 
