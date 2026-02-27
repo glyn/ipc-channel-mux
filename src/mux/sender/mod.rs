@@ -77,7 +77,17 @@ impl MultiSender {
     }
 
     pub fn probe(&self) -> bool {
-        self.ipc_sender.send(MultiMessage::Probe()).is_ok()
+        loop {
+            match self.response_receiver.try_recv() {
+                Ok(MultiResponse::SubReceiverDisconnected(scid)) => {
+                    if let Some(proxy) = self.sub_receiver_proxies.lock().unwrap().get(&scid) {
+                        proxy.disconnect();
+                    }
+                },
+                Err(ipc_channel::TryRecvError::Empty) => return true,
+                Err(ipc_channel::TryRecvError::IpcError(_)) => return false,
+            }
+        }
     }
 
     pub fn insert_sub_receiver_proxy(&self, scid: SubChannelId, proxy: SubReceiverProxy) {
