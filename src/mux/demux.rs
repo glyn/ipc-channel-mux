@@ -421,9 +421,7 @@ impl Demuxer {
 
     pub fn poll_all_subchannels(demuxer: &Arc<Mutex<Demuxer>>) -> bool {
         // Snapshot Arc refs while holding the lock, then drop the lock before
-        // running probes. This prevents a probe from blocking indefinitely
-        // (e.g. when the remote socket buffer is full) while holding the
-        // demuxer mutex.
+        // running probes to minimise lock hold time.
         let state_machines: Vec<(SubChannelId, Arc<SubSenderStateMachine>)> = demuxer
             .lock()
             .unwrap()
@@ -685,9 +683,7 @@ impl MultiReceiver {
     #[instrument(level = "trace", ret)]
     fn poll(&self, demuxer: MutexGuard<'_, Demuxer>) -> bool {
         // Snapshot Arc refs while holding the lock, then drop the lock before
-        // running probes. This prevents a probe from blocking indefinitely
-        // (e.g. when the remote socket buffer is full) while holding the
-        // demuxer mutex.
+        // running probes to minimise lock hold time.
         let state_machines: Vec<(SubChannelId, Arc<SubSenderStateMachine>)> = demuxer
             .sub_channels
             .iter()
