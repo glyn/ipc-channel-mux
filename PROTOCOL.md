@@ -58,8 +58,9 @@ bootstrapping (the one-shot server flow) immediately after `Connect`. The
 Notifies the receiver that a subsender for subchannel `scid` is in flight,
 being transmitted inside a `Data` message on subchannel `via`. The
 `via_chan` field carries the `IpcSenderAndOrId` of the IPC sender used by
-the channel carrying the subsender (for probe registration; see _Probing_
-below).
+the channel carrying the subsender. When the receiver resolves `via_chan`,
+it establishes a response channel with the remote demuxer, which is used
+for connectivity checking (see _Probing_ below).
 
 ### `Received { scid, via, new_source }`
 
@@ -74,13 +75,6 @@ Indicates that all copies of a subsender for the given `SubChannelId` at
 the source identified by the given UUID have been dropped. Once all sources
 and in-flight transmissions for a subchannel have disconnected, the
 subchannel's receiver is notified of disconnection.
-
-### `Probe()`
-
-A lightweight connectivity check. The sender transmits `Probe()` over the
-IPC channel; if the send succeeds the channel is still alive. The receiver
-ignores `Probe()` messages. Used by the polling mechanism to detect broken
-channels (see _Probing_ below).
 
 ## Response Channel Messages (`MultiResponse`)
 
@@ -216,7 +210,8 @@ lifecycle is tracked to ensure proper disconnection detection:
    recorded in thread-local storage (not serialized into the payload).
 2. **Sending notification**: A `Sending { scid, via, via_chan }` message is
    sent. The receiver registers the subsender as _in flight_ via subchannel
-   `via` and records a probe function for connectivity checking.
+   `via` and records a probe function that checks the response channel of
+   the `MultiSender` for the carrying channel.
 3. **Data transmission**: The `Data` message carries the subsender information
    alongside the payload.
 4. **Receipt confirmation**: When the `Data` message is received and the
@@ -237,8 +232,11 @@ out):
 
 1. For each subchannel with in-flight transmissions, the registered probe
    function is called.
-2. The probe sends a `Probe()` message over the relevant IPC sender. If the
-   send fails, the channel is broken.
+2. The probe performs a non-blocking `try_recv` on the response channel
+   associated with the `MultiSender` for the carrying channel. If
+   `try_recv` returns `IpcError`, the remote process has crashed and the
+   channel is broken. If it returns `Empty`, the channel is still alive.
+   Any `SubReceiverDisconnected` messages received are processed normally.
 3. If a probe fails, all in-flight entries for that channel are removed and,
    if no sources remain, the subchannel is marked as disconnected.
 
@@ -314,7 +312,7 @@ crashed), `ipc-channel` returns an `IpcError`. This is wrapped in
 
 ### Probe Failure
 
-If a `Probe()` send fails during polling, the associated in-flight
-subsenders are removed from the state machine. If this leaves the subchannel
-with no sources and no in-flight transmissions, it is marked disconnected
-and the receiver is notified.
+If `try_recv` on the response channel returns `IpcError` during polling,
+the associated in-flight subsenders are removed from the state machine.
+If this leaves the subchannel with no sources and no in-flight
+transmissions, it is marked disconnected and the receiver is notified.
