@@ -315,7 +315,6 @@ impl Demuxer {
 
                 Ok(())
             },
-            MultiMessage::Probe() => Ok(()), // ignore probe messages
             m @ MultiMessage::SubChannelId(..) => Err(MuxError::InternalError(format!(
                 "unexpected multi message {m:?}"
             ))),
