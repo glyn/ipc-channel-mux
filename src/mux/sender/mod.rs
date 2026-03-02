@@ -21,6 +21,7 @@ use sender_id::Source;
 use serde::{Serialize, Serializer};
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use tracing::instrument;
 use uuid::Uuid;
@@ -34,6 +35,7 @@ pub struct MultiSender {
     uuid: Uuid,
     sender_id: Arc<Mutex<Source<Weak<IpcSender<MultiMessage>>>>>,
     response_receiver: IpcReceiver<MultiResponse>,
+    disconnected: AtomicBool,
     sub_receiver_proxies: Mutex<HashMap<SubChannelId, SubReceiverProxy>>,
 }
 
@@ -60,6 +62,7 @@ impl MultiSender {
             uuid: Uuid::new_v4(),
             sender_id: Arc::new(Mutex::new(Source::new())),
             response_receiver,
+            disconnected: AtomicBool::new(false),
             sub_receiver_proxies: Mutex::new(HashMap::new()),
         }
     }
@@ -77,6 +80,9 @@ impl MultiSender {
     }
 
     pub fn probe(&self) -> bool {
+        if self.disconnected.load(Ordering::Relaxed) {
+            return false;
+        }
         loop {
             match self.response_receiver.try_recv() {
                 Ok(MultiResponse::SubReceiverDisconnected(scid)) => {
@@ -85,7 +91,10 @@ impl MultiSender {
                     }
                 },
                 Err(ipc_channel::TryRecvError::Empty) => return true,
-                Err(ipc_channel::TryRecvError::IpcError(_)) => return false,
+                Err(ipc_channel::TryRecvError::IpcError(_)) => {
+                    self.disconnected.store(true, Ordering::Relaxed);
+                    return false;
+                },
             }
         }
     }
@@ -117,6 +126,7 @@ impl MultiSender {
             uuid: ipc_sender_uuid,
             sender_id: Arc::new(Mutex::new(Source::new())),
             response_receiver,
+            disconnected: AtomicBool::new(false),
             sub_receiver_proxies: Mutex::new(HashMap::new()),
         })))
     }
