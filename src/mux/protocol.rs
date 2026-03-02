@@ -117,7 +117,6 @@ pub enum MultiMessage {
         new_source: Uuid,
     },
     Disconnect(SubChannelId, Uuid),
-    Probe(),
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

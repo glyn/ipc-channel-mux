@@ -21,6 +21,7 @@ use sender_id::Source;
 use serde::{Serialize, Serializer};
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use tracing::instrument;
 use uuid::Uuid;
@@ -34,6 +35,7 @@ pub struct MultiSender {
     uuid: Uuid,
     sender_id: Arc<Mutex<Source<Weak<IpcSender<MultiMessage>>>>>,
     response_receiver: IpcReceiver<MultiResponse>,
+    disconnected: AtomicBool,
     sub_receiver_proxies: Mutex<HashMap<SubChannelId, SubReceiverProxy>>,
 }
 
@@ -60,6 +62,7 @@ impl MultiSender {
             uuid: Uuid::new_v4(),
             sender_id: Arc::new(Mutex::new(Source::new())),
             response_receiver,
+            disconnected: AtomicBool::new(false),
             sub_receiver_proxies: Mutex::new(HashMap::new()),
         }
     }
@@ -77,7 +80,7 @@ impl MultiSender {
     }
 
     pub fn probe(&self) -> bool {
-        self.ipc_sender.send(MultiMessage::Probe()).is_ok()
+        self.drain_responses()
     }
 
     pub fn insert_sub_receiver_proxy(&self, scid: SubChannelId, proxy: SubReceiverProxy) {
@@ -107,6 +110,7 @@ impl MultiSender {
             uuid: ipc_sender_uuid,
             sender_id: Arc::new(Mutex::new(Source::new())),
             response_receiver,
+            disconnected: AtomicBool::new(false),
             sub_receiver_proxies: Mutex::new(HashMap::new()),
         })))
     }
@@ -126,26 +130,35 @@ impl MultiSender {
 
     #[instrument(level = "trace", ret)]
     pub fn is_receiver_connected(&self, scid: SubChannelId) -> bool {
-        loop {
-            match self.response_receiver.try_recv() {
-                Ok(MultiResponse::SubReceiverDisconnected(disconnected_scid)) => {
-                    if let Some(proxy) = self
-                        .sub_receiver_proxies
-                        .lock()
-                        .unwrap()
-                        .get(&disconnected_scid)
-                    {
-                        proxy.disconnect();
-                    }
-                },
-                Err(ipc_channel::TryRecvError::Empty) => break,
-                Err(ipc_channel::TryRecvError::IpcError(_)) => return false,
-            }
-        }
+        self.drain_responses();
         if let Some(proxy) = self.sub_receiver_proxies.lock().unwrap().get(&scid) {
             !proxy.disconnected()
         } else {
             true
+        }
+    }
+
+    /// Drains all pending messages from the response channel, processing
+    /// `SubReceiverDisconnected` notifications and caching IPC disconnection.
+    /// Returns `true` if the response channel is still alive, `false` if
+    /// the channel is disconnected.
+    fn drain_responses(&self) -> bool {
+        if self.disconnected.load(Ordering::Relaxed) {
+            return false;
+        }
+        loop {
+            match self.response_receiver.try_recv() {
+                Ok(MultiResponse::SubReceiverDisconnected(scid)) => {
+                    if let Some(proxy) = self.sub_receiver_proxies.lock().unwrap().get(&scid) {
+                        proxy.disconnect();
+                    }
+                },
+                Err(ipc_channel::TryRecvError::Empty) => return true,
+                Err(ipc_channel::TryRecvError::IpcError(_)) => {
+                    self.disconnected.store(true, Ordering::Relaxed);
+                    return false;
+                },
+            }
         }
     }
 }

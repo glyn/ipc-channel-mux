@@ -265,9 +265,11 @@ If not, we can block again on the IPC channel.
 ### Polling
 
 In the last section, we mentioned issuing a blocking receive on the IPC channel underlying a multi-receiver. It's actually a little more complicated than that because we need to poll for in-flight subsenders having been destroyed.
-We do this by probing the IPC channel used to transmit the subsender, by sending a small message on the IPC channel.
+We do this by probing the response channel associated with the IPC channel used to transmit the subsender.
 
-Polling is implemented by issuing a `try_recv_timeout` on the IPC channel, with a timeout of one second. When the timeout occurs, polling can be initiated and we can then drop the sender half of the standard channel for a subreceiver whose "other half" (meaning the senders for all clients) has hung up. This will cause the non-blocking receive on such standard channels to return with an error and we can then return `Disconnected` from the corresponding subchannel receives.
+Each `MultiSender` has a dedicated response channel from the receiving side. When the receiving process exits or the response channel's sender is dropped, `try_recv` on this response channel returns `IpcError::Disconnected`. The probe caches this disconnected state so that once disconnection is detected, subsequent probes immediately return `false` without calling `try_recv` again. This caching is necessary because multiple subsender state machines may share the same `MultiSender` (due to the [subsender serialization](#subsender-serialization) UUID optimization), and `try_recv` consumes the disconnection error — without caching, only the first state machine to probe would detect disconnection, while others would see an empty channel and incorrectly conclude the remote process is still alive.
+
+Polling is implemented by issuing a `try_recv_timeout` on the IPC channel, with a timeout of one second. When the timeout occurs, probing can be initiated and we can then drop the sender half of the standard channel for a subreceiver whose "other half" (meaning the senders for all clients) has hung up. This will cause the non-blocking receive on such standard channels to return with an error and we can then return `Disconnected` from the corresponding subchannel receives.
 
 The receive on the multi-receiver's IPC channel also serves the purpose of detecting `Disconnect` messages generated when a subsender and all its clones on a particular _client_ (approximately equivalent to an IPC sender) have been dropped. That's another way that the sending side of a subchannel can "hang up", after which a receive from the subchannel should fail with `Disconnected`.
 
