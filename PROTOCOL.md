@@ -91,10 +91,10 @@ Transmitting an `IpcSender` over an IPC channel consumes operating-system
 resources (e.g. file descriptors). To avoid sending the same underlying IPC
 sender repeatedly, the protocol uses `IpcSenderAndOrId`:
 
-```
+~~~rust,ignore
 IpcSenderAndOrId::IpcSender(IpcSender<MultiMessage>, String)
 IpcSenderAndOrId::IpcSenderId(String)
-```
+~~~
 
 The `String` is the UUID of the IPC sender.
 
