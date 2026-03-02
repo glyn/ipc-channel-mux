@@ -286,6 +286,10 @@ This risk of deadlock was present for non-multiplexed IPC channels, but the risk
 With multiplexing, a potentially large number of messages can be sent.
 Fortunately, a multireceiver will tend to drain messages when receiving on behalf of a subreceiver. Providing that the application code issues receives fairly frequently, the underlying IPC channels shouldn't fill up.
 
+### Interprocess protocol
+
+This is described in [PROTOCOL.md](./PROTOCOL.md) which, if you are reading the documentation, is reproduced below.
+
 ## Major missing features
 
 * Non-blocking subreceivers.

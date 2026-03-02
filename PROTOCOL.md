@@ -1,6 +1,6 @@
 # Interprocess Protocol
 
-This document describes the interprocess protocol used by `ipc-channel-mux` to
+The following describes the interprocess protocol used by `ipc-channel-mux` to
 multiplex subchannels over a single IPC channel.
 
 ## Overview

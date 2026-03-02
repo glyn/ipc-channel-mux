@@ -8,6 +8,7 @@
 // except according to those terms.
 
 #![doc = include_str!("../README.md")]
+#![doc = include_str!("../PROTOCOL.md")]
 
 pub mod mux;
 
