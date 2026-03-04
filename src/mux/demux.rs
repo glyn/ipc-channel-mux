@@ -240,7 +240,6 @@ impl Demuxer {
                         ))
                     } else {
                         // Send ReceiveFailed to members of srs
-                        // TODO: Need to test this path
                         for (recv_scid, recv_multi_sender, _, _) in srs {
                             if let Err(e) = recv_multi_sender.lock().unwrap().send_message(
                                 MultiMessage::ReceiveFailed {
@@ -939,6 +938,63 @@ impl SubChannelReceiver {
                 },
                 Ok(()) | Err(TryRecvError::Empty | TryRecvError::Handled) => {},
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::mux::protocol::{IpcSenderAndOrId, SubChannelId};
+    use ipc_channel::ipc;
+
+    #[test]
+    fn handle_data_for_unregistered_subchannel_sends_receive_failed() {
+        let unknown_scid = SubChannelId::new();
+        let sender_scid = SubChannelId::new();
+
+        // Create an IPC channel for the embedded sender to communicate over.
+        let (ipc_tx, ipc_rx) =
+            ipc::channel::<MultiMessage>().expect("failed to create IPC channel");
+
+        let sender_uuid = Uuid::new_v4();
+        let mut demuxer = Demuxer::empty();
+
+        // Build a Data message addressed to an unregistered subchannel,
+        // containing one embedded sender.
+        let msg = MultiMessage::Data(
+            unknown_scid,
+            vec![],
+            vec![(
+                sender_scid,
+                IpcSenderAndOrId::IpcSender(ipc_tx, sender_uuid.to_string()),
+            )],
+            vec![],
+        );
+
+        let result = demuxer.handle(msg, Uuid::new_v4());
+
+        // The handle call should return an InternalError for the invalid subchannel id.
+        match result {
+            Err(MuxError::InternalError(ref s)) if s.contains("invalid subchannel id") => (),
+            other => panic!("expected InternalError about invalid subchannel id, got {other:?}"),
+        }
+
+        // connect_sender sends a Connect message first, then the else branch
+        // sends ReceiveFailed — drain the Connect and verify ReceiveFailed.
+        let connect_msg = ipc_rx.recv().expect("expected Connect message");
+        assert!(
+            matches!(connect_msg, MultiMessage::Connect(..)),
+            "expected Connect, got {connect_msg:?}"
+        );
+
+        let rf_msg = ipc_rx.recv().expect("expected ReceiveFailed message");
+        match rf_msg {
+            MultiMessage::ReceiveFailed { scid, via } => {
+                assert_eq!(scid, sender_scid);
+                assert_eq!(via, unknown_scid);
+            },
+            other => panic!("expected ReceiveFailed, got {other:?}"),
         }
     }
 }
