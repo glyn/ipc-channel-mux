@@ -170,9 +170,60 @@ where
         self.sub_channel_receiver.recv()
     }
 
+    /// Attempts to return a pending message on this subchannel without blocking.
+    ///
+    /// This method will never block the caller in order to wait for data to become available.
+    /// Instead, it will always return immediately with a possible option of pending data on the
+    /// subchannel.
+    ///
+    /// This is useful for an optimistic check before deciding to block on a [SubReceiver].
+    ///
+    /// Compared with [`recv`](SubReceiver::recv), this function has two failure cases instead of
+    /// one (one for disconnection, one for an empty buffer).
+    ///
+    /// If the subchannel is empty but at least one corresponding [SubSender] still exists
+    /// (including in-flight subsenders that have been sent over a subchannel but not yet
+    /// received), this method returns `Err(TryRecvError::Empty)`.
+    ///
+    /// If all corresponding [SubSender]s have disconnected (have been deallocated, their
+    /// processes have terminated, or they have been lost in transmission) and no buffered
+    /// messages remain, this method returns `Err(TryRecvError::MuxError(MuxError::Disconnected))`.
+    ///
+    /// If a message is available, it is returned as `Ok(T)`.
+    ///
+    /// If an error occurs while receiving a message from the underlying IPC channel, this method
+    /// returns `Err(TryRecvError::MuxError(...))` wrapping the underlying error.
+    ///
+    /// # Note on disconnection detection
+    ///
+    /// Unlike [`recv`](SubReceiver::recv), which blocks until disconnection is detected through
+    /// polling, `try_recv` may return `Empty` even when all senders have been dropped if the
+    /// disconnection has not yet been observed. A subsequent call to `try_recv` or `recv` will
+    /// detect the disconnection and return the appropriate error. This matches the behavior of
+    /// [`IpcReceiver::try_recv`](ipc_channel::ipc::IpcReceiver::try_recv) and
+    /// [`Receiver::try_recv`](std::sync::mpsc::Receiver::try_recv).
     // pub fn try_recv(&self) -> Result<T, TryRecvError> {
     // }
 
+    /// Blocks for up to the specified duration attempting to receive a message.
+    ///
+    /// This method will block the caller for at most `duration` waiting for a message to become
+    /// available. If a message becomes available before the timeout expires, it is returned as
+    /// `Ok(T)`.
+    ///
+    /// This may block for longer than the specified duration if the underlying IPC channel is
+    /// busy.
+    ///
+    /// If the timeout expires without a message becoming available and at least one corresponding
+    /// [SubSender] still exists (including in-flight subsenders), this method returns
+    /// `Err(TryRecvError::Empty)`.
+    ///
+    /// If all corresponding [SubSender]s have disconnected and no buffered messages remain, this
+    /// method returns `Err(TryRecvError::MuxError(MuxError::Disconnected))`. This may be
+    /// detected before the timeout expires.
+    ///
+    /// If an error occurs while receiving a message from the underlying IPC channel, this method
+    /// returns `Err(TryRecvError::MuxError(...))` wrapping the underlying error.
     // pub fn try_recv_timeout(&self, duration: Duration) -> Result<T, TryRecvError> {
     // }
 
