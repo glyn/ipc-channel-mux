@@ -384,12 +384,30 @@ impl Demuxer {
     ) -> Result<(), MuxError> {
         let mut id_sender_results: IdSenderResults = VecDeque::new();
         for (scid, s) in ipc_senders {
-            let disc = self.disconnectors.get(scid).ok_or_else(|| {
-                MuxError::InternalError(format!("missing disconnector for subchannel {scid}"))
-            })?;
+            let ipc_sender = self.ipcsender_from_sender_and_or_id(s)?;
+            let disc = if let Some(disc) = self.disconnectors.get(scid) {
+                disc
+            } else {
+                let scid_copy = *scid;
+                let ipc_sender_clone = ipc_sender.lock().unwrap().clone_ipc_sender();
+                let source_copy = ipc_receiver_uuid;
+                let multi_sender_clone = ipc_sender.clone();
+                let disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync + 'static>> =
+                    Arc::new(SubSenderTracker::new(Box::new(move || {
+                        SubChannelDisconnector::new(
+                            scid_copy,
+                            ipc_sender_clone.clone(),
+                            source_copy,
+                            multi_sender_clone.clone(),
+                        )
+                        .dropped();
+                    })));
+                self.disconnectors.insert(*scid, Arc::clone(&disconnector));
+                disconnector
+            };
             id_sender_results.push_back((
                 *scid,
-                self.ipcsender_from_sender_and_or_id(s),
+                Ok(ipc_sender),
                 ipc_receiver_uuid,
                 disc,
             ));

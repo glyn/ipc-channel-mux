@@ -1003,3 +1003,28 @@ fn try_recv_timeout_message_arrives_during_wait() {
         "should have returned before full timeout"
     );
 }
+
+#[test]
+fn send_subsender_via_router() {
+    let router = RouterProxy::new().unwrap();
+    let channel = RouterProxy::new_router_channel(&router).unwrap();
+    let (tx, crossbeam_rx) = channel
+        .route_to_new_crossbeam_receiver::<SubSender<i32>>()
+        .unwrap();
+
+    // Create a SubSender<i32> to send through the routed channel.
+    let plain_channel = mux::Channel::new().unwrap();
+    let (inner_tx, inner_rx) = plain_channel.sub_channel::<i32>();
+
+    // Send the SubSender through the router's selectable path.
+    tx.send(inner_tx).unwrap();
+
+    // Receive the SubSender via the crossbeam receiver.
+    let received_tx = crossbeam_rx.recv().unwrap();
+
+    // Use the received SubSender to send a value.
+    received_tx.send(42).unwrap();
+    assert_eq!(inner_rx.recv().unwrap(), 42);
+
+    router.shutdown();
+}
