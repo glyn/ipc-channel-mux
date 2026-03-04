@@ -8,10 +8,11 @@
 // except according to those terms.
 
 use crate::mux::demux::SubChannelReceiver;
-use crate::mux::error::MuxError;
+use crate::mux::error::{MuxError, TryRecvError};
 use crate::mux::sender::SubChannelSender;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
+use std::time::Duration;
 use tracing::instrument;
 
 /// SubSender is the sending end of a subchannel, used to serialize and send messages of a given type.
@@ -202,8 +203,10 @@ where
     /// detect the disconnection and return the appropriate error. This matches the behavior of
     /// [`IpcReceiver::try_recv`](ipc_channel::ipc::IpcReceiver::try_recv) and
     /// [`Receiver::try_recv`](std::sync::mpsc::Receiver::try_recv).
-    // pub fn try_recv(&self) -> Result<T, TryRecvError> {
-    // }
+    #[instrument(level = "debug", skip(self), err(level = "debug"))]
+    pub fn try_recv(&self) -> Result<T, TryRecvError> {
+        self.sub_channel_receiver.try_recv()
+    }
 
     /// Blocks for up to the specified duration attempting to receive a message.
     ///
@@ -224,8 +227,10 @@ where
     ///
     /// If an error occurs while receiving a message from the underlying IPC channel, this method
     /// returns `Err(TryRecvError::MuxError(...))` wrapping the underlying error.
-    // pub fn try_recv_timeout(&self, duration: Duration) -> Result<T, TryRecvError> {
-    // }
+    #[instrument(level = "debug", skip(self), err(level = "debug"))]
+    pub fn try_recv_timeout(&self, duration: Duration) -> Result<T, TryRecvError> {
+        self.sub_channel_receiver.try_recv_timeout(duration)
+    }
 
     /// Convert a SubReceiver to an OpaqueSubReceiver by erasing its message type.
     ///

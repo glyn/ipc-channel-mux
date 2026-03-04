@@ -841,4 +841,167 @@ impl SubChannelReceiver {
             }
         }
     }
+
+    #[instrument(level = "debug", err(level = "debug"))]
+    pub fn try_recv<T>(&self) -> Result<T, crate::mux::error::TryRecvError>
+    where
+        T: for<'de> Deserialize<'de> + Serialize,
+    {
+        // First check the local mpsc channel for an already-demuxed message.
+        match self.channel.try_recv() {
+            Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
+                scid,
+                payload,
+                senders: multi_senders,
+                shmems,
+            })) => {
+                log::trace!("SubChannelReceiver::try_recv received = {payload:#?}");
+
+                establish_deserialization_context(multi_senders, scid);
+                set_shmems_for_recv(shmems);
+
+                let result = postcard::from_bytes::<T>(payload.as_slice());
+
+                clear_deserialization_context();
+                clear_shmem_deserialization_context();
+
+                return result.map_err(|e| crate::mux::error::TryRecvError::MuxError(e.into()));
+            },
+            Err(mpsc::TryRecvError::Empty) => {
+                // Fall through to try the IPC channel.
+            },
+            _ => {
+                return Err(crate::mux::error::TryRecvError::MuxError(
+                    MuxError::Disconnected,
+                ));
+            },
+        }
+
+        // Try to acquire the demuxer lock and do a non-blocking receive from the IPC channel.
+        let Ok(demuxer) = self.multi_receiver.receiver_demuxer.demuxer.try_lock() else {
+            // Another thread holds the lock; we can't block, so report empty.
+            return Err(crate::mux::error::TryRecvError::Empty);
+        };
+
+        match MultiReceiver::try_recv_timeout(&self.multi_receiver, demuxer, Duration::ZERO) {
+            Ok(()) | Err(TryRecvError::Empty | TryRecvError::Handled) => {},
+            Err(TryRecvError::MuxError(e)) => {
+                return Err(crate::mux::error::TryRecvError::MuxError(e));
+            },
+        }
+
+        // Check the local channel again after demuxing.
+        match self.channel.try_recv() {
+            Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
+                scid,
+                payload,
+                senders: multi_senders,
+                shmems,
+            })) => {
+                log::trace!("SubChannelReceiver::try_recv received after demux = {payload:#?}");
+
+                establish_deserialization_context(multi_senders, scid);
+                set_shmems_for_recv(shmems);
+
+                let result = postcard::from_bytes::<T>(payload.as_slice());
+
+                clear_deserialization_context();
+                clear_shmem_deserialization_context();
+
+                result.map_err(|e| crate::mux::error::TryRecvError::MuxError(e.into()))
+            },
+            Err(mpsc::TryRecvError::Empty) => Err(crate::mux::error::TryRecvError::Empty),
+            _ => Err(crate::mux::error::TryRecvError::MuxError(
+                MuxError::Disconnected,
+            )),
+        }
+    }
+
+    #[instrument(level = "debug", err(level = "debug"))]
+    pub fn try_recv_timeout<T>(
+        &self,
+        duration: Duration,
+    ) -> Result<T, crate::mux::error::TryRecvError>
+    where
+        T: for<'de> Deserialize<'de> + Serialize,
+    {
+        let deadline = std::time::Instant::now() + duration;
+
+        loop {
+            // Check the local mpsc channel for an already-demuxed message.
+            match self.channel.try_recv() {
+                Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
+                    scid,
+                    payload,
+                    senders: multi_senders,
+                    shmems,
+                })) => {
+                    log::trace!("SubChannelReceiver::try_recv_timeout received = {payload:#?}");
+
+                    establish_deserialization_context(multi_senders, scid);
+                    set_shmems_for_recv(shmems);
+
+                    let result = postcard::from_bytes::<T>(payload.as_slice());
+
+                    clear_deserialization_context();
+                    clear_shmem_deserialization_context();
+
+                    return result.map_err(|e| crate::mux::error::TryRecvError::MuxError(e.into()));
+                },
+                Err(mpsc::TryRecvError::Empty) => {
+                    // Fall through to try the IPC channel.
+                },
+                _ => {
+                    return Err(crate::mux::error::TryRecvError::MuxError(
+                        MuxError::Disconnected,
+                    ));
+                },
+            }
+
+            let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+            if remaining.is_zero() {
+                return Err(crate::mux::error::TryRecvError::Empty);
+            }
+
+            // Try to acquire the demuxer lock.
+            let Ok(demuxer) = self.multi_receiver.receiver_demuxer.demuxer.try_lock() else {
+                // Another thread holds the lock; wait briefly on the local channel.
+                let wait = remaining.min(CONTENDED_WAIT_INTERVAL);
+                match self.channel.recv_timeout(wait) {
+                    Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
+                        scid,
+                        payload,
+                        senders: multi_senders,
+                        shmems,
+                    })) => {
+                        establish_deserialization_context(multi_senders, scid);
+                        set_shmems_for_recv(shmems);
+
+                        let result = postcard::from_bytes::<T>(payload.as_slice());
+
+                        clear_deserialization_context();
+                        clear_shmem_deserialization_context();
+
+                        return result
+                            .map_err(|e| crate::mux::error::TryRecvError::MuxError(e.into()));
+                    },
+                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                    _ => {
+                        return Err(crate::mux::error::TryRecvError::MuxError(
+                            MuxError::Disconnected,
+                        ));
+                    },
+                }
+            };
+
+            // Receive from the IPC channel with a bounded wait.
+            let wait = remaining.min(POLLING_INTERVAL);
+            match MultiReceiver::try_recv_timeout(&self.multi_receiver, demuxer, wait) {
+                Err(TryRecvError::MuxError(e)) => {
+                    return Err(crate::mux::error::TryRecvError::MuxError(e));
+                },
+                Ok(()) | Err(TryRecvError::Empty | TryRecvError::Handled) => {},
+            }
+        }
+    }
 }

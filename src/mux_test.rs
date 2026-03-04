@@ -887,7 +887,19 @@ fn try_recv_with_in_flight_subsender() {
     // Receive the in-flight sender and use it.
     let received_tx: SubSender<i32> = super_rx.recv().unwrap();
     received_tx.send(99).unwrap();
-    assert_eq!(sub_rx.try_recv().unwrap(), 99);
+    // The message may not be immediately demuxed, so retry.
+    loop {
+        match sub_rx.try_recv() {
+            Ok(value) => {
+                assert_eq!(value, 99);
+                break;
+            },
+            Err(TryRecvError::Empty) => {
+                thread::sleep(Duration::from_millis(1));
+            },
+            v => panic!("expected Ok(99) or Empty, got {v:?}"),
+        }
+    }
 }
 
 // --- try_recv_timeout tests ---
