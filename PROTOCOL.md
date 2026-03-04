@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD029 -->
 # Interprocess Protocol
 
 The following describes the interprocess protocol used by `ipc-channel-mux` to
