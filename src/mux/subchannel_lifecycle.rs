@@ -165,7 +165,6 @@ where
         let mut sources = self.sources.lock().unwrap();
         sources.remove(&source);
         if sources.is_empty() && self.in_flight.lock().unwrap().is_empty() {
-            // FIXME: this leg is never taken
             self.maybe.lock().unwrap().take()
         } else {
             None
