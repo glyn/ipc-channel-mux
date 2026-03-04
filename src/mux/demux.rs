@@ -863,13 +863,8 @@ impl SubChannelReceiver {
             },
         }
 
-        // Try to acquire the demuxer lock and do a non-blocking receive from the IPC channel.
-        let Ok(demuxer) = self.multi_receiver.receiver_demuxer.demuxer.try_lock() else {
-            // Another thread holds the lock; we can't block, so report empty.
-            return Err(crate::mux::error::TryRecvError::Empty);
-        };
-
-        match MultiReceiver::try_recv_timeout(&self.multi_receiver, demuxer, Duration::ZERO) {
+        // Do a non-blocking receive from the IPC channel to demux any pending messages.
+        match MultiReceiver::try_recv(&self.multi_receiver) {
             Ok(()) | Err(TryRecvError::Empty | TryRecvError::Handled) => {},
             Err(TryRecvError::MuxError(e)) => {
                 return Err(crate::mux::error::TryRecvError::MuxError(e));
