@@ -191,7 +191,7 @@ This has the following advantages:
 * Implementing `ipc-channel-mux` using the public API of IPC channel makes the projects easier to understand than if they were combined.
 * If multiplexing proves useful and is applied to some IPC channel usecases in Servo, it will be possible to release a version of `ipc-channel-mux` and keep enhancing it and experimenting with applying it to other Servo usecases without giving it the (possibly misleading) status of being part of the IPC channel API. In particular, the multiplexing API can be changed as necessary without impacting backwards compatibility of IPC channel.
 
-[^testspeed]: `cargo test` of `ipc-channel-mux` currently takes just over 2 seconds whereas it used to take over 8 seconds before the multiplexing code was split out of the `ipc-channel` repo.
+[^testspeed]: `cargo test` of `ipc-channel-mux` currently takes under 4 seconds whereas it used to take over 8 seconds before the multiplexing code was split out of the `ipc-channel` repo.
 
 One possible disadvantage is that `ipc-channel-mux` cannot use IPC channel internals, which would have been possible if they were in the same repository.
 
@@ -296,7 +296,7 @@ We do this by probing the response channel associated with the IPC channel used 
 
 Each `MultiSender` has a dedicated response channel from the receiving side. When the receiving process exits or the response channel's sender is dropped, `try_recv` on this response channel returns `IpcError::Disconnected`. The probe caches this disconnected state so that once disconnection is detected, subsequent probes immediately return `false` without calling `try_recv` again. This caching is necessary because multiple subsender state machines may share the same `MultiSender` (due to the [subsender serialization](#subsender-serialization) UUID optimization), and `try_recv` consumes the disconnection error — without caching, only the first state machine to probe would detect disconnection, while others would see an empty channel and incorrectly conclude the remote process is still alive.
 
-Polling is implemented by issuing a `try_recv_timeout` on the IPC channel, with a timeout of one second. When the timeout occurs, probing can be initiated and we can then drop the sender half of the standard channel for a subreceiver whose "other half" (meaning the senders for all clients) has hung up. This will cause the non-blocking receive on such standard channels to return with an error and we can then return `Disconnected` from the corresponding subchannel receives.
+Polling is implemented by issuing a `try_recv_timeout` on the IPC channel. When the timeout occurs, probing can be initiated and we can then drop the sender half of the standard channel for a subreceiver whose "other half" (meaning the senders for all clients) has hung up. This will cause the non-blocking receive on such standard channels to return with an error and we can then return `Disconnected` from the corresponding subchannel receives.
 
 The receive on the multi-receiver's IPC channel also serves the purpose of detecting `Disconnect` messages generated when a subsender and all its clones on a particular _client_ (approximately equivalent to an IPC sender) have been dropped. That's another way that the sending side of a subchannel can "hang up", after which a receive from the subchannel should fail with `Disconnected`.
 
