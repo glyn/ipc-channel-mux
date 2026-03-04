@@ -55,6 +55,22 @@ impl ResolvedMessage {
     ) {
         (self.scid, self.payload, self.senders, self.shmems)
     }
+
+    fn deserialize<T>(self) -> Result<T, MuxError>
+    where
+        T: for<'de> Deserialize<'de> + Serialize,
+    {
+        log::trace!("ResolvedMessage::deserialize payload = {:#?}", self.payload);
+        establish_deserialization_context(self.senders, self.scid);
+        set_shmems_for_recv(self.shmems);
+
+        let result = postcard::from_bytes::<T>(self.payload.as_slice());
+
+        clear_deserialization_context();
+        clear_shmem_deserialization_context();
+
+        result.map_err(From::from)
+    }
 }
 
 pub enum ResolvedMessageOrDisconnect {
@@ -795,23 +811,8 @@ impl SubChannelReceiver {
                 self.channel.try_recv()
             };
             match result {
-                Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
-                    scid,
-                    payload,
-                    senders: multi_senders,
-                    shmems,
-                })) => {
-                    log::trace!("SubChannelReceiver::recv received = {payload:#?}");
-
-                    establish_deserialization_context(multi_senders, scid);
-                    set_shmems_for_recv(shmems);
-
-                    let result = postcard::from_bytes::<T>(payload.as_slice());
-
-                    clear_deserialization_context();
-                    clear_shmem_deserialization_context();
-
-                    return result.map_err(From::from);
+                Ok(ResolvedMessageOrDisconnect::ResolvedMessage(resolved)) => {
+                    return resolved.deserialize();
                 },
                 Err(mpsc::TryRecvError::Empty) => {
                     // If the mutex is locked, wait on the local channel.
@@ -849,23 +850,8 @@ impl SubChannelReceiver {
     {
         // First check the local mpsc channel for an already-demuxed message.
         match self.channel.try_recv() {
-            Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
-                scid,
-                payload,
-                senders: multi_senders,
-                shmems,
-            })) => {
-                log::trace!("SubChannelReceiver::try_recv received = {payload:#?}");
-
-                establish_deserialization_context(multi_senders, scid);
-                set_shmems_for_recv(shmems);
-
-                let result = postcard::from_bytes::<T>(payload.as_slice());
-
-                clear_deserialization_context();
-                clear_shmem_deserialization_context();
-
-                return result.map_err(|e| crate::mux::error::TryRecvError::MuxError(e.into()));
+            Ok(ResolvedMessageOrDisconnect::ResolvedMessage(resolved)) => {
+                return resolved.deserialize().map_err(Into::into);
             },
             Err(mpsc::TryRecvError::Empty) => {
                 // Fall through to try the IPC channel.
@@ -892,23 +878,8 @@ impl SubChannelReceiver {
 
         // Check the local channel again after demuxing.
         match self.channel.try_recv() {
-            Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
-                scid,
-                payload,
-                senders: multi_senders,
-                shmems,
-            })) => {
-                log::trace!("SubChannelReceiver::try_recv received after demux = {payload:#?}");
-
-                establish_deserialization_context(multi_senders, scid);
-                set_shmems_for_recv(shmems);
-
-                let result = postcard::from_bytes::<T>(payload.as_slice());
-
-                clear_deserialization_context();
-                clear_shmem_deserialization_context();
-
-                result.map_err(|e| crate::mux::error::TryRecvError::MuxError(e.into()))
+            Ok(ResolvedMessageOrDisconnect::ResolvedMessage(resolved)) => {
+                resolved.deserialize().map_err(Into::into)
             },
             Err(mpsc::TryRecvError::Empty) => Err(crate::mux::error::TryRecvError::Empty),
             _ => Err(crate::mux::error::TryRecvError::MuxError(
@@ -930,23 +901,8 @@ impl SubChannelReceiver {
         loop {
             // Check the local mpsc channel for an already-demuxed message.
             match self.channel.try_recv() {
-                Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
-                    scid,
-                    payload,
-                    senders: multi_senders,
-                    shmems,
-                })) => {
-                    log::trace!("SubChannelReceiver::try_recv_timeout received = {payload:#?}");
-
-                    establish_deserialization_context(multi_senders, scid);
-                    set_shmems_for_recv(shmems);
-
-                    let result = postcard::from_bytes::<T>(payload.as_slice());
-
-                    clear_deserialization_context();
-                    clear_shmem_deserialization_context();
-
-                    return result.map_err(|e| crate::mux::error::TryRecvError::MuxError(e.into()));
+                Ok(ResolvedMessageOrDisconnect::ResolvedMessage(resolved)) => {
+                    return resolved.deserialize().map_err(Into::into);
                 },
                 Err(mpsc::TryRecvError::Empty) => {
                     // Fall through to try the IPC channel.
@@ -968,22 +924,8 @@ impl SubChannelReceiver {
                 // Another thread holds the lock; wait briefly on the local channel.
                 let wait = remaining.min(CONTENDED_WAIT_INTERVAL);
                 match self.channel.recv_timeout(wait) {
-                    Ok(ResolvedMessageOrDisconnect::ResolvedMessage(ResolvedMessage {
-                        scid,
-                        payload,
-                        senders: multi_senders,
-                        shmems,
-                    })) => {
-                        establish_deserialization_context(multi_senders, scid);
-                        set_shmems_for_recv(shmems);
-
-                        let result = postcard::from_bytes::<T>(payload.as_slice());
-
-                        clear_deserialization_context();
-                        clear_shmem_deserialization_context();
-
-                        return result
-                            .map_err(|e| crate::mux::error::TryRecvError::MuxError(e.into()));
+                    Ok(ResolvedMessageOrDisconnect::ResolvedMessage(resolved)) => {
+                        return resolved.deserialize().map_err(Into::into);
                     },
                     Err(mpsc::RecvTimeoutError::Timeout) => continue,
                     _ => {
