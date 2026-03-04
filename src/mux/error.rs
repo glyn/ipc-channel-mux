@@ -39,6 +39,32 @@ pub enum MuxError {
     InternalError(String),
 }
 
+/// This enumeration lists the possible reasons for failure of non-blocking receive operations on
+/// subchannels.
+///
+/// Compared with [MuxError], which is returned by blocking [recv], this type has an additional
+/// [Empty] variant indicating that no message is currently available.
+///
+/// [recv]: crate::mux::SubReceiver::recv
+/// [Empty]: TryRecvError::Empty
+#[derive(Debug, Error)]
+pub enum TryRecvError {
+    /// An error has occurred while receiving a message.
+    ///
+    /// Wraps a [MuxError] which may indicate disconnection ([MuxError::Disconnected]),
+    /// an IPC error ([MuxError::IpcError]), or an internal error ([MuxError::InternalError]).
+    #[error("{0}")]
+    MuxError(#[from] MuxError),
+    /// No message is currently available on the subchannel.
+    ///
+    /// At least one corresponding [SubSender] may still exist, so messages may yet arrive.
+    /// This variant is only returned by non-blocking operations.
+    ///
+    /// [SubSender]: crate::mux::SubSender
+    #[error("Channel empty")]
+    Empty,
+}
+
 impl From<std::io::Error> for MuxError {
     fn from(err: std::io::Error) -> MuxError {
         MuxError::IpcError(IpcError::Io(err))
