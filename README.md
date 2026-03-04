@@ -68,6 +68,33 @@ let (rx, data) = server.accept().unwrap();
 
 An advantage of creating a subchannel, rather than an IPC channel, using a one-shot server is that the subchannel can then be used to transmit subsenders.[^interop]
 
+### Non-blocking receives
+
+`SubReceiver` supports non-blocking receives via `try_recv` and `try_recv_timeout`, analogous to the corresponding methods on `IpcReceiver` and `std::sync::mpsc::Receiver`:
+
+~~~Rust
+use ipc_channel_mux::mux;
+use std::time::Duration;
+
+let channel = mux::Channel::new().unwrap();
+let (tx, rx) = channel.sub_channel();
+
+// try_recv returns immediately with Empty if no message is available.
+match rx.try_recv() {
+    Err(mux::TryRecvError::Empty) => (), // no message yet
+    _ => unreachable!(),
+}
+
+tx.send(42).unwrap();
+assert_eq!(rx.try_recv().unwrap(), 42);
+
+// try_recv_timeout waits for up to the specified duration.
+match rx.try_recv_timeout(Duration::from_millis(1)) {
+    Err(mux::TryRecvError::Empty) => (), // timed out, no message
+    _ => unreachable!(),
+}
+~~~
+
 ### Routing
 
 The router routes messages from subreceivers to Crossbeam channels.
@@ -292,7 +319,6 @@ This is described in [PROTOCOL.md](./PROTOCOL.md) which, if you are reading the 
 
 ## Major missing features
 
-* Non-blocking subreceivers.
 * Each one-shot server accepts only one client connect request. This is fine if you simply want to use this API to split your application up into a fixed number of mutually untrusting processes, but it's not suitable for implementing a system service.
 
 ## Related
