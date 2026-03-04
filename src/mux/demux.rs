@@ -405,12 +405,7 @@ impl Demuxer {
                 self.disconnectors.insert(*scid, Arc::clone(&disconnector));
                 disconnector
             };
-            id_sender_results.push_back((
-                *scid,
-                Ok(ipc_sender),
-                ipc_receiver_uuid,
-                disc,
-            ));
+            id_sender_results.push_back((*scid, Ok(ipc_sender), ipc_receiver_uuid, disc));
         }
         let srs = Demuxer::process_results(id_sender_results);
         if let Ok(srs) = srs {
@@ -1018,14 +1013,48 @@ mod tests {
     #[test]
     fn send_to_unregistered_subchannel_returns_disconnected() {
         let unknown_scid = SubChannelId::new();
+        let sender_scid = SubChannelId::new();
+
+        // Create an IPC channel for the embedded sender to communicate over.
+        let (ipc_tx, ipc_rx) =
+            ipc::channel::<MultiMessage>().expect("failed to create IPC channel");
+
+        let sender_uuid = Uuid::new_v4();
         let mut demuxer = Demuxer::empty();
 
-        // Call send() with no embedded senders and an unregistered destination scid.
-        let result = demuxer.send(unknown_scid, vec![], &[], Uuid::new_v4(), vec![]);
+        // Call send() with one embedded sender and an unregistered destination scid.
+        let result = demuxer.send(
+            unknown_scid,
+            vec![],
+            &[(
+                sender_scid,
+                IpcSenderAndOrId::IpcSender(ipc_tx, sender_uuid.to_string()),
+            )],
+            Uuid::new_v4(),
+            vec![],
+        );
 
+        // send() should return Disconnected for the unregistered subchannel.
         match result {
             Err(MuxError::Disconnected) => (),
             other => panic!("expected Disconnected, got {other:?}"),
+        }
+
+        // connect_sender sends a Connect message first, then the else branch
+        // sends ReceiveFailed — drain the Connect and verify ReceiveFailed.
+        let connect_msg = ipc_rx.recv().expect("expected Connect message");
+        assert!(
+            matches!(connect_msg, MultiMessage::Connect(..)),
+            "expected Connect, got {connect_msg:?}"
+        );
+
+        let rf_msg = ipc_rx.recv().expect("expected ReceiveFailed message");
+        match rf_msg {
+            MultiMessage::ReceiveFailed { scid, via } => {
+                assert_eq!(scid, sender_scid);
+                assert_eq!(via, unknown_scid);
+            },
+            other => panic!("expected ReceiveFailed, got {other:?}"),
         }
     }
 }
