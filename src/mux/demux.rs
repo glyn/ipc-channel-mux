@@ -416,7 +416,6 @@ impl Demuxer {
                 }
             } else {
                 // Send ReceiveFailed to members of srs
-                // TODO: Need to test this path
                 for (recv_scid, recv_multi_sender, _, _) in srs {
                     if let Err(e) = recv_multi_sender.lock().unwrap().send_message(
                         MultiMessage::ReceiveFailed {
@@ -995,6 +994,20 @@ mod tests {
                 assert_eq!(via, unknown_scid);
             },
             other => panic!("expected ReceiveFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn send_to_unregistered_subchannel_returns_disconnected() {
+        let unknown_scid = SubChannelId::new();
+        let mut demuxer = Demuxer::empty();
+
+        // Call send() with no embedded senders and an unregistered destination scid.
+        let result = demuxer.send(unknown_scid, vec![], &[], Uuid::new_v4(), vec![]);
+
+        match result {
+            Err(MuxError::Disconnected) => (),
+            other => panic!("expected Disconnected, got {other:?}"),
         }
     }
 }
