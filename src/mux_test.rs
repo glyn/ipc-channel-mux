@@ -8,12 +8,13 @@
 // except according to those terms.
 
 use crate::mux::{
-    self, SharedMemory, SubOneShotServer, SubReceiver, SubSender,
+    self, MuxError, SharedMemory, SubOneShotServer, SubReceiver, SubSender, TryRecvError,
     subchannel_router::{ROUTER, RouterError, RouterProxy},
 };
 use ipc_channel::ipc::IpcSharedMemory;
 use serde::{Deserialize, Serialize};
 use std::thread;
+use std::time::{Duration, Instant};
 use test_log::test;
 
 #[test]
@@ -750,4 +751,243 @@ fn shmem_via_router() {
     assert_eq!(&*received, b"routed");
 
     proxy.shutdown();
+}
+
+// --- try_recv tests ---
+
+#[test]
+fn try_recv_empty_channel() {
+    let channel = mux::Channel::new().unwrap();
+    let (_tx, rx) = channel.sub_channel::<i32>();
+    match rx.try_recv() {
+        Err(TryRecvError::Empty) => (),
+        v => panic!("expected Empty, got {v:?}"),
+    }
+}
+
+#[test]
+fn try_recv_with_message() {
+    let person = ("Patrick Walton".to_owned(), 29);
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel();
+    tx.send(person.clone()).unwrap();
+    let received_person = rx.try_recv().unwrap();
+    assert_eq!(person, received_person);
+}
+
+#[test]
+fn try_recv_empty_after_receive() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel();
+    tx.send(1).unwrap();
+    assert_eq!(rx.try_recv().unwrap(), 1);
+    match rx.try_recv() {
+        Err(TryRecvError::Empty) => (),
+        v => panic!("expected Empty, got {v:?}"),
+    }
+}
+
+#[test]
+fn try_recv_multiple_messages() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel();
+    tx.send(1).unwrap();
+    tx.send(2).unwrap();
+    tx.send(3).unwrap();
+    assert_eq!(rx.try_recv().unwrap(), 1);
+    assert_eq!(rx.try_recv().unwrap(), 2);
+    assert_eq!(rx.try_recv().unwrap(), 3);
+    match rx.try_recv() {
+        Err(TryRecvError::Empty) => (),
+        v => panic!("expected Empty, got {v:?}"),
+    }
+}
+
+#[test]
+fn try_recv_disconnected_after_sender_drop() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel::<i32>();
+    drop(tx);
+    // Disconnection detection may be lazy, so loop until we get Disconnected.
+    loop {
+        match rx.try_recv() {
+            Err(TryRecvError::Empty) => {
+                // Disconnection not yet observed, try again after a brief pause.
+                thread::sleep(Duration::from_millis(10));
+            },
+            Err(TryRecvError::MuxError(MuxError::Disconnected)) => break,
+            v => panic!("expected Empty or Disconnected, got {v:?}"),
+        }
+    }
+}
+
+#[test]
+fn try_recv_buffered_messages_before_disconnect() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel();
+    tx.send(1).unwrap();
+    tx.send(2).unwrap();
+    drop(tx);
+    // Buffered messages should still be available even after sender drop.
+    assert_eq!(rx.try_recv().unwrap(), 1);
+    assert_eq!(rx.try_recv().unwrap(), 2);
+    // After buffered messages are drained, should eventually get Disconnected.
+    loop {
+        match rx.try_recv() {
+            Err(TryRecvError::Empty) => {
+                thread::sleep(Duration::from_millis(10));
+            },
+            Err(TryRecvError::MuxError(MuxError::Disconnected)) => break,
+            v => panic!("expected Empty or Disconnected, got {v:?}"),
+        }
+    }
+}
+
+#[test]
+fn try_recv_two_subchannels_independent() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx1, rx1) = channel.sub_channel();
+    let (_tx2, rx2) = channel.sub_channel::<i32>();
+    tx1.send(42).unwrap();
+    // rx1 has a message, rx2 does not.
+    assert_eq!(rx1.try_recv().unwrap(), 42);
+    match rx2.try_recv() {
+        Err(TryRecvError::Empty) => (),
+        v => panic!("expected Empty on rx2, got {v:?}"),
+    }
+}
+
+#[test]
+fn try_recv_with_cloned_sender_partial_drop() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel::<i32>();
+    let tx_clone = tx.clone();
+    drop(tx);
+    // One clone was dropped, but another still exists — should be Empty, not Disconnected.
+    match rx.try_recv() {
+        Err(TryRecvError::Empty) => (),
+        v => panic!("expected Empty, got {v:?}"),
+    }
+    // Can still send via the surviving clone.
+    tx_clone.send(7).unwrap();
+    assert_eq!(rx.try_recv().unwrap(), 7);
+}
+
+#[test]
+fn try_recv_with_in_flight_subsender() {
+    let channel = mux::Channel::new().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel::<i32>();
+    let (super_tx, super_rx) = channel.sub_channel();
+    super_tx.send(sub_tx).unwrap();
+    // sub_tx is in-flight (sent but not yet received) — should be Empty, not Disconnected.
+    match sub_rx.try_recv() {
+        Err(TryRecvError::Empty) => (),
+        v => panic!("expected Empty while sender is in-flight, got {v:?}"),
+    }
+    // Receive the in-flight sender and use it.
+    let received_tx: SubSender<i32> = super_rx.recv().unwrap();
+    received_tx.send(99).unwrap();
+    assert_eq!(sub_rx.try_recv().unwrap(), 99);
+}
+
+// --- try_recv_timeout tests ---
+
+#[test]
+fn try_recv_timeout_empty_channel() {
+    let channel = mux::Channel::new().unwrap();
+    let (_tx, rx) = channel.sub_channel::<i32>();
+    let timeout = Duration::from_millis(100);
+    let start = Instant::now();
+    match rx.try_recv_timeout(timeout) {
+        Err(TryRecvError::Empty) => {
+            assert!(
+                start.elapsed() >= Duration::from_millis(50),
+                "should have waited for at least part of the timeout"
+            );
+        },
+        v => panic!("expected Empty, got {v:?}"),
+    }
+}
+
+#[test]
+fn try_recv_timeout_with_message() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel();
+    tx.send(42).unwrap();
+    let timeout = Duration::from_secs(5);
+    let start = Instant::now();
+    let value = rx.try_recv_timeout(timeout).unwrap();
+    assert_eq!(value, 42);
+    assert!(
+        start.elapsed() < timeout,
+        "should have returned immediately when message is available"
+    );
+}
+
+#[test]
+fn try_recv_timeout_empty_after_receive() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel();
+    tx.send(1).unwrap();
+    assert_eq!(rx.try_recv_timeout(Duration::from_secs(1)).unwrap(), 1);
+    let timeout = Duration::from_millis(100);
+    let start = Instant::now();
+    match rx.try_recv_timeout(timeout) {
+        Err(TryRecvError::Empty) => {
+            assert!(start.elapsed() >= Duration::from_millis(50));
+        },
+        v => panic!("expected Empty, got {v:?}"),
+    }
+}
+
+#[test]
+fn try_recv_timeout_disconnected_after_sender_drop() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel::<i32>();
+    drop(tx);
+    let timeout = Duration::from_secs(5);
+    let start = Instant::now();
+    match rx.try_recv_timeout(timeout) {
+        Err(TryRecvError::MuxError(MuxError::Disconnected)) => {
+            assert!(
+                start.elapsed() < timeout,
+                "should detect disconnection before full timeout"
+            );
+        },
+        v => panic!("expected Disconnected, got {v:?}"),
+    }
+}
+
+#[test]
+fn try_recv_timeout_buffered_messages_before_disconnect() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel();
+    tx.send(1).unwrap();
+    tx.send(2).unwrap();
+    drop(tx);
+    let timeout = Duration::from_secs(1);
+    assert_eq!(rx.try_recv_timeout(timeout).unwrap(), 1);
+    assert_eq!(rx.try_recv_timeout(timeout).unwrap(), 2);
+    match rx.try_recv_timeout(timeout) {
+        Err(TryRecvError::MuxError(MuxError::Disconnected)) => (),
+        v => panic!("expected Disconnected, got {v:?}"),
+    }
+}
+
+#[test]
+fn try_recv_timeout_message_arrives_during_wait() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel();
+    let timeout = Duration::from_secs(5);
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(100));
+        tx.send(77).unwrap();
+    });
+    let start = Instant::now();
+    let value = rx.try_recv_timeout(timeout).unwrap();
+    assert_eq!(value, 77);
+    assert!(
+        start.elapsed() < timeout,
+        "should have returned before full timeout"
+    );
 }
