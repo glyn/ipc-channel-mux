@@ -68,6 +68,22 @@ let (rx, data) = server.accept().unwrap();
 
 An advantage of creating a subchannel, rather than an IPC channel, using a one-shot server is that the subchannel can then be used to transmit subsenders.[^interop]
 
+### Blocking receives
+
+`SubReceiver` supports blocking receives via `recv`, analogous to the corresponding method on `IpcReceiver` and `std::sync::mpsc::Receiver`:
+
+~~~Rust
+use ipc_channel_mux::mux;
+
+let channel = mux::Channel::new().unwrap();
+let (tx, rx) = channel.sub_channel();
+
+tx.send(42).unwrap();
+assert_eq!(rx.recv().unwrap(), 42);
+~~~
+
+`recv` blocks until a message is available or all senders have been dropped, in which case it returns `MuxError::Disconnected`.
+
 ### Non-blocking receives
 
 `SubReceiver` supports non-blocking receives via `try_recv` and `try_recv_timeout`, analogous to the corresponding methods on `IpcReceiver` and `std::sync::mpsc::Receiver`:
