@@ -197,7 +197,6 @@ impl Demuxer {
 
             MultiMessage::Data(scid, payload, ipc_senders, shmems) => {
                 let srs: VecDeque<ProtoSender> = ipc_senders
-                    .clone()
                     .iter()
                     .map(|(scid, s)| {
                         let ipc_sender = Self::ipcsender_from_sender_and_or_id(self, s)?;
