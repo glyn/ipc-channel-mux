@@ -177,7 +177,6 @@ fn embedded_multiplexed_senders_interacting() {
 
 #[test]
 fn embedded_multiplexed_senders_with_middleman() {
-    // TODO: this test aimed to break the code that always sets MultiMessage:Sending.from to ORIGIN, but it passes.
     let channel = mux::Channel::new().unwrap();
     let (super_tx, super_rx) = channel.sub_channel();
     let (sub_tx, sub_rx) = channel.sub_channel::<i32>();

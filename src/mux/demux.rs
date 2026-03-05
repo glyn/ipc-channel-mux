@@ -627,11 +627,7 @@ impl MultiReceiver {
             .demuxer
             .lock()
             .unwrap()
-            .sub_channels
-            .insert(
-                sub_channel_id,
-                Arc::new(crate::mux::subchannel_lifecycle::SubSenderStateMachine::new(tx, ORIGIN)),
-            );
+            .insert_state_machine(sub_channel_id, tx);
         SubChannelReceiver {
             multi_receiver: Arc::clone(mr),
             sub_channel_id,
