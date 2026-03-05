@@ -17,7 +17,7 @@ All protocol messages are variants of two enums which are serialized by
 - **`MultiMessage`** -- sent over the forward channel from sender to receiver.
 - **`MultiResponse`** -- sent over the response channel from receiver to sender.
 
-User-level message payloads are serialized with `postcard` and carried inside
+User-level message payloads are serialized and carried inside
 `MultiMessage::Data` as opaque bytes.
 
 ## Identifiers
@@ -41,7 +41,7 @@ the receiver will use to send `MultiResponse` messages back to this client.
 Carries a user-level message. Fields:
 
 1. **Target subchannel** -- the `SubChannelId` that the message is destined for.
-2. **Payload** -- the user message serialized to bytes with `postcard`.
+2. **Payload** -- the user message serialized to bytes.
 3. **Embedded subsenders** -- a list of `(SubChannelId, IpcSenderAndOrId)` pairs
    for any `SubSender` values that were serialized inside the payload (see
    _Subsender Transmission_ below).
@@ -146,7 +146,7 @@ protocol messages are sent during subchannel creation either.
 1. The sender checks whether the subchannel's receiver is still connected
    by checking for any `SubReceiverDisconnected` messages on the response
    channel. If disconnected, returns `MuxError::Disconnected`.
-2. The user value is serialized with `postcard`. Any embedded `SubSender`
+2. The user value is serialized. Any embedded `SubSender`
    values and `SharedMemory` values are extracted during serialization.
 3. For each embedded subsender, a `Sending { scid, via, via_chan }` message
    is sent to notify the receiver that the subsender is in flight.
@@ -157,7 +157,7 @@ protocol messages are sent during subchannel creation either.
 
 1. When a `Data` message arrives, it is routed by `SubChannelId` to the
    correct subchannel.
-2. The payload is deserialized with `postcard`. Any embedded `SubSender`
+2. The payload is deserialized. Any embedded `SubSender`
    values are reconstructed, and a `Received { scid, via, new_source }`
    message is sent back for each to confirm receipt.
 3. The deserialized value is returned.
@@ -202,7 +202,7 @@ has crashed.
 
 `SharedMemory` values are transported using a two-stage serialization model:
 
-1. **Serialization** (`postcard`): Each `SharedMemory` value extracts its
+1. **Serialization**: Each `SharedMemory` value extracts its
    `IpcSharedMemory` and serializes as just an index.
 2. **Transport** (`ipc-channel`): The collected `IpcSharedMemory` values
    are included in the `Data` message. The `ipc-channel` layer transports
