@@ -286,38 +286,31 @@ impl SubChannelSender {
         let payload = postcard::to_stdvec(&msg).map_err(MuxError::from)?;
 
         let shmems = take_shmems_for_send();
-        let (serialized_subchannel_senders, ipc_senders_to_send) = take_serialization_context();
+        let serialized_senders = take_serialization_context();
 
         // Notify transmission of any subchannel senders so that they are counted during transmission.
-        for (subchannel_id, ipc_sender, sender_id) in serialized_subchannel_senders {
-            {
-                if let Err(e) = ipc_sender.send(MultiMessage::Sending {
-                    scid: subchannel_id,
-                    via: self.sub_channel_id,
-                    via_chan: Self::ipc_sender_and_or_uuid(
-                        &sender_id,
-                        &self.ipc_sender,
-                        self.ipc_sender_uuid,
-                    ),
-                }) {
-                    log::debug!("Failed to send Sending notification: {e}");
-                }
+        // Also build the list of IPC sender references for the Data message.
+        let mut srs: Vec<(SubChannelId, IpcSenderAndOrId)> =
+            Vec::with_capacity(serialized_senders.len());
+        for ctx in &serialized_senders {
+            if let Err(e) = ctx.ipc_sender.send(MultiMessage::Sending {
+                scid: ctx.sub_channel_id,
+                via: self.sub_channel_id,
+                via_chan: Self::ipc_sender_and_or_uuid(
+                    &ctx.sender_id,
+                    &self.ipc_sender,
+                    self.ipc_sender_uuid,
+                ),
+            }) {
+                log::debug!("Failed to send Sending notification: {e}");
             }
+
+            srs.push((
+                ctx.sub_channel_id,
+                Self::ipc_sender_and_or_uuid(&self.sender_id, &ctx.ipc_sender, ctx.ipc_sender_uuid),
+            ));
         }
 
-        let srs: Vec<(SubChannelId, IpcSenderAndOrId)> = ipc_senders_to_send
-            .iter()
-            .map(|ipc_sender_and_uuid| {
-                (
-                    ipc_sender_and_uuid.0,
-                    Self::ipc_sender_and_or_uuid(
-                        &self.sender_id,
-                        &ipc_sender_and_uuid.2,
-                        ipc_sender_and_uuid.1,
-                    ),
-                )
-            })
-            .collect();
         let result = self.ipc_sender.send(MultiMessage::Data(
             self.sub_channel_id,
             payload,
@@ -366,50 +359,25 @@ impl fmt::Debug for SubChannelSender {
     }
 }
 
-type SubChannelSenderSendDetails = (SubChannelId, Uuid, Arc<IpcSender<MultiMessage>>);
+struct SerializedSenderContext {
+    sub_channel_id: SubChannelId,
+    ipc_sender_uuid: Uuid,
+    ipc_sender: Arc<IpcSender<MultiMessage>>,
+    sender_id: Arc<Mutex<Source<Weak<IpcSender<MultiMessage>>>>>,
+}
 
-type SubChannelSenderSerializedDetails = (
-    SubChannelId,
-    Arc<IpcSender<MultiMessage>>,
-    Arc<Mutex<Source<Weak<IpcSender<MultiMessage>>>>>,
-);
-
-// TODO: rationalise the following to avoid duplication of data
 thread_local! {
-    static IPC_SENDERS_TO_SEND: Mutex<Vec<SubChannelSenderSendDetails>> = const {Mutex::new(vec!()) };
-    static SERIALIZED_SUBCHANNEL_SENDERS: Mutex<Vec<SubChannelSenderSerializedDetails>> = const { Mutex::new(vec!()) };
+    static SERIALIZED_SENDERS: Mutex<Vec<SerializedSenderContext>> = const { Mutex::new(vec!()) };
 }
 
 fn clear_serialization_context() {
-    IPC_SENDERS_TO_SEND.with(|senders| {
+    SERIALIZED_SENDERS.with(|senders| {
         senders.lock().unwrap().clear();
-    });
-
-    SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| {
-        subchannel_senders.lock().unwrap().clear();
     });
 }
 
-fn take_serialization_context() -> (
-    Vec<SubChannelSenderSerializedDetails>,
-    Vec<SubChannelSenderSendDetails>, // SubChannelId, IPC sender UUID, and IpcSender of serialized SubChannelSenders
-) {
-    let serialized_subchannel_senders = SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| {
-        let empty = Mutex::new(vec![]);
-        let mut v = subchannel_senders.lock().unwrap();
-        let w = empty.lock().unwrap();
-        std::mem::replace(&mut v, w).to_vec()
-    });
-
-    let ipc_senders_to_send: Vec<SubChannelSenderSendDetails> =
-        IPC_SENDERS_TO_SEND.with(|ipc_senders: &Mutex<Vec<SubChannelSenderSendDetails>>| {
-            let empty = Mutex::new(vec![]);
-            let mut v = ipc_senders.lock().unwrap();
-            let w = empty.lock().unwrap();
-            std::mem::replace(&mut v, w).to_vec()
-        });
-
-    (serialized_subchannel_senders, ipc_senders_to_send)
+fn take_serialization_context() -> Vec<SerializedSenderContext> {
+    SERIALIZED_SENDERS.with(|senders| std::mem::take(&mut *senders.lock().unwrap()))
 }
 
 impl Serialize for SubChannelSender {
@@ -418,24 +386,17 @@ impl Serialize for SubChannelSender {
         S: Serializer,
     {
         log::trace!(
-            "Adding SubChannelSender with SubChannelId {} to IPC_SENDERS_TO_SEND and SERIALIZED_SUBCHANNEL_SENDERS",
+            "Adding SubChannelSender with SubChannelId {} to SERIALIZED_SENDERS",
             self.sub_channel_id
         );
 
-        IPC_SENDERS_TO_SEND.with(|ipc_senders| {
-            ipc_senders.lock().unwrap().push((
-                self.sub_channel_id,
-                self.ipc_sender_uuid,
-                self.ipc_sender.clone(),
-            ));
-        });
-
-        SERIALIZED_SUBCHANNEL_SENDERS.with(|subchannel_senders| {
-            subchannel_senders.lock().unwrap().push((
-                self.sub_channel_id,
-                self.ipc_sender.clone(),
-                self.sender_id.clone(),
-            ));
+        SERIALIZED_SENDERS.with(|senders| {
+            senders.lock().unwrap().push(SerializedSenderContext {
+                sub_channel_id: self.sub_channel_id,
+                ipc_sender_uuid: self.ipc_sender_uuid,
+                ipc_sender: self.ipc_sender.clone(),
+                sender_id: self.sender_id.clone(),
+            });
         });
 
         let scsi = SubChannelSenderIds::new(self.sub_channel_id, self.ipc_sender_uuid.to_string());
