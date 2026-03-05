@@ -278,6 +278,7 @@ pub struct BytesSubSender {
 
 impl BytesSubSender {
     /// Convert a SubChannelSender to a BytesSubSender.
+    #[doc(hidden)]
     pub fn from_sender(sub_channel_sender: SubChannelSender) -> Self {
         BytesSubSender { sub_channel_sender }
     }
@@ -315,6 +316,7 @@ pub struct BytesSubReceiver {
 
 impl BytesSubReceiver {
     /// Convert a SubChannelReceiver to a BytesSubReceiver.
+    #[doc(hidden)]
     pub fn from_receiver(sub_channel_receiver: SubChannelReceiver) -> Self {
         BytesSubReceiver {
             sub_channel_receiver,
