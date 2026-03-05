@@ -8,7 +8,8 @@
 // except according to those terms.
 
 use ipc_channel_mux::mux::{Channel, MuxError, SubOneShotServer, SubReceiver, SubSender};
-use std::{env, process, thread, time::Duration};
+use std::sync::{Arc, Barrier};
+use std::{env, process, thread};
 use test_log::test;
 
 // The integration tests may be run on their own by issuing:
@@ -86,15 +87,20 @@ fn subsender_drop_inflight_subreceiver_receiving() {
     let d = Channel::new().unwrap();
     let (transmit_tx, transmit_rx) = d.sub_channel();
 
-    let join_handle = thread::spawn(move || match transmit_rx.recv() {
-        Err(MuxError::Disconnected) => 42,
-        result => panic!("unexpected result {result:?}"),
+    let barrier = Arc::new(Barrier::new(2));
+    let thread_barrier = Arc::clone(&barrier);
+    let join_handle = thread::spawn(move || {
+        thread_barrier.wait();
+        match transmit_rx.recv() {
+            Err(MuxError::Disconnected) => 42,
+            result => panic!("unexpected result {result:?}"),
+        }
     });
 
-    // Give the spawned thread time to block. Although this isn't guaranteed,
-    // it's more likely than not.
+    // Wait until the spawned thread is about to call recv(), then yield
+    // to make it likely the thread is blocked on recv() before we proceed.
+    barrier.wait();
     thread::yield_now();
-    thread::sleep(Duration::from_millis(1000));
 
     data.send(transmit_tx).expect("subsender send failed");
 
