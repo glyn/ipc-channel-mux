@@ -1323,13 +1323,11 @@ fn bytes_binary_data() {
 
 #[test]
 fn bytes_to_opaque_sender() {
-    use crate::mux::BytesSubSender;
-
     let channel = mux::Channel::new().unwrap();
     let (tx, rx) = channel.bytes_sub_channel();
 
     let opaque = tx.to_opaque();
-    let tx: BytesSubSender = opaque.to();
+    let tx = opaque.to_bytes();
 
     tx.send(b"via opaque").unwrap();
     assert_eq!(rx.recv().unwrap(), b"via opaque");
@@ -1337,13 +1335,11 @@ fn bytes_to_opaque_sender() {
 
 #[test]
 fn bytes_to_opaque_receiver() {
-    use crate::mux::BytesSubReceiver;
-
     let channel = mux::Channel::new().unwrap();
     let (tx, rx) = channel.bytes_sub_channel();
 
     let opaque = rx.to_opaque();
-    let rx: BytesSubReceiver = opaque.to();
+    let rx = opaque.to_bytes();
 
     tx.send(b"via opaque rx").unwrap();
     assert_eq!(rx.recv().unwrap(), b"via opaque rx");

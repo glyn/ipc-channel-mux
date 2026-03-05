@@ -127,6 +127,13 @@ impl OpaqueSubSender {
             phantom: PhantomData,
         }
     }
+
+    /// Convert an OpaqueSubSender to a BytesSubSender.
+    pub fn to_bytes(self) -> BytesSubSender {
+        BytesSubSender {
+            sub_channel_sender: self.sub_channel_sender,
+        }
+    }
 }
 
 /// SubReceiver is the receiving end of a subchannel, used to receive and deserialize messages of a given type.
@@ -263,68 +270,112 @@ impl OpaqueSubReceiver {
             phantom: PhantomData,
         }
     }
+
+    /// Convert an OpaqueSubReceiver to a BytesSubReceiver.
+    pub fn to_bytes(self) -> BytesSubReceiver {
+        BytesSubReceiver {
+            sub_channel_receiver: self.sub_channel_receiver,
+        }
+    }
 }
 
-// /// BytesSubSender is the sending end of a bytes subchannel, used to send raw byte data
-// /// with reduced serialization overhead.
-// ///
-// /// BytesSubSenders can be sent in messages on other subchannels and can be cloned.
-// ///
-// /// This is the mux equivalent of [ipc_channel::ipc::IpcBytesSender].
-// pub struct BytesSubSender {
-//     // ...
-// }
-//
-// impl Clone for BytesSubSender {
-//     fn clone(&self) -> BytesSubSender { todo!() }
-// }
-//
-// impl Serialize for BytesSubSender { /* ... */ }
-// impl Deserialize for BytesSubSender { /* ... */ }
-//
-// impl BytesSubSender {
-//     /// Send raw bytes across the subchannel to the [BytesSubReceiver].
-//     ///
-//     /// Takes a byte slice rather than owned data, matching the
-//     /// [IpcBytesSender::send](ipc_channel::ipc::IpcBytesSender::send) signature.
-//     ///
-//     /// This method will never block the current thread.
-//     pub fn send(&self, data: &[u8]) -> Result<(), MuxError> { todo!() }
-//
-//     /// Convert a BytesSubSender to an OpaqueSubSender by erasing its type.
-//     pub fn to_opaque(self) -> OpaqueSubSender { todo!() }
-// }
-//
-// /// BytesSubReceiver is the receiving end of a bytes subchannel, used to receive raw byte data
-// /// with reduced deserialization overhead.
-// ///
-// /// This is the mux equivalent of [ipc_channel::ipc::IpcBytesReceiver].
-// pub struct BytesSubReceiver {
-//     // ...
-// }
-//
-// impl BytesSubReceiver {
-//     /// Waits for, and returns, bytes from the channel or returns an error if all
-//     /// corresponding [BytesSubSender]s have disconnected.
-//     ///
-//     /// This method will always block the current thread if no messages are available
-//     /// and it's possible for more messages to be sent.
-//     pub fn recv(&self) -> Result<Vec<u8>, MuxError> { todo!() }
-//
-//     /// Attempts to return pending bytes on this subchannel without blocking.
-//     ///
-//     /// Returns `Err(TryRecvError::Empty)` if no data is available but senders exist.
-//     /// Returns `Err(TryRecvError::MuxError(MuxError::Disconnected))` if all senders
-//     /// have disconnected and no buffered messages remain.
-//     pub fn try_recv(&self) -> Result<Vec<u8>, TryRecvError> { todo!() }
-//
-//     /// Blocks for up to the specified duration attempting to receive bytes.
-//     ///
-//     /// Returns `Err(TryRecvError::Empty)` if the timeout expires without data.
-//     pub fn try_recv_timeout(&self, duration: Duration) -> Result<Vec<u8>, TryRecvError> { todo!() }
-//
-//     /// Convert a BytesSubReceiver to an OpaqueSubReceiver by erasing its type.
-//     ///
-//     /// Useful for adding routes to a `RouterProxy`.
-//     pub fn to_opaque(self) -> OpaqueSubReceiver { todo!() }
-// }
+/// BytesSubSender is the sending end of a bytes subchannel, used to send raw byte data
+/// with reduced serialization overhead.
+///
+/// BytesSubSenders can be sent in messages on other subchannels and can be cloned.
+///
+/// This is the mux equivalent of [ipc_channel::ipc::IpcBytesSender].
+#[derive(Debug, Deserialize, Serialize)]
+pub struct BytesSubSender {
+    sub_channel_sender: SubChannelSender,
+}
+
+impl BytesSubSender {
+    /// Convert a SubChannelSender to a BytesSubSender.
+    pub fn from_sender(sub_channel_sender: SubChannelSender) -> Self {
+        BytesSubSender { sub_channel_sender }
+    }
+}
+
+impl Clone for BytesSubSender {
+    fn clone(&self) -> BytesSubSender {
+        BytesSubSender {
+            sub_channel_sender: self.sub_channel_sender.clone(),
+        }
+    }
+}
+
+impl BytesSubSender {
+    /// Send raw bytes across the subchannel to the [BytesSubReceiver].
+    ///
+    /// Takes a byte slice rather than owned data, matching the
+    /// [IpcBytesSender::send](ipc_channel::ipc::IpcBytesSender::send) signature.
+    ///
+    /// This method will never block the current thread.
+    #[instrument(level = "debug", skip(self, data), err(level = "debug"))]
+    pub fn send(&self, data: &[u8]) -> Result<(), MuxError> {
+        self.sub_channel_sender.send(data.to_vec())
+    }
+
+    /// Convert a BytesSubSender to an OpaqueSubSender by erasing its type.
+    pub fn to_opaque(self) -> OpaqueSubSender {
+        OpaqueSubSender {
+            sub_channel_sender: self.sub_channel_sender,
+        }
+    }
+}
+
+/// BytesSubReceiver is the receiving end of a bytes subchannel, used to receive raw byte data
+/// with reduced deserialization overhead.
+///
+/// This is the mux equivalent of [ipc_channel::ipc::IpcBytesReceiver].
+#[derive(Debug)]
+pub struct BytesSubReceiver {
+    sub_channel_receiver: SubChannelReceiver,
+}
+
+impl BytesSubReceiver {
+    /// Convert a SubChannelReceiver to a BytesSubReceiver.
+    pub fn from_receiver(sub_channel_receiver: SubChannelReceiver) -> Self {
+        BytesSubReceiver {
+            sub_channel_receiver,
+        }
+    }
+
+    /// Waits for, and returns, bytes from the channel or returns an error if all
+    /// corresponding [BytesSubSender]s have disconnected.
+    ///
+    /// This method will always block the current thread if no messages are available
+    /// and it's possible for more messages to be sent.
+    #[instrument(level = "debug", skip(self), err(level = "debug"))]
+    pub fn recv(&self) -> Result<Vec<u8>, MuxError> {
+        self.sub_channel_receiver.recv()
+    }
+
+    /// Attempts to return pending bytes on this subchannel without blocking.
+    ///
+    /// Returns `Err(TryRecvError::Empty)` if no data is available but senders exist.
+    /// Returns `Err(TryRecvError::MuxError(MuxError::Disconnected))` if all senders
+    /// have disconnected and no buffered messages remain.
+    #[instrument(level = "debug", skip(self), err(level = "debug"))]
+    pub fn try_recv(&self) -> Result<Vec<u8>, TryRecvError> {
+        self.sub_channel_receiver.try_recv()
+    }
+
+    /// Blocks for up to the specified duration attempting to receive bytes.
+    ///
+    /// Returns `Err(TryRecvError::Empty)` if the timeout expires without data.
+    #[instrument(level = "debug", skip(self), err(level = "debug"))]
+    pub fn try_recv_timeout(&self, duration: Duration) -> Result<Vec<u8>, TryRecvError> {
+        self.sub_channel_receiver.try_recv_timeout(duration)
+    }
+
+    /// Convert a BytesSubReceiver to an OpaqueSubReceiver by erasing its type.
+    ///
+    /// Useful for adding routes to a `RouterProxy`.
+    pub fn to_opaque(self) -> OpaqueSubReceiver {
+        OpaqueSubReceiver {
+            sub_channel_receiver: self.sub_channel_receiver,
+        }
+    }
+}

@@ -141,4 +141,6 @@ pub mod subchannel_router;
 pub use channel::{Channel, SubOneShotServer};
 pub use error::{MuxError, TryRecvError};
 pub use shared_memory::SharedMemory;
-pub use subchannel_endpoint::{OpaqueSubReceiver, OpaqueSubSender, SubReceiver, SubSender};
+pub use subchannel_endpoint::{
+    BytesSubReceiver, BytesSubSender, OpaqueSubReceiver, OpaqueSubSender, SubReceiver, SubSender,
+};

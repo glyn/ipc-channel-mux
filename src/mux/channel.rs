@@ -11,7 +11,7 @@ use crate::mux::demux::{Demuxer, MultiReceiver, ReceiverDemuxer};
 use crate::mux::error::MuxError;
 use crate::mux::protocol::{ClientId, MultiMessage};
 use crate::mux::sender::{MultiSender, SubChannelSender};
-use crate::mux::subchannel_endpoint::{SubReceiver, SubSender};
+use crate::mux::subchannel_endpoint::{BytesSubReceiver, BytesSubSender, SubReceiver, SubSender};
 use crate::mux::subchannel_lifecycle;
 use ipc_channel::ipc::{self, IpcOneShotServer, IpcReceiver};
 use serde::{Deserialize, Serialize};
@@ -56,15 +56,28 @@ impl Channel {
         (SubSender::from_sender(scs), SubReceiver::from_receiver(scr))
     }
 
-    // /// Construct a new bytes subchannel of a [Channel]. The subchannel has
-    // /// a [BytesSubSender] and a [BytesSubReceiver] which send and receive
-    // /// raw bytes with reduced serialization overhead.
-    // ///
-    // /// This is the mux equivalent of [ipc_channel::ipc::bytes_channel].
-    // ///
-    // /// [BytesSubSender]: crate::mux::BytesSubSender
-    // /// [BytesSubReceiver]: crate::mux::BytesSubReceiver
-    // pub fn bytes_sub_channel(&self) -> (BytesSubSender, BytesSubReceiver) { todo!() }
+    /// Construct a new bytes subchannel of a [Channel]. The subchannel has
+    /// a [BytesSubSender] and a [BytesSubReceiver] which send and receive
+    /// raw bytes with reduced serialization overhead.
+    ///
+    /// This is the mux equivalent of [ipc_channel::ipc::bytes_channel].
+    ///
+    /// [BytesSubSender]: crate::mux::BytesSubSender
+    /// [BytesSubReceiver]: crate::mux::BytesSubReceiver
+    #[instrument(level = "debug", skip(self))]
+    pub fn bytes_sub_channel(&self) -> (BytesSubSender, BytesSubReceiver) {
+        let scs = SubChannelSender::new(Arc::clone(&self.multi_sender));
+        let scid = scs.sub_channel_id();
+        self.multi_sender
+            .lock()
+            .unwrap()
+            .insert_sub_receiver_proxy(scid, subchannel_lifecycle::SubReceiverProxy::new());
+        let scr = MultiReceiver::attach(&self.multi_receiver, scid);
+        (
+            BytesSubSender::from_sender(scs),
+            BytesSubReceiver::from_receiver(scr),
+        )
+    }
 }
 
 /// SubOneShotServer together with its generated name can be used to establish a subchannel
