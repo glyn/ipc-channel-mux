@@ -866,7 +866,7 @@ impl SubChannelReceiver {
     where
         T: for<'de> Deserialize<'de> + Serialize,
     {
-        // First check the local mpsc channel for an already-demuxed message.
+        // xFirst check the local mpsc channel for an already-demuxed message.
         match self.channel.try_recv() {
             Ok(ResolvedMessageOrDisconnect::ResolvedMessage(resolved)) => {
                 return resolved.deserialize().map_err(Into::into);
