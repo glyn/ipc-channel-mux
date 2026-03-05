@@ -118,6 +118,19 @@ This allows receiving code to utilise Crossbeam features.
 
 The router is in the `mux::subchannel_router` module.
 
+~~~Rust
+use ipc_channel_mux::mux;
+use mux::subchannel_router::{ROUTER, RouterProxy};
+
+let channel = RouterProxy::new_router_channel(&ROUTER).unwrap();
+let (tx, crossbeam_rx) = channel
+    .route_to_new_crossbeam_receiver::<i32>()
+    .unwrap();
+
+tx.send(42).unwrap();
+assert_eq!(crossbeam_rx.recv().unwrap(), 42);
+~~~
+
 ### Shared memory
 
 `mux::SharedMemory` is a shared memory region that can be sent over subchannels. It is analogous to `ipc-channel`'s `IpcSharedMemory` and is transported efficiently via OS shared memory primitives:
@@ -227,6 +240,12 @@ To run the tests, issue:
 
 ~~~console
 cargo test
+~~~
+
+To run the benchmarks, issue:
+
+~~~console
+cargo bench
 ~~~
 
 Linux is the _reference platform_ for `ipc-channel-mux`, meaning that bugs encountered on other platforms should be reproduced on Linux so that a complete regression test is available on Linux.
