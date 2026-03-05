@@ -22,6 +22,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::thread;
 use std::time::Duration;
 use tracing::instrument;
 use uuid::Uuid;
@@ -835,6 +836,11 @@ impl SubChannelReceiver {
                         demuxer,
                         POLLING_INTERVAL,
                     );
+                    // Yield to avoid starving threads blocked on the demuxer lock.
+                    // The lock was released briefly during poll() inside
+                    // try_recv_timeout, but try_lock() can re-acquire it before a
+                    // blocked lock() caller is scheduled.
+                    thread::yield_now();
                     log::trace!(
                         "SubChannelReceiver::recv multi_receiver_result = {:#?}",
                         multi_receiver_result.as_ref()
@@ -946,6 +952,8 @@ impl SubChannelReceiver {
                 },
                 Ok(()) | Err(TryRecvError::Empty | TryRecvError::Handled) => {},
             }
+            // Yield to avoid starving threads blocked on the demuxer lock.
+            thread::yield_now();
         }
     }
 }
