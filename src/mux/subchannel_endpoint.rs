@@ -127,13 +127,6 @@ impl OpaqueSubSender {
             phantom: PhantomData,
         }
     }
-
-    /// Convert an OpaqueSubSender to a BytesSubSender.
-    pub fn to_bytes(self) -> BytesSubSender {
-        BytesSubSender {
-            sub_channel_sender: self.sub_channel_sender,
-        }
-    }
 }
 
 /// SubReceiver is the receiving end of a subchannel, used to receive and deserialize messages of a given type.
@@ -270,13 +263,6 @@ impl OpaqueSubReceiver {
             phantom: PhantomData,
         }
     }
-
-    /// Convert an OpaqueSubReceiver to a BytesSubReceiver.
-    pub fn to_bytes(self) -> BytesSubReceiver {
-        BytesSubReceiver {
-            sub_channel_receiver: self.sub_channel_receiver,
-        }
-    }
 }
 
 /// BytesSubSender is the sending end of a bytes subchannel, used to send raw byte data
@@ -315,13 +301,6 @@ impl BytesSubSender {
     #[instrument(level = "debug", skip(self, data), err(level = "debug"))]
     pub fn send(&self, data: &[u8]) -> Result<(), MuxError> {
         self.sub_channel_sender.send(data.to_vec())
-    }
-
-    /// Convert a BytesSubSender to an OpaqueSubSender by erasing its type.
-    pub fn to_opaque(self) -> OpaqueSubSender {
-        OpaqueSubSender {
-            sub_channel_sender: self.sub_channel_sender,
-        }
     }
 }
 
@@ -368,14 +347,5 @@ impl BytesSubReceiver {
     #[instrument(level = "debug", skip(self), err(level = "debug"))]
     pub fn try_recv_timeout(&self, duration: Duration) -> Result<Vec<u8>, TryRecvError> {
         self.sub_channel_receiver.try_recv_timeout(duration)
-    }
-
-    /// Convert a BytesSubReceiver to an OpaqueSubReceiver by erasing its type.
-    ///
-    /// Useful for adding routes to a `RouterProxy`.
-    pub fn to_opaque(self) -> OpaqueSubReceiver {
-        OpaqueSubReceiver {
-            sub_channel_receiver: self.sub_channel_receiver,
-        }
     }
 }

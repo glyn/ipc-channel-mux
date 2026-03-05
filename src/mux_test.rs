@@ -1320,27 +1320,3 @@ fn bytes_binary_data() {
     tx.send(&data).unwrap();
     assert_eq!(rx.recv().unwrap(), data);
 }
-
-#[test]
-fn bytes_to_opaque_sender() {
-    let channel = mux::Channel::new().unwrap();
-    let (tx, rx) = channel.bytes_sub_channel();
-
-    let opaque = tx.to_opaque();
-    let tx = opaque.to_bytes();
-
-    tx.send(b"via opaque").unwrap();
-    assert_eq!(rx.recv().unwrap(), b"via opaque");
-}
-
-#[test]
-fn bytes_to_opaque_receiver() {
-    let channel = mux::Channel::new().unwrap();
-    let (tx, rx) = channel.bytes_sub_channel();
-
-    let opaque = rx.to_opaque();
-    let rx = opaque.to_bytes();
-
-    tx.send(b"via opaque rx").unwrap();
-    assert_eq!(rx.recv().unwrap(), b"via opaque rx");
-}
