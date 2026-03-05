@@ -1030,3 +1030,321 @@ fn send_subsender_via_router() {
 
     router.shutdown();
 }
+
+// --- bytes subchannel tests ---
+
+#[test]
+fn bytes_simple() {
+    let bytes = [1u8, 2, 3, 4, 5, 6, 7];
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+    tx.send(&bytes).unwrap();
+    let received = rx.recv().unwrap();
+    assert_eq!(&bytes[..], &received[..]);
+}
+
+#[test]
+fn bytes_empty() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+    tx.send(&[]).unwrap();
+    let received = rx.recv().unwrap();
+    assert!(received.is_empty());
+}
+
+#[test]
+fn bytes_large() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+    let data: Vec<u8> = (0..65536).map(|i| (i % 256) as u8).collect();
+    tx.send(&data).unwrap();
+    let received = rx.recv().unwrap();
+    assert_eq!(data, received);
+}
+
+#[test]
+fn bytes_multiple_messages() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+    tx.send(b"first").unwrap();
+    tx.send(b"second").unwrap();
+    tx.send(b"third").unwrap();
+    assert_eq!(rx.recv().unwrap(), b"first");
+    assert_eq!(rx.recv().unwrap(), b"second");
+    assert_eq!(rx.recv().unwrap(), b"third");
+}
+
+#[test]
+fn bytes_two_subchannels() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx1, rx1) = channel.bytes_sub_channel();
+    let (tx2, rx2) = channel.bytes_sub_channel();
+    tx1.send(b"one").unwrap();
+    tx2.send(b"two").unwrap();
+    assert_eq!(rx2.recv().unwrap(), b"two");
+    assert_eq!(rx1.recv().unwrap(), b"one");
+}
+
+#[test]
+fn bytes_alongside_typed_subchannel() {
+    let channel = mux::Channel::new().unwrap();
+    let (bytes_tx, bytes_rx) = channel.bytes_sub_channel();
+    let (typed_tx, typed_rx) = channel.sub_channel::<i32>();
+    bytes_tx.send(b"hello").unwrap();
+    typed_tx.send(42).unwrap();
+    assert_eq!(typed_rx.recv().unwrap(), 42);
+    assert_eq!(bytes_rx.recv().unwrap(), b"hello");
+}
+
+#[test]
+fn bytes_sender_clone() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+    let tx2 = tx.clone();
+    tx.send(b"from original").unwrap();
+    tx2.send(b"from clone").unwrap();
+    assert_eq!(rx.recv().unwrap(), b"from original");
+    assert_eq!(rx.recv().unwrap(), b"from clone");
+}
+
+#[test]
+fn bytes_disconnect_on_sender_drop() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+    drop(tx);
+    match rx.recv().unwrap_err() {
+        mux::MuxError::Disconnected => (),
+        e => panic!("expected Disconnected, got {e:?}"),
+    }
+}
+
+#[test]
+fn bytes_disconnect_on_receiver_drop() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+    drop(rx);
+    assert!(tx.send(b"should fail").is_err());
+}
+
+#[test]
+fn bytes_disconnect_cloned_sender_partial_drop() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+    let tx2 = tx.clone();
+    drop(tx);
+    tx2.send(b"still alive").unwrap();
+    assert_eq!(rx.recv().unwrap(), b"still alive");
+}
+
+#[test]
+fn bytes_disconnect_all_cloned_senders_dropped() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+    let tx2 = tx.clone();
+    drop(tx);
+    drop(tx2);
+    match rx.recv().unwrap_err() {
+        mux::MuxError::Disconnected => (),
+        e => panic!("expected Disconnected, got {e:?}"),
+    }
+}
+
+#[test]
+fn bytes_buffered_messages_before_disconnect() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+    tx.send(b"one").unwrap();
+    tx.send(b"two").unwrap();
+    drop(tx);
+    assert_eq!(rx.recv().unwrap(), b"one");
+    assert_eq!(rx.recv().unwrap(), b"two");
+    match rx.recv().unwrap_err() {
+        mux::MuxError::Disconnected => (),
+        e => panic!("expected Disconnected, got {e:?}"),
+    }
+}
+
+#[test]
+fn bytes_try_recv_empty() {
+    let channel = mux::Channel::new().unwrap();
+    let (_tx, rx) = channel.bytes_sub_channel();
+    match rx.try_recv() {
+        Err(TryRecvError::Empty) => (),
+        v => panic!("expected Empty, got {v:?}"),
+    }
+}
+
+#[test]
+fn bytes_try_recv_with_message() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+    tx.send(b"hello").unwrap();
+    assert_eq!(rx.try_recv().unwrap(), b"hello");
+}
+
+#[test]
+fn bytes_try_recv_disconnected() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+    drop(tx);
+    loop {
+        match rx.try_recv() {
+            Err(TryRecvError::Empty) => {
+                thread::sleep(Duration::from_millis(10));
+            },
+            Err(TryRecvError::MuxError(MuxError::Disconnected)) => break,
+            v => panic!("expected Empty or Disconnected, got {v:?}"),
+        }
+    }
+}
+
+#[test]
+fn bytes_try_recv_timeout_empty() {
+    let channel = mux::Channel::new().unwrap();
+    let (_tx, rx) = channel.bytes_sub_channel();
+    let timeout = Duration::from_millis(100);
+    let start = Instant::now();
+    match rx.try_recv_timeout(timeout) {
+        Err(TryRecvError::Empty) => {
+            assert!(
+                start.elapsed() >= Duration::from_millis(50),
+                "should have waited for at least part of the timeout"
+            );
+        },
+        v => panic!("expected Empty, got {v:?}"),
+    }
+}
+
+#[test]
+fn bytes_try_recv_timeout_with_message() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+    tx.send(b"hello").unwrap();
+    let timeout = Duration::from_secs(5);
+    let start = Instant::now();
+    assert_eq!(rx.try_recv_timeout(timeout).unwrap(), b"hello");
+    assert!(start.elapsed() < timeout);
+}
+
+#[test]
+fn bytes_try_recv_timeout_disconnected() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+    drop(tx);
+    let timeout = Duration::from_secs(5);
+    let start = Instant::now();
+    match rx.try_recv_timeout(timeout) {
+        Err(TryRecvError::MuxError(MuxError::Disconnected)) => {
+            assert!(
+                start.elapsed() < timeout,
+                "should detect disconnection before full timeout"
+            );
+        },
+        v => panic!("expected Disconnected, got {v:?}"),
+    }
+}
+
+#[test]
+fn bytes_try_recv_timeout_message_arrives_during_wait() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+    let timeout = Duration::from_secs(5);
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(100));
+        tx.send(b"delayed").unwrap();
+    });
+    let start = Instant::now();
+    assert_eq!(rx.try_recv_timeout(timeout).unwrap(), b"delayed");
+    assert!(start.elapsed() < timeout);
+}
+
+#[test]
+fn bytes_sender_embedded_in_typed_message() {
+    use crate::mux::BytesSubSender;
+
+    let channel = mux::Channel::new().unwrap();
+    let (bytes_tx, bytes_rx) = channel.bytes_sub_channel();
+
+    let (via_tx, via_rx) = channel.sub_channel();
+    via_tx.send(bytes_tx).unwrap();
+    let received_tx: BytesSubSender = via_rx.recv().unwrap();
+
+    received_tx.send(b"via embedded sender").unwrap();
+    assert_eq!(bytes_rx.recv().unwrap(), b"via embedded sender");
+}
+
+#[test]
+fn bytes_sender_dropped_in_flight() {
+    let channel = mux::Channel::new().unwrap();
+    let (bytes_tx, bytes_rx) = channel.bytes_sub_channel();
+
+    let (via_tx, via_rx) = channel.sub_channel();
+    via_tx.send(bytes_tx).unwrap();
+
+    drop(via_rx);
+
+    match bytes_rx.recv().unwrap_err() {
+        mux::MuxError::Disconnected => (),
+        e => panic!("expected Disconnected, got {e:?}"),
+    }
+}
+
+#[test]
+fn bytes_cross_thread() {
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+
+    thread::spawn(move || {
+        tx.send(b"from thread").unwrap();
+    });
+
+    assert_eq!(rx.recv().unwrap(), b"from thread");
+}
+
+#[test]
+fn bytes_odd_alignment() {
+    // Use odd-length data to expose any alignment issues.
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+    let bytes = [1u8, 2, 3, 4, 5, 6, 7];
+    tx.send(&bytes).unwrap();
+    assert_eq!(rx.recv().unwrap(), bytes);
+}
+
+#[test]
+fn bytes_binary_data() {
+    // All 256 byte values to ensure no encoding issues.
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+    let data: Vec<u8> = (0u8..=255).collect();
+    tx.send(&data).unwrap();
+    assert_eq!(rx.recv().unwrap(), data);
+}
+
+#[test]
+fn bytes_to_opaque_sender() {
+    use crate::mux::BytesSubSender;
+
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+
+    let opaque = tx.to_opaque();
+    let tx: BytesSubSender = opaque.to();
+
+    tx.send(b"via opaque").unwrap();
+    assert_eq!(rx.recv().unwrap(), b"via opaque");
+}
+
+#[test]
+fn bytes_to_opaque_receiver() {
+    use crate::mux::BytesSubReceiver;
+
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.bytes_sub_channel();
+
+    let opaque = rx.to_opaque();
+    let rx: BytesSubReceiver = opaque.to();
+
+    tx.send(b"via opaque rx").unwrap();
+    assert_eq!(rx.recv().unwrap(), b"via opaque rx");
+}
