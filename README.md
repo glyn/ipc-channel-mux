@@ -352,6 +352,10 @@ Fortunately, a multireceiver will tend to drain messages when receiving on behal
 
 This is described in [PROTOCOL.md](./PROTOCOL.md) which, if you are reading the documentation, is reproduced below.
 
+### Migrating from ipc-channel
+
+This is described in [MIGRATION.md](./MIGRATION.md) which, if you are reading the documentation, is reproduced below.
+
 ## Major missing features
 
 * Each one-shot server accepts only one client connect request. This is fine if you simply want to use this API to split your application up into a fixed number of mutually untrusting processes, but it's not suitable for implementing a system service.

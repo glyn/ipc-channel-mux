@@ -9,6 +9,7 @@
 
 #![doc = include_str!("../README.md")]
 #![doc = include_str!("../PROTOCOL.md")]
+#![doc = include_str!("../MIGRATION.md")]
 
 pub mod mux;
 
