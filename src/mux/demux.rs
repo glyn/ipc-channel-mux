@@ -487,8 +487,9 @@ pub fn establish_deserialization_context(
     via: SubChannelId,
 ) {
     IPC_SENDERS_RECEIVED.with(|senders| {
-        senders.lock().unwrap().clear();
-        senders.lock().unwrap().append(&mut multi_senders);
+        let mut s = senders.lock().unwrap();
+        s.clear();
+        s.append(&mut multi_senders);
     });
     VIA.with(|via_val| {
         let mut v = via_val.lock().unwrap();
