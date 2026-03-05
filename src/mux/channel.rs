@@ -55,6 +55,16 @@ impl Channel {
         let scr = MultiReceiver::attach(&self.multi_receiver, scid);
         (SubSender::from_sender(scs), SubReceiver::from_receiver(scr))
     }
+
+    // /// Construct a new bytes subchannel of a [Channel]. The subchannel has
+    // /// a [BytesSubSender] and a [BytesSubReceiver] which send and receive
+    // /// raw bytes with reduced serialization overhead.
+    // ///
+    // /// This is the mux equivalent of [ipc_channel::ipc::bytes_channel].
+    // ///
+    // /// [BytesSubSender]: crate::mux::BytesSubSender
+    // /// [BytesSubReceiver]: crate::mux::BytesSubReceiver
+    // pub fn bytes_sub_channel(&self) -> (BytesSubSender, BytesSubReceiver) { todo!() }
 }
 
 /// SubOneShotServer together with its generated name can be used to establish a subchannel
