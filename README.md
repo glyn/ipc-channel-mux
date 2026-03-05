@@ -23,6 +23,9 @@ As much as possible, `ipc-channel-mux` has been designed to be a drop-in replace
 * `channel()` → `mux::Channel::new().unwrap().sub_channel();`
 * `Sender<T>` → `mux::SubSender<T>` (requires `T: Serialize`)
 * `Receiver<T>` → `mux::SubReceiver<T>` (requires `T: Deserialize`)
+* `ipc::bytes_channel()` → `mux::Channel::new().unwrap().bytes_sub_channel();`
+* `IpcBytesSender` → `mux::BytesSubSender`
+* `IpcBytesReceiver` → `mux::BytesSubReceiver`
 
 Note that `SubSender<T>` implements `Serialize` and `Deserialize`, so you can send subsenders over subchannels freely, just as you can with Rust channels.
 However, you cannot send or receive subreceivers - the reason is explained below.
@@ -130,6 +133,22 @@ let (tx, crossbeam_rx) = channel
 tx.send(42).unwrap();
 assert_eq!(crossbeam_rx.recv().unwrap(), 42);
 ~~~
+
+### Bytes subchannels
+
+`BytesSubSender` and `BytesSubReceiver` send and receive raw byte data, analogous to `ipc-channel`'s `IpcBytesSender` and `IpcBytesReceiver`:
+
+~~~Rust
+use ipc_channel_mux::mux;
+
+let channel = mux::Channel::new().unwrap();
+let (tx, rx) = channel.bytes_sub_channel();
+
+tx.send(b"hello bytes").unwrap();
+assert_eq!(rx.recv().unwrap(), b"hello bytes");
+~~~
+
+`BytesSubSender` can be cloned and sent over subchannels, just like `SubSender<T>`. `BytesSubReceiver` supports `recv`, `try_recv`, and `try_recv_timeout`.
 
 ### Shared memory
 

@@ -21,9 +21,9 @@ This guide shows how to replace each `ipc-channel` API with its `ipc-channel-mux
 | `IpcOneShotServer<T>` | `SubOneShotServer<T>` | |
 | `IpcSharedMemory` | `SharedMemory` | |
 | `IpcReceiverSet` | _No equivalent_ | Use `subchannel_router` instead |
-| `ipc::bytes_channel()` | _No equivalent_ | Use `sub_channel::<Vec<u8>>()` instead |
-| `IpcBytesSender` | _No equivalent_ | Use `SubSender<Vec<u8>>` instead |
-| `IpcBytesReceiver` | _No equivalent_ | Use `SubReceiver<Vec<u8>>` instead |
+| `ipc::bytes_channel()` | `channel.bytes_sub_channel()` | Two steps; reuse `Channel` for multiplexing |
+| `IpcBytesSender` | `BytesSubSender` | |
+| `IpcBytesReceiver` | `BytesSubReceiver` | |
 | `IpcError` | `MuxError` | Different variant structure |
 | `ipc::TryRecvError` | `mux::TryRecvError` | Different variant structure |
 | `router::ROUTER` | `subchannel_router::ROUTER` | Different method signatures |
@@ -235,6 +235,37 @@ let received_tx = outer_rx.recv()?;
 
 Key difference: subreceivers cannot be sent over subchannels (this would break other subreceivers sharing the underlying IPC channel).
 
+## Bytes channels
+
+### `bytes_channel()`
+
+Creating a bytes subchannel requires a multiplexing `Channel` to be created first, just like typed subchannels.
+
+**Before:**
+
+~~~Rust
+use ipc_channel::ipc;
+
+let (tx, rx) = ipc::bytes_channel()?;
+tx.send(b"hello")?;
+let data: Vec<u8> = rx.recv()?;
+~~~
+
+**After:**
+
+~~~Rust
+use ipc_channel_mux::mux;
+
+let channel = mux::Channel::new()?;
+let (tx, rx) = channel.bytes_sub_channel();
+tx.send(b"hello")?;
+let data: Vec<u8> = rx.recv()?;
+~~~
+
+`BytesSubSender::send` takes `&[u8]`, matching `IpcBytesSender::send`. `BytesSubReceiver` supports `recv`, `try_recv`, and `try_recv_timeout`, matching `IpcBytesReceiver`.
+
+`BytesSubSender` can be cloned and sent over subchannels, just like `SubSender<T>`.
+
 ## Router
 
 The router APIs have different structures. In `ipc-channel`, routes are added for existing receivers. In `ipc-channel-mux`, a `RouterChannel` creates new subchannels that are automatically routed.
@@ -329,27 +360,6 @@ crossbeam_channel::select! {
         let val: String = result.unwrap();
     }
 }
-~~~
-
-### `bytes_channel()`
-
-There is no raw bytes channel. Use a typed subchannel with `Vec<u8>` instead. This incurs serialization overhead.
-
-**Before:**
-
-~~~Rust
-let (tx, rx) = ipc::bytes_channel()?;
-tx.send(b"hello")?;
-let data: Vec<u8> = rx.recv()?;
-~~~
-
-**After:**
-
-~~~Rust
-let channel = mux::Channel::new()?;
-let (tx, rx) = channel.sub_channel::<Vec<u8>>();
-tx.send(b"hello".to_vec())?;
-let data: Vec<u8> = rx.recv()?;
 ~~~
 
 ### `IpcReceiver` serialization
