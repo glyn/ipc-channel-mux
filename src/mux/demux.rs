@@ -808,6 +808,7 @@ impl SubChannelReceiver {
         T: for<'de> Deserialize<'de> + Serialize,
     {
         let mut wait_interval: Option<Duration> = None;
+        let mut contended = false;
         loop {
             let result = if let Some(interval) = wait_interval {
                 self.channel.recv_timeout(interval).map_err(|e| match e {
@@ -826,6 +827,7 @@ impl SubChannelReceiver {
                     let Ok(demuxer) = self.multi_receiver.receiver_demuxer.demuxer.try_lock()
                     else {
                         wait_interval = Some(CONTENDED_WAIT_INTERVAL);
+                        contended = true;
                         continue;
                     };
                     wait_interval = None;
@@ -835,11 +837,14 @@ impl SubChannelReceiver {
                         demuxer,
                         POLLING_INTERVAL,
                     );
-                    // Yield to avoid starving threads blocked on the demuxer lock.
-                    // The lock was released briefly during poll() inside
-                    // try_recv_timeout, but try_lock() can re-acquire it before a
-                    // blocked lock() caller is scheduled.
-                    thread::yield_now();
+                    if contended {
+                        // Yield to avoid starving threads blocked on the demuxer
+                        // lock. The lock was released briefly during poll() inside
+                        // try_recv_timeout, but try_lock() can re-acquire it
+                        // before a blocked lock() caller is scheduled.
+                        thread::yield_now();
+                        contended = false;
+                    }
                     log::trace!(
                         "SubChannelReceiver::recv multi_receiver_result = {:#?}",
                         multi_receiver_result.as_ref()
@@ -904,6 +909,7 @@ impl SubChannelReceiver {
         T: for<'de> Deserialize<'de> + Serialize,
     {
         let deadline = std::time::Instant::now() + duration;
+        let mut contended = false;
 
         loop {
             // Check the local mpsc channel for an already-demuxed message.
@@ -929,6 +935,7 @@ impl SubChannelReceiver {
             // Try to acquire the demuxer lock.
             let Ok(demuxer) = self.multi_receiver.receiver_demuxer.demuxer.try_lock() else {
                 // Another thread holds the lock; wait briefly on the local channel.
+                contended = true;
                 let wait = remaining.min(CONTENDED_WAIT_INTERVAL);
                 match self.channel.recv_timeout(wait) {
                     Ok(ResolvedMessageOrDisconnect::ResolvedMessage(resolved)) => {
@@ -951,8 +958,11 @@ impl SubChannelReceiver {
                 },
                 Ok(()) | Err(TryRecvError::Empty | TryRecvError::Handled) => {},
             }
-            // Yield to avoid starving threads blocked on the demuxer lock.
-            thread::yield_now();
+            if contended {
+                // Yield to avoid starving threads blocked on the demuxer lock.
+                thread::yield_now();
+                contended = false;
+            }
         }
     }
 }
