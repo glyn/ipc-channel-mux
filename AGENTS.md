@@ -15,3 +15,7 @@ Do not swallow errors, log them using log::debug!().
 ## Encapsulation
 
 Keep struct fields private.
+
+## git history
+
+Do not amend commits without confirming with the user.
