@@ -67,6 +67,8 @@ jobs:
 
       - name: Cargo test
         run: cargo test --features "${{ matrix.features }}" --target ${{ matrix.platform.target }}
+        env:
+          RUST_MIN_STACK: ${{ contains(matrix.platform.target, 'i686') && '8388608' || '' }}
 
   build_result:
     name: Result
