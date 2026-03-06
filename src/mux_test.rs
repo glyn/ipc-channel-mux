@@ -1056,7 +1056,11 @@ fn bytes_empty() {
 fn bytes_large() {
     let channel = mux::Channel::new().unwrap();
     let (tx, rx) = channel.bytes_sub_channel();
+
+    #[allow(clippy::cast_possible_truncation)]
+    #[allow(clippy::cast_sign_loss)]
     let data: Vec<u8> = (0..65536).map(|i| (i % 256) as u8).collect();
+
     tx.send(&data).unwrap();
     let received = rx.recv().unwrap();
     assert_eq!(data, received);
