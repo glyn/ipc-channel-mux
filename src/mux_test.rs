@@ -226,9 +226,11 @@ fn receiving_many_subchannels() {
         loop {
             if let Ok(send2) = recv1.recv() {
                 send2.send(true).unwrap();
+
                 // The fd is private, but this transmute lets us get at it
-                let fd: &std::sync::Arc<u32> = unsafe { std::mem::transmute(&send2) };
-                println!("fd = {}", *fd);
+                //let fd: &std::sync::Arc<u32> = unsafe { std::mem::transmute(&send2) };
+                //println!("fd = {}", *fd);
+
                 // Stop the ipc channel from being dropped
                 senders.push(send2);
             } else {
