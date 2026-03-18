@@ -7,7 +7,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ipc_channel::ipc::{IpcSender, IpcSharedMemory};
+use crate::mux::ipc_channel::SyncOpaqueIpcReceiver;
+use ipc_channel::ipc::{IpcSender, IpcSharedMemory, OpaqueIpcSender};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::{Display, Formatter};
 use uuid::Uuid;
@@ -93,6 +94,7 @@ impl SubChannelSenderIds {
 
 /// MultiMessage is used to communicate across multiplexing channels.
 #[derive(Serialize, Deserialize, Debug)]
+#[allow(private_interfaces)]
 pub enum MultiMessage {
     Connect(IpcSender<MultiResponse>, ClientId),
     Data(
@@ -100,6 +102,8 @@ pub enum MultiMessage {
         Vec<u8>,
         Vec<(SubChannelId, IpcSenderAndOrId)>,
         Vec<IpcSharedMemory>,
+        Vec<OpaqueIpcSender>,
+        Vec<SyncOpaqueIpcReceiver>,
     ),
     SubChannelId(SubChannelId, String),
     Sending {

@@ -14,9 +14,13 @@ use crate::mux::protocol::{
 };
 use crate::mux::sender::Target;
 use crate::mux::sender::{MultiSender, SubChannelDisconnector, SubChannelSender};
+use crate::mux::ipc_channel::{
+    SyncOpaqueIpcReceiver, clear_ipc_receiver_deserialization_context,
+    clear_ipc_sender_deserialization_context, set_ipc_receivers_for_recv, set_ipc_senders_for_recv,
+};
 use crate::mux::shared_memory::{clear_shmem_deserialization_context, set_shmems_for_recv};
 use crate::mux::subchannel_lifecycle::SubSenderTracker;
-use ipc_channel::ipc::{IpcReceiver, IpcSender, IpcSharedMemory};
+use ipc_channel::ipc::{IpcReceiver, IpcSender, IpcSharedMemory, OpaqueIpcSender};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -43,6 +47,8 @@ pub struct ResolvedMessage {
     payload: Vec<u8>,
     senders: VecDeque<ProtoSender>,
     shmems: Vec<IpcSharedMemory>,
+    ipc_senders: Vec<OpaqueIpcSender>,
+    ipc_receivers: Vec<SyncOpaqueIpcReceiver>,
 }
 
 impl ResolvedMessage {
@@ -53,8 +59,17 @@ impl ResolvedMessage {
         Vec<u8>,
         VecDeque<ProtoSender>,
         Vec<IpcSharedMemory>,
+        Vec<OpaqueIpcSender>,
+        Vec<SyncOpaqueIpcReceiver>,
     ) {
-        (self.scid, self.payload, self.senders, self.shmems)
+        (
+            self.scid,
+            self.payload,
+            self.senders,
+            self.shmems,
+            self.ipc_senders,
+            self.ipc_receivers,
+        )
     }
 
     fn deserialize<T>(self) -> Result<T, MuxError>
@@ -64,11 +79,15 @@ impl ResolvedMessage {
         log::trace!("ResolvedMessage::deserialize payload = {:#?}", self.payload);
         establish_deserialization_context(self.senders, self.scid);
         set_shmems_for_recv(self.shmems);
+        set_ipc_senders_for_recv(self.ipc_senders);
+        set_ipc_receivers_for_recv(self.ipc_receivers);
 
         let result = postcard::from_bytes::<T>(self.payload.as_slice());
 
         clear_deserialization_context();
         clear_shmem_deserialization_context();
+        clear_ipc_sender_deserialization_context();
+        clear_ipc_receiver_deserialization_context();
 
         result.map_err(From::from)
     }
@@ -195,7 +214,7 @@ impl Demuxer {
                 Ok(())
             },
 
-            MultiMessage::Data(scid, payload, ipc_senders, shmems) => {
+            MultiMessage::Data(scid, payload, ipc_senders, shmems, ipc_channel_senders, ipc_channel_receivers) => {
                 let srs: VecDeque<ProtoSender> = ipc_senders
                     .iter()
                     .map(|(scid, s)| {
@@ -236,6 +255,8 @@ impl Demuxer {
                                 payload,
                                 senders: srs,
                                 shmems,
+                                ipc_senders: ipc_channel_senders,
+                                ipc_receivers: ipc_channel_receivers,
                             },
                         ))
                     } else {
@@ -381,6 +402,8 @@ impl Demuxer {
         ipc_senders: &[(SubChannelId, IpcSenderAndOrId)],
         ipc_receiver_uuid: Uuid,
         shmems: Vec<IpcSharedMemory>,
+        ipc_channel_senders: Vec<OpaqueIpcSender>,
+        ipc_channel_receivers: Vec<SyncOpaqueIpcReceiver>,
     ) -> Result<(), MuxError> {
         let mut id_sender_results: IdSenderResults = VecDeque::new();
         for (scid, s) in ipc_senders {
@@ -416,6 +439,8 @@ impl Demuxer {
                         payload,
                         senders: srs,
                         shmems,
+                        ipc_senders: ipc_channel_senders,
+                        ipc_receivers: ipc_channel_receivers,
                     },
                 ));
                 match sent {
@@ -775,6 +800,8 @@ impl Drop for SubChannelReceiver {
             payload: _,
             senders: scids_and_multi_senders,
             shmems: _,
+            ipc_senders: _,
+            ipc_receivers: _,
         })) = self.channel.try_recv()
         {
             // log::trace!(
@@ -996,6 +1023,8 @@ mod tests {
                 IpcSenderAndOrId::IpcSender(ipc_tx, sender_uuid.to_string()),
             )],
             vec![],
+            vec![],
+            vec![],
         );
 
         let result = demuxer.handle(msg, Uuid::new_v4());
@@ -1045,6 +1074,8 @@ mod tests {
                 IpcSenderAndOrId::IpcSender(ipc_tx, sender_uuid.to_string()),
             )],
             Uuid::new_v4(),
+            vec![],
+            vec![],
             vec![],
         );
 

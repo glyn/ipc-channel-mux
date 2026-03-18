@@ -8,10 +8,10 @@
 // except according to those terms.
 
 use crate::mux::{
-    self, MuxError, SharedMemory, SubOneShotServer, SubReceiver, SubSender, TryRecvError,
-    subchannel_router::{ROUTER, RouterError, RouterProxy},
+    self, IpcReceiver, IpcSender, MuxError, SharedMemory, SubOneShotServer, SubReceiver, SubSender,
+    TryRecvError, subchannel_router::{ROUTER, RouterError, RouterProxy},
 };
-use ipc_channel::ipc::IpcSharedMemory;
+use ipc_channel::ipc::{self as raw_ipc, IpcSharedMemory};
 use serde::{Deserialize, Serialize};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -1325,4 +1325,115 @@ fn bytes_binary_data() {
     let data: Vec<u8> = (0u8..=255).collect();
     tx.send(&data).unwrap();
     assert_eq!(rx.recv().unwrap(), data);
+}
+
+// --- IpcSender / IpcReceiver over subchannels ---
+
+#[test]
+fn ipc_sender_simple() {
+    let (raw_tx, raw_rx) = raw_ipc::channel::<i32>().unwrap();
+
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel();
+
+    tx.send(IpcSender::from(raw_tx)).unwrap();
+    let recovered_tx = rx.recv().unwrap().into_inner();
+
+    recovered_tx.send(42).unwrap();
+    assert_eq!(raw_rx.recv().unwrap(), 42);
+}
+
+#[test]
+fn ipc_receiver_simple() {
+    let (raw_tx, raw_rx) = raw_ipc::channel::<i32>().unwrap();
+
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel();
+
+    tx.send(IpcReceiver::from(raw_rx)).unwrap();
+    let recovered_rx = rx.recv().unwrap().into_inner().unwrap();
+
+    raw_tx.send(99).unwrap();
+    assert_eq!(recovered_rx.recv().unwrap(), 99);
+}
+
+#[test]
+fn ipc_sender_clone() {
+    let (raw_tx, raw_rx) = raw_ipc::channel::<i32>().unwrap();
+
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel();
+
+    let wrapped = IpcSender::from(raw_tx);
+    let cloned = wrapped.clone();
+
+    tx.send(wrapped).unwrap();
+    let recovered_tx1 = rx.recv().unwrap().into_inner();
+
+    tx.send(cloned).unwrap();
+    let recovered_tx2 = rx.recv().unwrap().into_inner();
+
+    recovered_tx1.send(1).unwrap();
+    recovered_tx2.send(2).unwrap();
+    assert_eq!(raw_rx.recv().unwrap(), 1);
+    assert_eq!(raw_rx.recv().unwrap(), 2);
+}
+
+#[test]
+fn ipc_sender_and_receiver_in_same_message() {
+    #[derive(Serialize, Deserialize)]
+    struct Endpoints {
+        tx: IpcSender<String>,
+        rx: IpcReceiver<String>,
+    }
+
+    let (raw_tx1, raw_rx1) = raw_ipc::channel::<String>().unwrap();
+    let (raw_tx2, raw_rx2) = raw_ipc::channel::<String>().unwrap();
+
+    let channel = mux::Channel::new().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel();
+
+    sub_tx
+        .send(Endpoints {
+            tx: IpcSender::from(raw_tx1),
+            rx: IpcReceiver::from(raw_rx2),
+        })
+        .unwrap();
+
+    let endpoints: Endpoints = sub_rx.recv().unwrap();
+    let recovered_tx = endpoints.tx.into_inner();
+    let recovered_rx = endpoints.rx.into_inner().unwrap();
+
+    recovered_tx.send("hello".to_string()).unwrap();
+    assert_eq!(raw_rx1.recv().unwrap(), "hello");
+
+    raw_tx2.send("world".to_string()).unwrap();
+    assert_eq!(recovered_rx.recv().unwrap(), "world");
+}
+
+#[test]
+fn ipc_sender_cross_thread() {
+    let (server, name) = SubOneShotServer::<IpcSender<i32>>::new().unwrap();
+
+    thread::spawn(move || {
+        let (raw_tx, raw_rx) = raw_ipc::channel::<i32>().unwrap();
+        let sub_tx = SubSender::connect(name).unwrap();
+        sub_tx.send(IpcSender::from(raw_tx)).unwrap();
+        assert_eq!(raw_rx.recv().unwrap(), 1729);
+    });
+
+    let (sub_rx, wrapped_tx) = server.accept().unwrap();
+    drop(sub_rx);
+    wrapped_tx.into_inner().send(1729).unwrap();
+}
+
+#[test]
+fn ipc_receiver_double_serialize_error() {
+    let (_raw_tx, raw_rx) = raw_ipc::channel::<i32>().unwrap();
+    let wrapped = IpcReceiver::from(raw_rx);
+
+    // First serialize succeeds (captures the receiver into the thread-local).
+    assert!(postcard::to_stdvec(&wrapped).is_ok());
+    // Second serialize fails because the receiver was already consumed.
+    assert!(postcard::to_stdvec(&wrapped).is_err());
 }
