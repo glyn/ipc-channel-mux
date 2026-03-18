@@ -10,6 +10,7 @@
 mod sender_id;
 
 use crate::mux::error::MuxError;
+use crate::mux::ipc_channel::SyncOpaqueIpcReceiver;
 use crate::mux::ipc_channel::{
     clear_ipc_receiver_serialization_context, clear_ipc_sender_serialization_context,
     take_ipc_receivers_for_send, take_ipc_senders_for_send,
@@ -18,7 +19,6 @@ use crate::mux::protocol::{
     ClientId, EMPTY_SUBCHANNEL_ID, IpcSenderAndOrId, MultiMessage, MultiResponse, ORIGIN,
     SubChannelId, SubChannelSenderIds,
 };
-use crate::mux::ipc_channel::SyncOpaqueIpcReceiver;
 use crate::mux::shared_memory::{clear_shmem_serialization_context, take_shmems_for_send};
 use crate::mux::subchannel_lifecycle::{SubReceiverProxy, SubSenderTracker};
 use ipc_channel::ipc::{self, IpcReceiver, IpcSender};
@@ -320,18 +320,13 @@ impl SubChannelSender {
         let raw_ipc_sender = (*self.ipc_sender).clone();
         match ipc::channel::<()>() {
             Ok((keepalive_tx, keepalive_rx)) => {
-                if let Err(e) = self
-                    .multi_sender
-                    .lock()
-                    .unwrap()
-                    .send_message(MultiMessage::SendingViaIpcChannel {
+                if let Err(e) = self.multi_sender.lock().unwrap().send_message(
+                    MultiMessage::SendingViaIpcChannel {
                         scid: self.sub_channel_id,
                         keepalive: SyncOpaqueIpcReceiver(keepalive_rx.to_opaque()),
-                    })
-                {
-                    log::debug!(
-                        "Failed to send SendingViaIpcChannel notification: {e}"
-                    );
+                    },
+                ) {
+                    log::debug!("Failed to send SendingViaIpcChannel notification: {e}");
                 }
                 (
                     self.sub_channel_id,
@@ -345,24 +340,29 @@ impl SubChannelSender {
                     "Failed to create keepalive channel for IPC channel transport: {e}; \
                      falling back to Sending without crash detection"
                 );
-                if let Err(e) = self
-                    .multi_sender
-                    .lock()
-                    .unwrap()
-                    .send_message(MultiMessage::Sending {
-                        scid: self.sub_channel_id,
-                        via: EMPTY_SUBCHANNEL_ID,
-                        via_chan: IpcSenderAndOrId::IpcSender(
-                            raw_ipc_sender.clone(),
-                            self.ipc_sender_uuid.to_string(),
-                        ),
-                    })
+                if let Err(e) =
+                    self.multi_sender
+                        .lock()
+                        .unwrap()
+                        .send_message(MultiMessage::Sending {
+                            scid: self.sub_channel_id,
+                            via: EMPTY_SUBCHANNEL_ID,
+                            via_chan: IpcSenderAndOrId::IpcSender(
+                                raw_ipc_sender.clone(),
+                                self.ipc_sender_uuid.to_string(),
+                            ),
+                        })
                 {
                     log::debug!(
                         "Failed to send Sending notification for IPC channel transport: {e}"
                     );
                 }
-                (self.sub_channel_id, raw_ipc_sender, self.ipc_sender_uuid, None)
+                (
+                    self.sub_channel_id,
+                    raw_ipc_sender,
+                    self.ipc_sender_uuid,
+                    None,
+                )
             },
         }
     }

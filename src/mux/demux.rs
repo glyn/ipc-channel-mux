@@ -365,11 +365,9 @@ impl Demuxer {
                     let rx = Arc::new(Mutex::new(keepalive.0.to::<()>()));
                     sm.to_be_sent(
                         EMPTY_SUBCHANNEL_ID,
-                        Box::new(move || {
-                            match rx.lock().unwrap().try_recv() {
-                                Ok(_) | Err(ipc_channel::TryRecvError::Empty) => true,
-                                Err(ipc_channel::TryRecvError::IpcError(_)) => false,
-                            }
+                        Box::new(move || match rx.lock().unwrap().try_recv() {
+                            Ok(()) | Err(ipc_channel::TryRecvError::Empty) => true,
+                            Err(ipc_channel::TryRecvError::IpcError(_)) => false,
                         }),
                     );
                 }
