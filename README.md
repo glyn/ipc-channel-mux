@@ -249,7 +249,7 @@ However, it would be feasible to merge `ipc-channel-mux` into the IPC channel re
 [^never]: Creating a subchannel could exhaust the memory of a process, but memory allocation is treated as infallible in Rust as [Handling memory exhaustion – State of the art?](https://users.rust-lang.org/t/handling-memory-exhaustion-state-of-the-art/87375) explores.
 Essentially, if memory allocation fails, the program will panic or, more likely (at least on Linux), be killed by the Out of Memory killer.
 
-[^interop]: `ipc-channel-mux` and `ipc-channel` do not currently interoperate: an IPC channel cannot be used to transmit a subsender and a subchannel cannot be used to transmit an IPC sender or receiver.
+[^interop]: `ipc-channel-mux` and `ipc-channel` do not currently interoperate fully: an IPC channel cannot be used to transmit a subsender although a subchannel can be used to transmit an IPC sender or receiver.
 
 [^gitdep]: An alternative would be to have the relevant Servo branch use a [git dependency](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#specifying-dependencies-from-git-repositories) on `ipc-channel-mux`.
 
