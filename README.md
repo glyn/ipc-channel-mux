@@ -169,6 +169,36 @@ assert_eq!(&*received, b"hello shared world");
 
 `SharedMemory` can also be included as a field in user-defined message types that derive `Serialize` and `Deserialize`.
 
+### IPC senders and receivers
+
+`mux::IpcSender<T>` and `mux::IpcReceiver<T>` are wrappers that allow `ipc-channel` senders and receivers to be transmitted over subchannels. They are analogous to `mux::SharedMemory` for `IpcSharedMemory`: OS handles are transported via `ipc-channel`'s outer serialization layer rather than the inner postcard serialization.
+
+~~~Rust
+use ipc_channel::ipc;
+use ipc_channel_mux::mux;
+
+let channel = mux::Channel::new().unwrap();
+let (tx, rx) = channel.sub_channel();
+
+// Create a raw ipc-channel and wrap the sender end.
+let (raw_tx, raw_rx) = ipc::channel::<u32>().unwrap();
+let wrapped_tx = mux::IpcSender::from(raw_tx);
+
+// Send the wrapped sender over the subchannel.
+tx.send(wrapped_tx).unwrap();
+
+// On the receiving side, unwrap to recover the raw sender.
+let received: mux::IpcSender<u32> = rx.recv().unwrap();
+let raw_tx: ipc::IpcSender<u32> = received.into_inner();
+
+raw_tx.send(99).unwrap();
+assert_eq!(raw_rx.recv().unwrap(), 99);
+~~~
+
+`mux::IpcReceiver<T>` works the same way. Call `into_inner()` after receiving to get the underlying `ipc::IpcReceiver<T>`. An `IpcReceiver` may only be serialized (sent) once; a second attempt returns an error.
+
+`mux::IpcSender<T>` and `mux::IpcReceiver<T>` can also be included as fields in user-defined message types that derive `Serialize` and `Deserialize`.
+
 ### Opaque senders and receivers
 
 `OpaqueSubSender` and `OpaqueSubReceiver` are type-erased versions of `SubSender<T>` and `SubReceiver<T>`. They are useful when the message type is not known statically or when handling heterogeneous channels. For example, the router uses `OpaqueSubReceiver` internally so it can manage receivers of different message types together.
@@ -330,6 +360,18 @@ A subchannel is only considered disconnected when all sources have dropped their
 2. **Deserialization (receive path)**: The outer deserialization reconstructs the `Vec<IpcSharedMemory>` from the protocol message. Before inner (postcard) deserialization, these values are placed in a mux-managed thread-local. The `SharedMemory` deserializer reads the index from the payload and retrieves the corresponding `IpcSharedMemory` from the thread-local.
 
 This approach avoids any modifications to `ipc-channel` while still benefiting from its efficient OS-level shared memory transport.
+
+### IPC sender and receiver transport
+
+`mux::IpcSender<T>` and `mux::IpcReceiver<T>` use the same thread-local mechanism as `SharedMemory`. `ipc-channel`'s `OpaqueIpcSender` and `OpaqueIpcReceiver` types would be lost if passed through postcard inner serialization, so the wrappers lift them out-of-band into the protocol message:
+
+1. **Serialization (send path)**: When an `IpcSender<T>` or `IpcReceiver<T>` is serialized during inner (postcard) serialization, the underlying opaque handle is captured into a mux-managed thread-local and only an index is written into the payload bytes. After inner serialization completes, the captured handles are included in the protocol message as `Vec<OpaqueIpcSender>` / `Vec<SyncOpaqueIpcReceiver>`, so that `ipc-channel`'s outer serialization transports them as OS handles.
+
+2. **Deserialization (receive path)**: The outer deserialization reconstructs the handle vecs from the protocol message. Before inner (postcard) deserialization, these handles are placed in mux-managed thread-locals. The `IpcSender`/`IpcReceiver` deserializers read the index from the payload and retrieve the corresponding handle from the thread-local.
+
+`IpcReceiver<T>` stores its handle in a `RefCell<Option<…>>` so the handle can be moved out during `Serialize` (which takes `&self`). Attempting to serialize an `IpcReceiver` a second time returns an error.
+
+An internal `SyncOpaqueIpcReceiver` wrapper adds `unsafe impl Sync` to `OpaqueIpcReceiver`, which is required because `OpaqueIpcReceiver` is `!Sync` (it contains a `Cell<i32>`) and `MultiMessage` must be `Sync` for the `ROUTER` static. The `unsafe` is safe in practice because `MultiMessage` values are serialized and sent immediately after construction and are never shared between threads.
 
 ### When to block
 
