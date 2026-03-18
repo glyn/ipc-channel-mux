@@ -252,17 +252,16 @@ fn receiving_many_subchannels() {
 }
 
 // This test demonstrates a significant benefit of multiplexing. If IpcChannels were
-// used, then this test would fail on Unix variants since the creating an IpChannel
+// used, then this test would fail on Unix variants since the creating an IpcChannel
 // consumes a file descriptor and the test would run out of file descriptors. Using
 // multiplexed channels, the test does not run out of file descriptors.
 #[test]
 fn creating_many_subchannels() {
     let channel = mux::Channel::new().unwrap();
     let mut subchannels = vec![];
-    for i in 0..10000 {
+    for _i in 0..10000 {
         let subchannel = channel.sub_channel::<i32>();
         subchannels.push(subchannel);
-        println!("{i}");
     }
 }
 
