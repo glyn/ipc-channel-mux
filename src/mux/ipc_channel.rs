@@ -178,7 +178,7 @@ impl<T: Serialize + for<'de> Deserialize<'de>> IpcReceiver<T> {
         self.0
             .into_inner()
             .ok_or_else(|| MuxError::InternalError("IpcReceiver already serialized".to_string()))
-            .map(|opaque| opaque.to::<T>())
+            .map(OpaqueIpcReceiver::to::<T>)
     }
 }
 

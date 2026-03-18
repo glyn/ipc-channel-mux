@@ -8,16 +8,16 @@
 // except according to those terms.
 
 use crate::mux::error::MuxError;
+use crate::mux::ipc_channel::{
+    SyncOpaqueIpcReceiver, clear_ipc_receiver_deserialization_context,
+    clear_ipc_sender_deserialization_context, set_ipc_receivers_for_recv, set_ipc_senders_for_recv,
+};
 use crate::mux::protocol::{
     ClientId, EMPTY_SUBCHANNEL_ID, IpcSenderAndOrId, MultiMessage, MultiResponse, ORIGIN,
     SubChannelId, SubChannelSenderIds,
 };
 use crate::mux::sender::Target;
 use crate::mux::sender::{MultiSender, SubChannelDisconnector, SubChannelSender};
-use crate::mux::ipc_channel::{
-    SyncOpaqueIpcReceiver, clear_ipc_receiver_deserialization_context,
-    clear_ipc_sender_deserialization_context, set_ipc_receivers_for_recv, set_ipc_senders_for_recv,
-};
 use crate::mux::shared_memory::{clear_shmem_deserialization_context, set_shmems_for_recv};
 use crate::mux::subchannel_lifecycle::SubSenderTracker;
 use ipc_channel::ipc::{IpcReceiver, IpcSender, IpcSharedMemory, OpaqueIpcSender};
@@ -42,6 +42,15 @@ pub type ProtoSender = (
     Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
 );
 
+pub type ResolvedMessageParts = (
+    SubChannelId,
+    Vec<u8>,
+    VecDeque<ProtoSender>,
+    Vec<IpcSharedMemory>,
+    Vec<OpaqueIpcSender>,
+    Vec<SyncOpaqueIpcReceiver>,
+);
+
 pub struct ResolvedMessage {
     scid: SubChannelId,
     payload: Vec<u8>,
@@ -52,16 +61,7 @@ pub struct ResolvedMessage {
 }
 
 impl ResolvedMessage {
-    pub fn into_parts(
-        self,
-    ) -> (
-        SubChannelId,
-        Vec<u8>,
-        VecDeque<ProtoSender>,
-        Vec<IpcSharedMemory>,
-        Vec<OpaqueIpcSender>,
-        Vec<SyncOpaqueIpcReceiver>,
-    ) {
+    pub fn into_parts(self) -> ResolvedMessageParts {
         (
             self.scid,
             self.payload,
@@ -214,7 +214,14 @@ impl Demuxer {
                 Ok(())
             },
 
-            MultiMessage::Data(scid, payload, ipc_senders, shmems, ipc_channel_senders, ipc_channel_receivers) => {
+            MultiMessage::Data(
+                scid,
+                payload,
+                ipc_senders,
+                shmems,
+                ipc_channel_senders,
+                ipc_channel_receivers,
+            ) => {
                 let srs: VecDeque<ProtoSender> = ipc_senders
                     .iter()
                     .map(|(scid, s)| {
@@ -395,6 +402,7 @@ impl Demuxer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn send(
         self: &mut Demuxer,
         scid: SubChannelId,

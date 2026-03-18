@@ -9,7 +9,8 @@
 
 use crate::mux::{
     self, IpcReceiver, IpcSender, MuxError, SharedMemory, SubOneShotServer, SubReceiver, SubSender,
-    TryRecvError, subchannel_router::{ROUTER, RouterError, RouterProxy},
+    TryRecvError,
+    subchannel_router::{ROUTER, RouterError, RouterProxy},
 };
 use ipc_channel::ipc::{self as raw_ipc, IpcSharedMemory};
 use serde::{Deserialize, Serialize};

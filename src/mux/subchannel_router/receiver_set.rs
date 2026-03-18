@@ -12,11 +12,11 @@ use crate::mux::demux::{
     establish_deserialization_context,
 };
 use crate::mux::error::MuxError;
-use crate::mux::protocol::SubChannelId;
 use crate::mux::ipc_channel::{
     SyncOpaqueIpcReceiver, clear_ipc_receiver_deserialization_context,
     clear_ipc_sender_deserialization_context, set_ipc_receivers_for_recv, set_ipc_senders_for_recv,
 };
+use crate::mux::protocol::SubChannelId;
 use crate::mux::shared_memory::{clear_shmem_deserialization_context, set_shmems_for_recv};
 use crate::mux::subchannel_router::select::{
     MultiReceiverSet, OpaqueSelectableSubReceiver, SelectableSubChannelReceiver,
