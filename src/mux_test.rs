@@ -8,8 +8,8 @@
 // except according to those terms.
 
 use crate::mux::{
-    self, IpcReceiver, IpcSender, MuxError, SharedMemory, SubOneShotServer, SubReceiver, SubSender,
-    TryRecvError,
+    self, IpcChannelSubSender, IpcReceiver, IpcSender, MuxError, SharedMemory, SubOneShotServer,
+    SubReceiver, SubSender, TryRecvError,
     subchannel_router::{ROUTER, RouterError, RouterProxy},
 };
 use ipc_channel::ipc::{self as raw_ipc, IpcSharedMemory};
@@ -1437,4 +1437,61 @@ fn ipc_receiver_double_serialize_error() {
     assert!(postcard::to_stdvec(&wrapped).is_ok());
     // Second serialize fails because the receiver was already consumed.
     assert!(postcard::to_stdvec(&wrapped).is_err());
+}
+
+// --- IpcChannelSubSender: SubSender over a raw IPC channel ---
+
+#[test]
+fn ipc_channel_sub_sender_basic() {
+    // Create a subchannel.
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel::<u32>();
+
+    // Convert the SubSender to a transport wrapper and send it over a raw IPC channel.
+    let (raw_tx, raw_rx) = raw_ipc::channel::<IpcChannelSubSender<u32>>().unwrap();
+    raw_tx.send(IpcChannelSubSender::from(tx)).unwrap();
+
+    // Reconstruct the SubSender on the "receiving process" side.
+    let transport: IpcChannelSubSender<u32> = raw_rx.recv().unwrap();
+    let recovered_tx: SubSender<u32> = transport.into_sub_sender();
+
+    recovered_tx.send(42).unwrap();
+    assert_eq!(rx.recv().unwrap(), 42);
+}
+
+#[test]
+fn ipc_channel_sub_sender_original_dropped() {
+    // Convert to IpcChannelSubSender and then drop the original SubSender.
+    // The subchannel must still work after the transport is reconstructed.
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel::<u32>();
+
+    let (raw_tx, raw_rx) = raw_ipc::channel::<IpcChannelSubSender<u32>>().unwrap();
+    raw_tx.send(IpcChannelSubSender::from(tx)).unwrap();
+    // The original tx is consumed above; no clone remains on the sending side.
+
+    let transport: IpcChannelSubSender<u32> = raw_rx.recv().unwrap();
+    let recovered_tx: SubSender<u32> = transport.into_sub_sender();
+
+    recovered_tx.send(99).unwrap();
+    assert_eq!(rx.recv().unwrap(), 99);
+}
+
+#[test]
+fn ipc_channel_sub_sender_from_clone() {
+    // Clone the SubSender, convert the clone to IpcChannelSubSender, keep the original.
+    // Both the original and the reconstructed sender must be able to send messages.
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel::<u32>();
+
+    let (raw_tx, raw_rx) = raw_ipc::channel::<IpcChannelSubSender<u32>>().unwrap();
+    raw_tx.send(IpcChannelSubSender::from(tx.clone())).unwrap();
+
+    let transport: IpcChannelSubSender<u32> = raw_rx.recv().unwrap();
+    let recovered_tx: SubSender<u32> = transport.into_sub_sender();
+
+    tx.send(1).unwrap();
+    recovered_tx.send(2).unwrap();
+    assert_eq!(rx.recv().unwrap(), 1);
+    assert_eq!(rx.recv().unwrap(), 2);
 }

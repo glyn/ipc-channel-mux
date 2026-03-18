@@ -9,11 +9,16 @@
 
 use crate::mux::demux::SubChannelReceiver;
 use crate::mux::error::{MuxError, TryRecvError};
-use crate::mux::sender::SubChannelSender;
+use crate::mux::ipc_channel_sub_sender::IpcChannelSubSender;
+use crate::mux::protocol::{ClientId, EMPTY_SUBCHANNEL_ID, MultiMessage};
+use crate::mux::sender::{MultiSender, SubChannelDisconnector, SubChannelSender};
+use crate::mux::subchannel_lifecycle::SubSenderTracker;
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tracing::instrument;
+use uuid::Uuid;
 
 /// SubSender is the sending end of a subchannel, used to serialize and send messages of a given type.
 ///
@@ -262,6 +267,76 @@ impl OpaqueSubReceiver {
             sub_channel_receiver: self.sub_channel_receiver,
             phantom: PhantomData,
         }
+    }
+}
+
+impl<T: Serialize> From<SubSender<T>> for IpcChannelSubSender<T> {
+    fn from(sender: SubSender<T>) -> Self {
+        let (sub_channel_id, ipc_sender, ipc_sender_uuid) =
+            sender.sub_channel_sender.begin_ipc_channel_transport();
+        IpcChannelSubSender {
+            sub_channel_id,
+            ipc_sender,
+            ipc_sender_uuid,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<T: Serialize> IpcChannelSubSender<T> {
+    /// Reconstruct a [`SubSender<T>`] from this transport value.
+    ///
+    /// Sends a `Received` lifecycle notification to register the calling process
+    /// as a new sender source. The returned [`SubSender<T>`] behaves like any
+    /// other subsender: it can send messages and will send `Disconnect` when
+    /// dropped. See the [type-level docs](IpcChannelSubSender) for the
+    /// receiver-disconnection limitation.
+    pub fn into_sub_sender(self) -> SubSender<T> {
+        let IpcChannelSubSender {
+            sub_channel_id,
+            ipc_sender,
+            ipc_sender_uuid,
+            _phantom: _,
+        } = self;
+        let arc_ipc_sender = Arc::new(ipc_sender);
+        let new_source = Uuid::new_v4();
+        let multi_sender = Arc::new(Mutex::new(MultiSender::new_for_transport(
+            ClientId::new(),
+            arc_ipc_sender.clone(),
+            ipc_sender_uuid,
+        )));
+
+        let disc_arc_sender = arc_ipc_sender.clone();
+        let disc_multi_sender = multi_sender.clone();
+        let disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync>> =
+            Arc::new(SubSenderTracker::new(Box::new(move || {
+                SubChannelDisconnector::new(
+                    sub_channel_id,
+                    disc_arc_sender.clone(),
+                    new_source,
+                    disc_multi_sender.clone(),
+                )
+                .dropped();
+            })));
+
+        let sub_channel_sender = SubChannelSender::from_deserialized(
+            sub_channel_id,
+            arc_ipc_sender.clone(),
+            disconnector,
+            ipc_sender_uuid,
+            multi_sender,
+        );
+
+        // Register this process as a new source in the state machine.
+        if let Err(e) = arc_ipc_sender.send(MultiMessage::Received {
+            scid: sub_channel_id,
+            via: EMPTY_SUBCHANNEL_ID,
+            new_source,
+        }) {
+            log::debug!("Failed to send Received for IPC channel transport: {e}");
+        }
+
+        SubSender::from_sender(sub_channel_sender)
     }
 }
 

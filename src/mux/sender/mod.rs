@@ -15,8 +15,8 @@ use crate::mux::ipc_channel::{
     take_ipc_receivers_for_send, take_ipc_senders_for_send,
 };
 use crate::mux::protocol::{
-    ClientId, IpcSenderAndOrId, MultiMessage, MultiResponse, ORIGIN, SubChannelId,
-    SubChannelSenderIds,
+    ClientId, EMPTY_SUBCHANNEL_ID, IpcSenderAndOrId, MultiMessage, MultiResponse, ORIGIN,
+    SubChannelId, SubChannelSenderIds,
 };
 use crate::mux::shared_memory::{clear_shmem_serialization_context, take_shmems_for_send};
 use crate::mux::subchannel_lifecycle::{SubReceiverProxy, SubSenderTracker};
@@ -38,7 +38,7 @@ pub struct MultiSender {
     ipc_sender: Arc<IpcSender<MultiMessage>>,
     uuid: Uuid,
     sender_id: Arc<Mutex<Source<Weak<IpcSender<MultiMessage>>>>>,
-    response_receiver: IpcReceiver<MultiResponse>,
+    response_receiver: Option<IpcReceiver<MultiResponse>>,
     disconnected: AtomicBool,
     sub_receiver_proxies: Mutex<HashMap<SubChannelId, SubReceiverProxy>>,
 }
@@ -65,7 +65,26 @@ impl MultiSender {
             ipc_sender,
             uuid: Uuid::new_v4(),
             sender_id: Arc::new(Mutex::new(Source::new())),
-            response_receiver,
+            response_receiver: Some(response_receiver),
+            disconnected: AtomicBool::new(false),
+            sub_receiver_proxies: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Create a MultiSender for use with `IpcChannelSubSender::into_sub_sender`.
+    /// No response channel is available, so receiver-disconnect detection is not
+    /// supported: `is_receiver_connected` always returns `true`.
+    pub fn new_for_transport(
+        client_id: ClientId,
+        ipc_sender: Arc<IpcSender<MultiMessage>>,
+        ipc_sender_uuid: Uuid,
+    ) -> Self {
+        MultiSender {
+            client_id,
+            ipc_sender,
+            uuid: ipc_sender_uuid,
+            sender_id: Arc::new(Mutex::new(Source::new())),
+            response_receiver: None,
             disconnected: AtomicBool::new(false),
             sub_receiver_proxies: Mutex::new(HashMap::new()),
         }
@@ -113,7 +132,7 @@ impl MultiSender {
             ipc_sender: sender,
             uuid: ipc_sender_uuid,
             sender_id: Arc::new(Mutex::new(Source::new())),
-            response_receiver,
+            response_receiver: Some(response_receiver),
             disconnected: AtomicBool::new(false),
             sub_receiver_proxies: Mutex::new(HashMap::new()),
         })))
@@ -150,8 +169,11 @@ impl MultiSender {
         if self.disconnected.load(Ordering::Relaxed) {
             return false;
         }
+        let Some(ref response_receiver) = self.response_receiver else {
+            return true;
+        };
         loop {
-            match self.response_receiver.try_recv() {
+            match response_receiver.try_recv() {
                 Ok(MultiResponse::SubReceiverDisconnected(scid)) => {
                     if let Some(proxy) = self.sub_receiver_proxies.lock().unwrap().get(&scid) {
                         proxy.disconnect();
@@ -268,6 +290,31 @@ impl SubChannelSender {
             sender_id: Arc::new(Mutex::new(Source::new())),
             multi_sender,
         }
+    }
+
+    /// Extract the components needed to reconstruct this sender in another process
+    /// via an IPC channel transport. Sends a `Sending` lifecycle notification so the
+    /// state machine does not signal premature disconnection while the transport is
+    /// in transit.
+    pub fn begin_ipc_channel_transport(self) -> (SubChannelId, IpcSender<MultiMessage>, Uuid) {
+        let raw_ipc_sender =
+            Arc::<IpcSender<MultiMessage>>::unwrap_or_clone(self.ipc_sender.clone());
+        if let Err(e) = self
+            .multi_sender
+            .lock()
+            .unwrap()
+            .send_message(MultiMessage::Sending {
+                scid: self.sub_channel_id,
+                via: EMPTY_SUBCHANNEL_ID,
+                via_chan: IpcSenderAndOrId::IpcSender(
+                    raw_ipc_sender.clone(),
+                    self.ipc_sender_uuid.to_string(),
+                ),
+            })
+        {
+            log::debug!("Failed to send Sending notification for IPC channel transport: {e}");
+        }
+        (self.sub_channel_id, raw_ipc_sender, self.ipc_sender_uuid)
     }
 
     #[instrument(level = "debug", skip(msg), err(level = "debug"))]
