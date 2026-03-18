@@ -37,7 +37,7 @@ where
     T: Serialize,
 {
     /// Convert a SubChannelSender to a SubSender.
-    pub fn from_sender(sub_channel_sender: SubChannelSender) -> Self {
+    pub(crate) fn from_sender(sub_channel_sender: SubChannelSender) -> Self {
         SubSender {
             sub_channel_sender,
             phantom: PhantomData,
@@ -353,8 +353,7 @@ pub struct BytesSubSender {
 
 impl BytesSubSender {
     /// Convert a SubChannelSender to a BytesSubSender.
-    #[doc(hidden)]
-    pub fn from_sender(sub_channel_sender: SubChannelSender) -> Self {
+    pub(crate) fn from_sender(sub_channel_sender: SubChannelSender) -> Self {
         BytesSubSender { sub_channel_sender }
     }
 }

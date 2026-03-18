@@ -7,6 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use ipc_channel::ipc::{IpcOneShotServer, IpcSender as RawIpcSender};
 use ipc_channel_mux::mux;
 use std::{env, process};
 
@@ -52,6 +53,52 @@ fn spawn_sub_one_shot_server_client() {
 
     let (_rx, msg) = server.accept().expect("accept failed");
     assert_eq!("test message", msg);
+
+    let result = child.wait().expect("wait for child process failed");
+    assert!(
+        result.success(),
+        "child process failed with exit status code {}",
+        result.code().expect("exit status code not available")
+    );
+}
+
+/// Test that `IpcChannelSubSender` correctly transports a `SubSender` across a
+/// real process boundary.
+///
+/// The parent wraps its `SubSender<u32>` in an `IpcChannelSubSender` and
+/// delivers it to a child process over a raw IPC channel. The child
+/// reconstructs the `SubSender` and sends the value `42`. The parent asserts
+/// it receives `42` on the original `SubReceiver`.
+#[test]
+fn ipc_channel_sub_sender_cross_process() {
+    let executable_path: String =
+        env!("CARGO_BIN_EXE_ipc_channel_sub_sender_cross_process_helper").to_string();
+
+    // Create the mux channel and wrap the sender for transport.
+    let channel = mux::Channel::new().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel::<u32>();
+    let transport = mux::IpcChannelSubSender::from(sub_tx);
+
+    // Create a one-shot server so the child can hand us an IpcSender endpoint.
+    // The child will send us an IpcSender<IpcChannelSubSender<u32>> which we
+    // then use to deliver the transport.
+    let (bootstrap_server, bootstrap_token) =
+        IpcOneShotServer::<RawIpcSender<mux::IpcChannelSubSender<u32>>>::new()
+            .expect("Failed to create bootstrap server");
+
+    let mut child = process::Command::new(executable_path)
+        .arg(bootstrap_token)
+        .spawn()
+        .expect("Failed to start child process");
+
+    // Accept the child's sender and deliver the IpcChannelSubSender to it.
+    let (_, child_sender) = bootstrap_server.accept().expect("bootstrap accept failed");
+    child_sender
+        .send(transport)
+        .expect("send of IpcChannelSubSender failed");
+
+    // The child reconstructs the SubSender and sends 42.
+    assert_eq!(sub_rx.recv().unwrap(), 42);
 
     let result = child.wait().expect("wait for child process failed");
     assert!(

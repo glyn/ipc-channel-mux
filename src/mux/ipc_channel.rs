@@ -173,7 +173,10 @@ impl<T: Serialize + for<'de> Deserialize<'de>> From<RawIpcReceiver<T>> for IpcRe
 impl<T: Serialize + for<'de> Deserialize<'de>> IpcReceiver<T> {
     /// Recover the underlying [`ipc_channel::ipc::IpcReceiver<T>`].
     ///
-    /// Returns an error if the receiver has already been serialized.
+    /// Returns `Ok` when called on a freshly constructed or freshly received
+    /// `IpcReceiver`. Returns `Err` if the receiver has already been
+    /// serialized (sent), because serialization moves the OS handle out of
+    /// the wrapper; a second attempt to extract the handle would find nothing.
     pub fn into_inner(self) -> Result<RawIpcReceiver<T>, MuxError> {
         self.0
             .into_inner()

@@ -1434,6 +1434,9 @@ fn ipc_receiver_double_serialize_error() {
 
     // First serialize succeeds (captures the receiver into the thread-local).
     assert!(postcard::to_stdvec(&wrapped).is_ok());
+    // Drain the thread-local so the OS handle is released promptly and does
+    // not linger until another send clears it.
+    let _ = crate::mux::ipc_channel::take_ipc_receivers_for_send();
     // Second serialize fails because the receiver was already consumed.
     assert!(postcard::to_stdvec(&wrapped).is_err());
 }

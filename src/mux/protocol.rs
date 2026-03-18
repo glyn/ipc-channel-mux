@@ -94,8 +94,7 @@ impl SubChannelSenderIds {
 
 /// MultiMessage is used to communicate across multiplexing channels.
 #[derive(Serialize, Deserialize, Debug)]
-#[allow(private_interfaces)]
-pub enum MultiMessage {
+pub(crate) enum MultiMessage {
     Connect(IpcSender<MultiResponse>, ClientId),
     Data(
         SubChannelId,

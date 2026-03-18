@@ -33,7 +33,7 @@ use uuid::Uuid;
 /// Sending end of a multiplexed channel.
 ///
 /// [MultiSender]: struct.MultiSender.html
-pub struct MultiSender {
+pub(crate) struct MultiSender {
     client_id: ClientId,
     ipc_sender: Arc<IpcSender<MultiMessage>>,
     uuid: Uuid,
@@ -43,7 +43,7 @@ pub struct MultiSender {
     sub_receiver_proxies: Mutex<HashMap<SubChannelId, SubReceiverProxy>>,
 }
 
-pub type Target = sender_id::Target<Arc<Mutex<MultiSender>>>;
+pub(crate) type Target = sender_id::Target<Arc<Mutex<MultiSender>>>;
 
 impl fmt::Debug for MultiSender {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -74,6 +74,9 @@ impl MultiSender {
     /// Create a MultiSender for use with `IpcChannelSubSender::into_sub_sender`.
     /// No response channel is available, so receiver-disconnect detection is not
     /// supported: `is_receiver_connected` always returns `true`.
+    ///
+    /// The `client_id` is never sent in a `Connect` message so the demuxer
+    /// never registers it; it is used only for `Debug` display.
     pub fn new_for_transport(
         client_id: ClientId,
         ipc_sender: Arc<IpcSender<MultiMessage>>,
@@ -189,7 +192,7 @@ impl MultiSender {
     }
 }
 
-pub struct SubChannelDisconnector {
+pub(crate) struct SubChannelDisconnector {
     sub_channel_id: SubChannelId,
     ipc_sender: Arc<IpcSender<MultiMessage>>,
     source: Uuid,
@@ -228,7 +231,7 @@ impl SubChannelDisconnector {
     }
 }
 
-pub struct SubChannelSender {
+pub(crate) struct SubChannelSender {
     sub_channel_id: SubChannelId,
     ipc_sender: Arc<IpcSender<MultiMessage>>,
     disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
@@ -297,8 +300,7 @@ impl SubChannelSender {
     /// state machine does not signal premature disconnection while the transport is
     /// in transit.
     pub fn begin_ipc_channel_transport(self) -> (SubChannelId, IpcSender<MultiMessage>, Uuid) {
-        let raw_ipc_sender =
-            Arc::<IpcSender<MultiMessage>>::unwrap_or_clone(self.ipc_sender.clone());
+        let raw_ipc_sender = (*self.ipc_sender).clone();
         if let Err(e) = self
             .multi_sender
             .lock()
