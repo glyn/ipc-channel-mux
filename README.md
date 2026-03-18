@@ -199,6 +199,33 @@ assert_eq!(raw_rx.recv().unwrap(), 99);
 
 `mux::IpcSender<T>` and `mux::IpcReceiver<T>` can also be included as fields in user-defined message types that derive `Serialize` and `Deserialize`.
 
+### Subchannel senders over IPC channels
+
+`mux::IpcChannelSubSender<T>` is the reverse of `mux::IpcSender<T>`: it wraps a `SubSender<T>` for transmission over a raw `ipc-channel` IPC channel. This is useful when bootstrapping a complex communication topology where processes need to exchange subsenders before a subchannel is available.
+
+~~~Rust
+use ipc_channel::ipc;
+use ipc_channel_mux::mux;
+
+let channel = mux::Channel::new().unwrap();
+let (tx, rx) = channel.sub_channel::<u32>();
+
+// Wrap the SubSender for IPC channel transport (consuming it).
+let (raw_tx, raw_rx) = ipc::channel().unwrap();
+raw_tx.send(mux::IpcChannelSubSender::from(tx)).unwrap();
+
+// On the receiving side, reconstruct the SubSender.
+let transport: mux::IpcChannelSubSender<u32> = raw_rx.recv().unwrap();
+let tx: mux::SubSender<u32> = transport.into_sub_sender();
+
+tx.send(42).unwrap();
+assert_eq!(rx.recv().unwrap(), 42);
+~~~
+
+`From<SubSender<T>>` is consuming; clone the `SubSender` first if the original is also needed. `IpcChannelSubSender<T>` can be included as a field in any user-defined message type.
+
+**Note**: the reconstructed `SubSender<T>` cannot detect subreceiver disconnection — `send` will not return `Disconnected` if the subreceiver has been dropped. Full disconnection detection across an IPC channel transport is a known limitation.
+
 ### Opaque senders and receivers
 
 `OpaqueSubSender` and `OpaqueSubReceiver` are type-erased versions of `SubSender<T>` and `SubReceiver<T>`. They are useful when the message type is not known statically or when handling heterogeneous channels. For example, the router uses `OpaqueSubReceiver` internally so it can manage receivers of different message types together.
@@ -279,7 +306,7 @@ However, it would be feasible to merge `ipc-channel-mux` into the IPC channel re
 [^never]: Creating a subchannel could exhaust the memory of a process, but memory allocation is treated as infallible in Rust as [Handling memory exhaustion – State of the art?](https://users.rust-lang.org/t/handling-memory-exhaustion-state-of-the-art/87375) explores.
 Essentially, if memory allocation fails, the program will panic or, more likely (at least on Linux), be killed by the Out of Memory killer.
 
-[^interop]: `ipc-channel-mux` and `ipc-channel` do not currently interoperate fully: an IPC channel cannot be used to transmit a subsender although a subchannel can be used to transmit an IPC sender or receiver.
+[^interop]: A subchannel can be used to transmit an IPC sender or receiver (`mux::IpcSender<T>`, `mux::IpcReceiver<T>`), and an IPC channel can be used to transmit a subchannel sender (`mux::IpcChannelSubSender<T>`). The one remaining limitation is that a transport-reconstructed subsender cannot detect subreceiver disconnection.
 
 [^gitdep]: An alternative would be to have the relevant Servo branch use a [git dependency](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#specifying-dependencies-from-git-repositories) on `ipc-channel-mux`.
 
@@ -372,6 +399,16 @@ This approach avoids any modifications to `ipc-channel` while still benefiting f
 `IpcReceiver<T>` stores its handle in a `RefCell<Option<…>>` so the handle can be moved out during `Serialize` (which takes `&self`). Attempting to serialize an `IpcReceiver` a second time returns an error.
 
 An internal `SyncOpaqueIpcReceiver` wrapper adds `unsafe impl Sync` to `OpaqueIpcReceiver`, which is required because `OpaqueIpcReceiver` is `!Sync` (it contains a `Cell<i32>`) and `MultiMessage` must be `Sync` for the `ROUTER` static. The `unsafe` is safe in practice because `MultiMessage` values are serialized and sent immediately after construction and are never shared between threads.
+
+### Subchannel sender over IPC channel transport
+
+`IpcChannelSubSender<T>` takes the opposite approach to `IpcSender<T>` / `IpcReceiver<T>`: instead of hiding OS handles from ipc-channel, it exposes them directly. It derives `Serialize`/`Deserialize` with an embedded `IpcSender<MultiMessage>` field, so ipc-channel's own OS handle mechanism transports it without any mux thread-locals.
+
+**Send path** (`From<SubSender<T>>`): the conversion extracts the subchannel ID, clones the underlying `IpcSender<MultiMessage>`, and sends `MultiMessage::Sending` with `via: EMPTY_SUBCHANNEL_ID` to the demuxer. This registers an in-flight entry in the `SubSenderStateMachine`, preventing premature disconnection if the original `SubSender` is dropped before the transport is received.
+
+**Receive path** (`into_sub_sender()`): a fresh `MultiSender` is created around the received `IpcSender<MultiMessage>` (with `response_receiver: None`). A new source UUID is generated and `MultiMessage::Received` is sent to transition the in-flight entry to a registered source. A `SubSenderTracker` disconnector is created that sends `MultiMessage::Disconnect` when the reconstructed `SubSender` is eventually dropped.
+
+The `response_receiver: None` case is handled by making `MultiSender::drain_responses` return `true` unconditionally when no response channel is present. This means `is_receiver_connected` always returns `true` for transport-reconstructed senders — the known limitation documented in the API section.
 
 ### When to block
 
