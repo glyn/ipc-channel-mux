@@ -18,6 +18,7 @@ use crate::mux::protocol::{
     ClientId, EMPTY_SUBCHANNEL_ID, IpcSenderAndOrId, MultiMessage, MultiResponse, ORIGIN,
     SubChannelId, SubChannelSenderIds,
 };
+use crate::mux::ipc_channel::SyncOpaqueIpcReceiver;
 use crate::mux::shared_memory::{clear_shmem_serialization_context, take_shmems_for_send};
 use crate::mux::subchannel_lifecycle::{SubReceiverProxy, SubSenderTracker};
 use ipc_channel::ipc::{self, IpcReceiver, IpcSender};
@@ -238,6 +239,10 @@ pub(crate) struct SubChannelSender {
     ipc_sender_uuid: Uuid,
     sender_id: Arc<Mutex<Source<Weak<IpcSender<MultiMessage>>>>>,
     multi_sender: Arc<Mutex<MultiSender>>,
+    /// Keepalive sender for an IPC-channel transport. Held here so that it is
+    /// dropped (and the parent's probe fires) when this SubChannelSender is
+    /// dropped or when the process crashes. `None` for locally-created senders.
+    keepalive_tx: Option<Arc<ipc_channel::ipc::IpcSender<()>>>,
 }
 
 impl Clone for SubChannelSender {
@@ -249,6 +254,7 @@ impl Clone for SubChannelSender {
             ipc_sender_uuid: self.ipc_sender_uuid,
             sender_id: Arc::clone(&self.sender_id),
             multi_sender: Arc::clone(&self.multi_sender),
+            keepalive_tx: self.keepalive_tx.as_ref().map(Arc::clone),
         }
     }
 }
@@ -275,6 +281,7 @@ impl SubChannelSender {
             ipc_sender_uuid: locked_self.uuid(),
             sender_id: Arc::clone(&locked_self.sender_id),
             multi_sender: Arc::clone(&raw_self),
+            keepalive_tx: None,
         }
     }
 
@@ -284,6 +291,7 @@ impl SubChannelSender {
         disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
         ipc_sender_uuid: Uuid,
         multi_sender: Arc<Mutex<MultiSender>>,
+        keepalive_tx: Option<Arc<ipc_channel::ipc::IpcSender<()>>>,
     ) -> Self {
         SubChannelSender {
             sub_channel_id,
@@ -292,31 +300,71 @@ impl SubChannelSender {
             ipc_sender_uuid,
             sender_id: Arc::new(Mutex::new(Source::new())),
             multi_sender,
+            keepalive_tx,
         }
     }
 
     /// Extract the components needed to reconstruct this sender in another process
-    /// via an IPC channel transport. Sends a `Sending` lifecycle notification so the
+    /// via an IPC channel transport. Sends a `SendingViaIpcChannel` lifecycle
+    /// notification (with a keepalive sender included in the returned value) so the
     /// state machine does not signal premature disconnection while the transport is
-    /// in transit.
-    pub fn begin_ipc_channel_transport(self) -> (SubChannelId, IpcSender<MultiMessage>, Uuid) {
+    /// in transit, and can detect a crash of the receiving process.
+    pub fn begin_ipc_channel_transport(
+        self,
+    ) -> (
+        SubChannelId,
+        IpcSender<MultiMessage>,
+        Uuid,
+        Option<ipc_channel::ipc::IpcSender<()>>,
+    ) {
         let raw_ipc_sender = (*self.ipc_sender).clone();
-        if let Err(e) = self
-            .multi_sender
-            .lock()
-            .unwrap()
-            .send_message(MultiMessage::Sending {
-                scid: self.sub_channel_id,
-                via: EMPTY_SUBCHANNEL_ID,
-                via_chan: IpcSenderAndOrId::IpcSender(
-                    raw_ipc_sender.clone(),
-                    self.ipc_sender_uuid.to_string(),
-                ),
-            })
-        {
-            log::debug!("Failed to send Sending notification for IPC channel transport: {e}");
+        match ipc::channel::<()>() {
+            Ok((keepalive_tx, keepalive_rx)) => {
+                if let Err(e) = self
+                    .multi_sender
+                    .lock()
+                    .unwrap()
+                    .send_message(MultiMessage::SendingViaIpcChannel {
+                        scid: self.sub_channel_id,
+                        keepalive: SyncOpaqueIpcReceiver(keepalive_rx.to_opaque()),
+                    })
+                {
+                    log::debug!(
+                        "Failed to send SendingViaIpcChannel notification: {e}"
+                    );
+                }
+                (
+                    self.sub_channel_id,
+                    raw_ipc_sender,
+                    self.ipc_sender_uuid,
+                    Some(keepalive_tx),
+                )
+            },
+            Err(e) => {
+                log::debug!(
+                    "Failed to create keepalive channel for IPC channel transport: {e}; \
+                     falling back to Sending without crash detection"
+                );
+                if let Err(e) = self
+                    .multi_sender
+                    .lock()
+                    .unwrap()
+                    .send_message(MultiMessage::Sending {
+                        scid: self.sub_channel_id,
+                        via: EMPTY_SUBCHANNEL_ID,
+                        via_chan: IpcSenderAndOrId::IpcSender(
+                            raw_ipc_sender.clone(),
+                            self.ipc_sender_uuid.to_string(),
+                        ),
+                    })
+                {
+                    log::debug!(
+                        "Failed to send Sending notification for IPC channel transport: {e}"
+                    );
+                }
+                (self.sub_channel_id, raw_ipc_sender, self.ipc_sender_uuid, None)
+            },
         }
-        (self.sub_channel_id, raw_ipc_sender, self.ipc_sender_uuid)
     }
 
     #[instrument(level = "debug", skip(msg), err(level = "debug"))]

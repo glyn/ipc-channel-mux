@@ -272,12 +272,13 @@ impl OpaqueSubReceiver {
 
 impl<T: Serialize> From<SubSender<T>> for IpcChannelSubSender<T> {
     fn from(sender: SubSender<T>) -> Self {
-        let (sub_channel_id, ipc_sender, ipc_sender_uuid) =
+        let (sub_channel_id, ipc_sender, ipc_sender_uuid, keepalive_tx) =
             sender.sub_channel_sender.begin_ipc_channel_transport();
         IpcChannelSubSender {
             sub_channel_id,
             ipc_sender,
             ipc_sender_uuid,
+            keepalive_tx,
             _phantom: PhantomData,
         }
     }
@@ -296,6 +297,7 @@ impl<T: Serialize> IpcChannelSubSender<T> {
             sub_channel_id,
             ipc_sender,
             ipc_sender_uuid,
+            keepalive_tx,
             _phantom: _,
         } = self;
         let arc_ipc_sender = Arc::new(ipc_sender);
@@ -319,12 +321,14 @@ impl<T: Serialize> IpcChannelSubSender<T> {
                 .dropped();
             })));
 
+        let keepalive = keepalive_tx.map(Arc::new);
         let sub_channel_sender = SubChannelSender::from_deserialized(
             sub_channel_id,
             arc_ipc_sender.clone(),
             disconnector,
             ipc_sender_uuid,
             multi_sender,
+            keepalive,
         );
 
         // Register this process as a new source in the state machine.

@@ -120,6 +120,15 @@ pub(crate) enum MultiMessage {
         new_source: Uuid,
     },
     Disconnect(SubChannelId, Uuid),
+    /// Notifies the receiver that a subsender for `scid` is being transported
+    /// via an IPC channel (i.e. inside an `IpcChannelSubSender`). The
+    /// `keepalive` receiver remains open as long as the `IpcChannelSubSender`
+    /// (or the `SubSender` reconstructed from it) is alive in the remote
+    /// process; when it closes the probe detects the crash.
+    SendingViaIpcChannel {
+        scid: SubChannelId,
+        keepalive: SyncOpaqueIpcReceiver,
+    },
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

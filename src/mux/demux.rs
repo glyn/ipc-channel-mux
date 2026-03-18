@@ -358,6 +358,23 @@ impl Demuxer {
 
                 Ok(())
             },
+            MultiMessage::SendingViaIpcChannel { scid, keepalive } => {
+                if let Some(sm) = self.sub_channels.get(&scid) {
+                    // Convert the opaque receiver to a typed one and wrap in a
+                    // Mutex so the Fn() probe closure can call try_recv repeatedly.
+                    let rx = Arc::new(Mutex::new(keepalive.0.to::<()>()));
+                    sm.to_be_sent(
+                        EMPTY_SUBCHANNEL_ID,
+                        Box::new(move || {
+                            match rx.lock().unwrap().try_recv() {
+                                Ok(_) | Err(ipc_channel::TryRecvError::Empty) => true,
+                                Err(ipc_channel::TryRecvError::IpcError(_)) => false,
+                            }
+                        }),
+                    );
+                }
+                Ok(())
+            },
             m @ MultiMessage::SubChannelId(..) => Err(MuxError::InternalError(format!(
                 "unexpected multi message {m:?}"
             ))),
@@ -602,6 +619,7 @@ impl<'de> Deserialize<'de> for SubChannelSender {
             disc,
             ipc_sender_uuid,
             multi_sender.1,
+            None,
         ))
     }
 }

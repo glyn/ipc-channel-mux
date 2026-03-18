@@ -71,6 +71,11 @@ pub struct IpcChannelSubSender<T> {
     pub(crate) sub_channel_id: SubChannelId,
     pub(crate) ipc_sender: RawIpcSender<MultiMessage>,
     pub(crate) ipc_sender_uuid: Uuid,
+    /// Keepalive sender. Held by the receiving process as long as this wrapper
+    /// (or the `SubSender` reconstructed from it) is alive; dropping it signals
+    /// the parent's probe that the receiver has crashed or finished.
+    /// `None` when keepalive channel creation failed at transport time.
+    pub(crate) keepalive_tx: Option<RawIpcSender<()>>,
     #[serde(skip)]
     pub(crate) _phantom: PhantomData<T>,
 }
