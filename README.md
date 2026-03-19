@@ -169,7 +169,19 @@ assert_eq!(&*received, b"hello shared world");
 
 `SharedMemory` can also be included as a field in user-defined message types that derive `Serialize` and `Deserialize`.
 
-### IPC senders and receivers
+### Interoperation with ipc-channel
+
+`ipc-channel-mux` provides bridge types for processes that are migrating from raw `ipc-channel` incrementally, or that need to exchange endpoints across the boundary between migrated and un-migrated code:
+
+| Bridge type | What it carries | Direction |
+|---|---|---|
+| `mux::IpcSender<T>` | A raw `ipc::IpcSender<T>` | Through a subchannel |
+| `mux::IpcReceiver<T>` | A raw `ipc::IpcReceiver<T>` | Through a subchannel |
+| `mux::IpcChannelSubSender<T>` | A `mux::SubSender<T>` | Through a raw IPC channel |
+
+See the [Incremental migration](MIGRATION.md#incremental-migration) section of the migration guide for worked examples.
+
+#### IPC senders and receivers
 
 `mux::IpcSender<T>` and `mux::IpcReceiver<T>` are wrappers that allow `ipc-channel` senders and receivers to be transmitted over subchannels. They are analogous to `mux::SharedMemory` for `IpcSharedMemory`: OS handles are transported via `ipc-channel`'s outer serialization layer rather than the inner postcard serialization.
 
@@ -199,7 +211,7 @@ assert_eq!(raw_rx.recv().unwrap(), 99);
 
 `mux::IpcSender<T>` and `mux::IpcReceiver<T>` can also be included as fields in user-defined message types that derive `Serialize` and `Deserialize`.
 
-### Subchannel senders over IPC channels
+#### Subchannel senders over IPC channels
 
 `mux::IpcChannelSubSender<T>` is the reverse of `mux::IpcSender<T>`: it wraps a `SubSender<T>` for transmission over a raw `ipc-channel` IPC channel. This is useful when bootstrapping a complex communication topology where processes need to exchange subsenders before a subchannel is available.
 
@@ -222,9 +234,7 @@ tx.send(42).unwrap();
 assert_eq!(rx.recv().unwrap(), 42);
 ~~~
 
-`From<SubSender<T>>` is consuming; clone the `SubSender` first if the original is also needed. `IpcChannelSubSender<T>` can be included as a field in any user-defined message type.
-
-**Note**: the reconstructed `SubSender<T>` cannot detect subreceiver disconnection — `send` will not return `Disconnected` if the subreceiver has been dropped. Full disconnection detection across an IPC channel transport is a known limitation.
+`From<SubSender<T>>` is consuming; clone the `SubSender` first if the original is also needed. `IpcChannelSubSender<T>` can be included as a field in any user-defined message type. The reconstructed `SubSender<T>` is fully functional: it detects subreceiver disconnection and sends `Disconnect` when dropped.
 
 ### Opaque senders and receivers
 
