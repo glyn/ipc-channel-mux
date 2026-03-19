@@ -1455,7 +1455,7 @@ fn ipc_channel_sub_sender_basic() {
 
     // Reconstruct the SubSender on the "receiving process" side.
     let transport: IpcChannelSubSender<u32> = raw_rx.recv().unwrap();
-    let recovered_tx: SubSender<u32> = transport.into_sub_sender();
+    let recovered_tx: SubSender<u32> = transport.into_sub_sender().unwrap();
 
     recovered_tx.send(42).unwrap();
     assert_eq!(rx.recv().unwrap(), 42);
@@ -1473,7 +1473,7 @@ fn ipc_channel_sub_sender_original_dropped() {
     // The original tx is consumed above; no clone remains on the sending side.
 
     let transport: IpcChannelSubSender<u32> = raw_rx.recv().unwrap();
-    let recovered_tx: SubSender<u32> = transport.into_sub_sender();
+    let recovered_tx: SubSender<u32> = transport.into_sub_sender().unwrap();
 
     recovered_tx.send(99).unwrap();
     assert_eq!(rx.recv().unwrap(), 99);
@@ -1490,10 +1490,39 @@ fn ipc_channel_sub_sender_from_clone() {
     raw_tx.send(IpcChannelSubSender::from(tx.clone())).unwrap();
 
     let transport: IpcChannelSubSender<u32> = raw_rx.recv().unwrap();
-    let recovered_tx: SubSender<u32> = transport.into_sub_sender();
+    let recovered_tx: SubSender<u32> = transport.into_sub_sender().unwrap();
 
     tx.send(1).unwrap();
     recovered_tx.send(2).unwrap();
     assert_eq!(rx.recv().unwrap(), 1);
     assert_eq!(rx.recv().unwrap(), 2);
+}
+
+#[test]
+fn ipc_channel_sub_sender_detects_receiver_disconnection() {
+    // Verify that a SubSender reconstructed via into_sub_sender() correctly
+    // detects when the SubReceiver is dropped.
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel::<u32>();
+
+    let (raw_tx, raw_rx) = raw_ipc::channel::<IpcChannelSubSender<u32>>().unwrap();
+    raw_tx.send(IpcChannelSubSender::from(tx)).unwrap();
+
+    let transport: IpcChannelSubSender<u32> = raw_rx.recv().unwrap();
+    let recovered_tx: SubSender<u32> = transport.into_sub_sender().unwrap();
+
+    // Allow the demuxer time to process the Connect message from into_sub_sender
+    // so the new client is registered before we drop the receiver.
+    thread::sleep(Duration::from_millis(100));
+
+    drop(rx);
+
+    // Allow SubReceiverDisconnected to propagate to the response channel.
+    thread::sleep(Duration::from_millis(100));
+
+    match recovered_tx.send(42) {
+        Err(MuxError::Disconnected) => (),
+        Ok(()) => panic!("expected Disconnected: subreceiver disconnection not detected"),
+        Err(e) => panic!("expected Disconnected, got {e:?}"),
+    }
 }

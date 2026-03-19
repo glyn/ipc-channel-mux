@@ -10,12 +10,12 @@
 use crate::mux::demux::SubChannelReceiver;
 use crate::mux::error::{MuxError, TryRecvError};
 use crate::mux::ipc_channel_sub_sender::IpcChannelSubSender;
-use crate::mux::protocol::{ClientId, EMPTY_SUBCHANNEL_ID, MultiMessage};
+use crate::mux::protocol::{EMPTY_SUBCHANNEL_ID, MultiMessage};
 use crate::mux::sender::{MultiSender, SubChannelDisconnector, SubChannelSender};
-use crate::mux::subchannel_lifecycle::SubSenderTracker;
+use crate::mux::subchannel_lifecycle::{SubReceiverProxy, SubSenderTracker};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::instrument;
 use uuid::Uuid;
@@ -287,12 +287,14 @@ impl<T: Serialize> From<SubSender<T>> for IpcChannelSubSender<T> {
 impl<T: Serialize> IpcChannelSubSender<T> {
     /// Reconstruct a [`SubSender<T>`] from this transport value.
     ///
-    /// Sends a `Received` lifecycle notification to register the calling process
-    /// as a new sender source. The returned [`SubSender<T>`] behaves like any
-    /// other subsender: it can send messages and will send `Disconnect` when
-    /// dropped. See the [type-level docs](IpcChannelSubSender) for the
-    /// receiver-disconnection limitation.
-    pub fn into_sub_sender(self) -> SubSender<T> {
+    /// Sends a `Connect` message to register a response channel with the
+    /// receiver so that subreceiver disconnection can be detected, and a
+    /// `Received` lifecycle notification to register the calling process as a
+    /// new sender source. The returned [`SubSender<T>`] behaves identically to
+    /// a locally-created `SubSender`: it can send messages, detects subreceiver
+    /// disconnection via `is_receiver_connected`, and sends `Disconnect` when
+    /// dropped.
+    pub fn into_sub_sender(self) -> Result<SubSender<T>, MuxError> {
         let IpcChannelSubSender {
             sub_channel_id,
             ipc_sender,
@@ -302,11 +304,11 @@ impl<T: Serialize> IpcChannelSubSender<T> {
         } = self;
         let arc_ipc_sender = Arc::new(ipc_sender);
         let new_source = Uuid::new_v4();
-        let multi_sender = Arc::new(Mutex::new(MultiSender::new_for_transport(
-            ClientId::new(),
-            arc_ipc_sender.clone(),
-            ipc_sender_uuid,
-        )));
+        let multi_sender = MultiSender::connect_sender(arc_ipc_sender.clone(), ipc_sender_uuid)?;
+        multi_sender
+            .lock()
+            .unwrap()
+            .insert_sub_receiver_proxy(sub_channel_id, SubReceiverProxy::new());
 
         let disc_arc_sender = arc_ipc_sender.clone();
         let disc_multi_sender = multi_sender.clone();
@@ -340,7 +342,7 @@ impl<T: Serialize> IpcChannelSubSender<T> {
             log::debug!("Failed to send Received for IPC channel transport: {e}");
         }
 
-        SubSender::from_sender(sub_channel_sender)
+        Ok(SubSender::from_sender(sub_channel_sender))
     }
 }
 

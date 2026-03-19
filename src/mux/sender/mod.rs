@@ -72,28 +72,6 @@ impl MultiSender {
         }
     }
 
-    /// Create a MultiSender for use with `IpcChannelSubSender::into_sub_sender`.
-    /// No response channel is available, so receiver-disconnect detection is not
-    /// supported: `is_receiver_connected` always returns `true`.
-    ///
-    /// The `client_id` is never sent in a `Connect` message so the demuxer
-    /// never registers it; it is used only for `Debug` display.
-    pub fn new_for_transport(
-        client_id: ClientId,
-        ipc_sender: Arc<IpcSender<MultiMessage>>,
-        ipc_sender_uuid: Uuid,
-    ) -> Self {
-        MultiSender {
-            client_id,
-            ipc_sender,
-            uuid: ipc_sender_uuid,
-            sender_id: Arc::new(Mutex::new(Source::new())),
-            response_receiver: None,
-            disconnected: AtomicBool::new(false),
-            sub_receiver_proxies: Mutex::new(HashMap::new()),
-        }
-    }
-
     pub fn clone_ipc_sender(&self) -> Arc<IpcSender<MultiMessage>> {
         Arc::clone(&self.ipc_sender)
     }

@@ -41,7 +41,7 @@ use uuid::Uuid;
 /// let (raw_tx, raw_rx) = ipc::channel().unwrap();
 /// raw_tx.send(transport).unwrap();
 /// let received: mux::IpcChannelSubSender<u32> = raw_rx.recv().unwrap();
-/// let tx: mux::SubSender<u32> = received.into_sub_sender();
+/// let tx: mux::SubSender<u32> = received.into_sub_sender().unwrap();
 ///
 /// tx.send(42).unwrap();
 /// assert_eq!(rx.recv().unwrap(), 42);
@@ -49,19 +49,14 @@ use uuid::Uuid;
 ///
 /// # Lifecycle
 ///
-/// Converting a [`SubSender<T>`] to `IpcChannelSubSender` sends a `Sending`
-/// lifecycle notification so the subchannel state machine does not signal
-/// premature disconnection while the transport is in transit. Calling
-/// [`into_sub_sender`] sends a `Received` notification to register the new
-/// process as a sender source. Dropping the reconstructed [`SubSender<T>`]
-/// sends `Disconnect` as usual.
-///
-/// # Limitation
-///
-/// The reconstructed [`SubSender<T>`] cannot detect subreceiver disconnection:
-/// `is_receiver_connected` always returns `true` because no response channel is
-/// available to the new process. Full support requires a future protocol
-/// extension.
+/// Converting a [`SubSender<T>`] to `IpcChannelSubSender` sends a
+/// `SendingViaIpcChannel` lifecycle notification so the subchannel state
+/// machine does not signal premature disconnection while the transport is in
+/// transit and can detect a crash of the receiving process. Calling
+/// [`into_sub_sender`] sends a `Connect` message to establish a response
+/// channel (enabling subreceiver-disconnection detection) and a `Received`
+/// notification to register the new process as a sender source. Dropping the
+/// reconstructed [`SubSender<T>`] sends `Disconnect` as usual.
 ///
 /// [`SubSender<T>`]: super::subchannel_endpoint::SubSender
 /// [`into_sub_sender`]: IpcChannelSubSender::into_sub_sender

@@ -216,7 +216,7 @@ raw_tx.send(mux::IpcChannelSubSender::from(tx)).unwrap();
 
 // On the receiving side, reconstruct the SubSender.
 let transport: mux::IpcChannelSubSender<u32> = raw_rx.recv().unwrap();
-let tx: mux::SubSender<u32> = transport.into_sub_sender();
+let tx: mux::SubSender<u32> = transport.into_sub_sender().unwrap();
 
 tx.send(42).unwrap();
 assert_eq!(rx.recv().unwrap(), 42);
@@ -404,11 +404,11 @@ An internal `SyncOpaqueIpcReceiver` wrapper adds `unsafe impl Sync` to `OpaqueIp
 
 `IpcChannelSubSender<T>` takes the opposite approach to `IpcSender<T>` / `IpcReceiver<T>`: instead of hiding OS handles from ipc-channel, it exposes them directly. It derives `Serialize`/`Deserialize` with an embedded `IpcSender<MultiMessage>` field, so ipc-channel's own OS handle mechanism transports it without any mux thread-locals.
 
-**Send path** (`From<SubSender<T>>`): the conversion extracts the subchannel ID, clones the underlying `IpcSender<MultiMessage>`, and sends `MultiMessage::Sending` with `via: EMPTY_SUBCHANNEL_ID` to the demuxer. This registers an in-flight entry in the `SubSenderStateMachine`, preventing premature disconnection if the original `SubSender` is dropped before the transport is received.
+**Send path** (`From<SubSender<T>>`): the conversion extracts the subchannel ID, clones the underlying `IpcSender<MultiMessage>`, creates a keepalive IPC channel, and sends `MultiMessage::SendingViaIpcChannel { scid, keepalive_rx }` to the demuxer. This registers an in-flight entry in the `SubSenderStateMachine` with a probe on `keepalive_rx`, preventing premature disconnection and enabling crash detection.
 
-**Receive path** (`into_sub_sender()`): a fresh `MultiSender` is created around the received `IpcSender<MultiMessage>` (with `response_receiver: None`). A new source UUID is generated and `MultiMessage::Received` is sent to transition the in-flight entry to a registered source. A `SubSenderTracker` disconnector is created that sends `MultiMessage::Disconnect` when the reconstructed `SubSender` is eventually dropped.
+**Receive path** (`into_sub_sender()`): `connect_sender` creates a response channel and sends `MultiMessage::Connect` to the demuxer so the reconstructed sender can receive `SubReceiverDisconnected` notifications. A `SubReceiverProxy` is inserted for the subchannel so `is_receiver_connected` can detect subreceiver disconnection. A new source UUID is generated and `MultiMessage::Received` is sent to transition the in-flight entry to a registered source. A `SubSenderTracker` disconnector is created that sends `MultiMessage::Disconnect` when the reconstructed `SubSender` is eventually dropped.
 
-The `response_receiver: None` case is handled by making `MultiSender::drain_responses` return `true` unconditionally when no response channel is present. This means `is_receiver_connected` always returns `true` for transport-reconstructed senders — the known limitation documented in the API section.
+To ensure `SubReceiverDisconnected` is delivered even if the `SubReceiver` is dropped immediately after `into_sub_sender()` returns, `SubChannelReceiver::drop` drains all pending IPC messages (including any in-flight `Connect`) before broadcasting the disconnection notification.
 
 ### When to block
 

@@ -42,7 +42,7 @@ fn main() {
     let transport: IpcChannelSubSender<u32> = child_rx.recv().expect("recv of transport failed");
 
     // Reconstruct the SubSender and send a value back through the mux channel.
-    let sub_tx: SubSender<u32> = transport.into_sub_sender();
+    let sub_tx: SubSender<u32> = transport.into_sub_sender().expect("into_sub_sender failed");
     sub_tx.send(42).expect("send failed");
 
     process::exit(0);

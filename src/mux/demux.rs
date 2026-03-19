@@ -729,13 +729,7 @@ impl MultiReceiver {
 
     #[instrument(level = "debug")]
     fn drain(mr: &Arc<MultiReceiver>) {
-        loop {
-            let result = Self::try_recv(mr);
-            match result {
-                Ok(()) => {},
-                Err(_) => break,
-            }
-        }
+        while let Err(TryRecvError::Handled) = Self::try_recv(mr) {}
     }
 
     #[instrument(level = "debug", ret, err(level = "debug"))]
@@ -791,8 +785,10 @@ unsafe impl Sync for SubChannelReceiver {}
 
 impl Drop for SubChannelReceiver {
     fn drop(&mut self) {
-        // Clear any messages in MultiReceiver (which could cause sending to block).
-        let _ = MultiReceiver::try_recv(&self.multi_receiver);
+        // Drain all pending IPC messages. This ensures any Connect messages sent
+        // just before this drop are processed, so those clients are registered in
+        // ipc_senders before we broadcast SubReceiverDisconnected below.
+        MultiReceiver::drain(&self.multi_receiver);
 
         // Broadcast disconnection to all MultiSenders connected to the MultiReceiver for this SubChannelReceiver.
         // Note: This may be overkill as not all MultiSenders will have a SubChannelSender corresponding to this
