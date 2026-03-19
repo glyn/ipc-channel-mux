@@ -69,7 +69,7 @@ let tx = mux::SubSender::connect(server_name).unwrap(); // Typically in another 
 let (rx, data) = server.accept().unwrap();
 ~~~
 
-An advantage of creating a subchannel, rather than an IPC channel, using a one-shot server is that the subchannel can then be used to transmit subsenders.[^interop]
+An advantage of creating a subchannel, rather than an IPC channel, using a one-shot server is that the subchannel can then be used to transmit subsenders without consuming scarce operating system resources, such as file descriptors on Linux.
 
 ### Blocking receives
 
@@ -179,11 +179,9 @@ assert_eq!(&*received, b"hello shared world");
 | `mux::IpcReceiver<T>` | A raw `ipc::IpcReceiver<T>` | Through a subchannel |
 | `mux::IpcChannelSubSender<T>` | A `mux::SubSender<T>` | Through a raw IPC channel |
 
-See the [Incremental migration](MIGRATION.md#incremental-migration) section of the migration guide for worked examples.
-
 #### IPC senders and receivers
 
-`mux::IpcSender<T>` and `mux::IpcReceiver<T>` are wrappers that allow `ipc-channel` senders and receivers to be transmitted over subchannels. They are analogous to `mux::SharedMemory` for `IpcSharedMemory`: OS handles are transported via `ipc-channel`'s outer serialization layer rather than the inner postcard serialization.
+`mux::IpcSender<T>` and `mux::IpcReceiver<T>` are wrappers that allow `ipc-channel` senders and receivers to be transmitted over subchannels. They are analogous to `mux::SharedMemory` for `IpcSharedMemory`: OS handles are transported via `ipc-channel`'s serialization layer.
 
 ~~~Rust
 use ipc_channel::ipc;
@@ -213,7 +211,7 @@ assert_eq!(raw_rx.recv().unwrap(), 99);
 
 #### Subchannel senders over IPC channels
 
-`mux::IpcChannelSubSender<T>` is the reverse of `mux::IpcSender<T>`: it wraps a `SubSender<T>` for transmission over a raw `ipc-channel` IPC channel. This is useful when bootstrapping a complex communication topology where processes need to exchange subsenders before a subchannel is available.
+`mux::IpcChannelSubSender<T>` is the reverse of `mux::IpcSender<T>`: it wraps a `SubSender<T>` for transmission over a raw `ipc-channel` IPC channel. This is useful when bootstrapping a complex communication topology where processes need to exchange subsenders before a subchannel is established between the processes.
 
 ~~~Rust
 use ipc_channel::ipc;
@@ -315,8 +313,6 @@ However, it would be feasible to merge `ipc-channel-mux` into the IPC channel re
 
 [^never]: Creating a subchannel could exhaust the memory of a process, but memory allocation is treated as infallible in Rust as [Handling memory exhaustion – State of the art?](https://users.rust-lang.org/t/handling-memory-exhaustion-state-of-the-art/87375) explores.
 Essentially, if memory allocation fails, the program will panic or, more likely (at least on Linux), be killed by the Out of Memory killer.
-
-[^interop]: A subchannel can be used to transmit an IPC sender or receiver (`mux::IpcSender<T>`, `mux::IpcReceiver<T>`), and an IPC channel can be used to transmit a subchannel sender (`mux::IpcChannelSubSender<T>`). See the [incremental migration](MIGRATION.md#incremental-migration) section of the migration guide.
 
 [^gitdep]: An alternative would be to have the relevant Servo branch use a [git dependency](https://doc.rust-lang.org/cargo/reference/specifying-dependencies.html#specifying-dependencies-from-git-repositories) on `ipc-channel-mux`.
 
