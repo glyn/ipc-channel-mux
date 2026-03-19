@@ -376,7 +376,7 @@ crossbeam_channel::select! {
 
 ## Incremental migration
 
-When migrating a multi-process application, you may need `ipc-channel` and `ipc-channel-mux` to interoperate temporarily — some processes using raw IPC channels while others have been migrated to subchannels. Two bridge types support this:
+When migrating a multi-process application, you may need `ipc-channel` and `ipc-channel-mux` to interoperate temporarily — some processes using raw IPC channels while others have been migrated to subchannels. The following bridge types support this:
 
 | Type | Direction | Use case |
 |------|-----------|----------|
