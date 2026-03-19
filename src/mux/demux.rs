@@ -362,7 +362,7 @@ impl Demuxer {
                 if let Some(sm) = self.sub_channels.get(&scid) {
                     // Convert the opaque receiver to a typed one and wrap in a
                     // Mutex so the Fn() probe closure can call try_recv repeatedly.
-                    let rx = Arc::new(Mutex::new(keepalive.0.to::<()>()));
+                    let rx = Arc::new(Mutex::new(keepalive.unwrap().to::<()>()));
                     sm.to_be_sent(
                         EMPTY_SUBCHANNEL_ID,
                         Box::new(move || match rx.lock().unwrap().try_recv() {

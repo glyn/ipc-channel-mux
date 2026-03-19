@@ -36,10 +36,20 @@ use std::marker::PhantomData;
 /// from `OsIpcReceiver`'s `Cell<i32>` is not observable in practice.
 ///
 /// [`MultiMessage`]: super::protocol::MultiMessage
-pub(crate) struct SyncOpaqueIpcReceiver(pub(crate) OpaqueIpcReceiver);
+pub struct SyncOpaqueIpcReceiver(OpaqueIpcReceiver);
 
 // SAFETY: see doc comment above.
 unsafe impl Sync for SyncOpaqueIpcReceiver {}
+
+impl SyncOpaqueIpcReceiver {
+    pub fn new(r: OpaqueIpcReceiver) -> Self {
+        Self(r)
+    }
+
+    pub fn unwrap(self) -> OpaqueIpcReceiver {
+        self.0
+    }
+}
 
 impl std::fmt::Debug for SyncOpaqueIpcReceiver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

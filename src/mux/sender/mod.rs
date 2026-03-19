@@ -34,7 +34,7 @@ use uuid::Uuid;
 /// Sending end of a multiplexed channel.
 ///
 /// [MultiSender]: struct.MultiSender.html
-pub(crate) struct MultiSender {
+pub struct MultiSender {
     client_id: ClientId,
     ipc_sender: Arc<IpcSender<MultiMessage>>,
     uuid: Uuid,
@@ -44,7 +44,7 @@ pub(crate) struct MultiSender {
     sub_receiver_proxies: Mutex<HashMap<SubChannelId, SubReceiverProxy>>,
 }
 
-pub(crate) type Target = sender_id::Target<Arc<Mutex<MultiSender>>>;
+pub type Target = sender_id::Target<Arc<Mutex<MultiSender>>>;
 
 impl fmt::Debug for MultiSender {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -171,7 +171,7 @@ impl MultiSender {
     }
 }
 
-pub(crate) struct SubChannelDisconnector {
+pub struct SubChannelDisconnector {
     sub_channel_id: SubChannelId,
     ipc_sender: Arc<IpcSender<MultiMessage>>,
     source: Uuid,
@@ -210,7 +210,7 @@ impl SubChannelDisconnector {
     }
 }
 
-pub(crate) struct SubChannelSender {
+pub struct SubChannelSender {
     sub_channel_id: SubChannelId,
     ipc_sender: Arc<IpcSender<MultiMessage>>,
     disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
@@ -301,7 +301,7 @@ impl SubChannelSender {
                 if let Err(e) = self.multi_sender.lock().unwrap().send_message(
                     MultiMessage::SendingViaIpcChannel {
                         scid: self.sub_channel_id,
-                        keepalive: SyncOpaqueIpcReceiver(keepalive_rx.to_opaque()),
+                        keepalive: SyncOpaqueIpcReceiver::new(keepalive_rx.to_opaque()),
                     },
                 ) {
                     log::debug!("Failed to send SendingViaIpcChannel notification: {e}");
