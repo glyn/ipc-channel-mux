@@ -617,7 +617,6 @@ impl<'de> Deserialize<'de> for SubChannelSender {
             disc,
             ipc_sender_uuid,
             multi_sender.1,
-            None,
         ))
     }
 }

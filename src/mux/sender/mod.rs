@@ -217,10 +217,6 @@ pub struct SubChannelSender {
     ipc_sender_uuid: Uuid,
     sender_id: Arc<Mutex<Source<Weak<IpcSender<MultiMessage>>>>>,
     multi_sender: Arc<Mutex<MultiSender>>,
-    /// Keepalive sender for an IPC-channel transport. Held here so that it is
-    /// dropped (and the parent's probe fires) when this SubChannelSender is
-    /// dropped or when the process crashes. `None` for locally-created senders.
-    keepalive_tx: Option<Arc<ipc_channel::ipc::IpcSender<()>>>,
 }
 
 impl Clone for SubChannelSender {
@@ -232,7 +228,6 @@ impl Clone for SubChannelSender {
             ipc_sender_uuid: self.ipc_sender_uuid,
             sender_id: Arc::clone(&self.sender_id),
             multi_sender: Arc::clone(&self.multi_sender),
-            keepalive_tx: self.keepalive_tx.as_ref().map(Arc::clone),
         }
     }
 }
@@ -259,7 +254,6 @@ impl SubChannelSender {
             ipc_sender_uuid: locked_self.uuid(),
             sender_id: Arc::clone(&locked_self.sender_id),
             multi_sender: Arc::clone(&raw_self),
-            keepalive_tx: None,
         }
     }
 
@@ -269,7 +263,6 @@ impl SubChannelSender {
         disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
         ipc_sender_uuid: Uuid,
         multi_sender: Arc<Mutex<MultiSender>>,
-        keepalive_tx: Option<Arc<ipc_channel::ipc::IpcSender<()>>>,
     ) -> Self {
         SubChannelSender {
             sub_channel_id,
@@ -278,7 +271,6 @@ impl SubChannelSender {
             ipc_sender_uuid,
             sender_id: Arc::new(Mutex::new(Source::new())),
             multi_sender,
-            keepalive_tx,
         }
     }
 
