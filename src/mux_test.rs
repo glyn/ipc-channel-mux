@@ -1499,6 +1499,27 @@ fn ipc_channel_sub_sender_from_clone() {
 }
 
 #[test]
+fn ipc_channel_sub_sender_dropped_after_reconstruction() {
+    // Verify that dropping the SubSender reconstructed via into_sub_sender()
+    // causes the SubReceiver to return Disconnected.
+    let channel = mux::Channel::new().unwrap();
+    let (tx, rx) = channel.sub_channel::<u32>();
+
+    let (raw_tx, raw_rx) = raw_ipc::channel::<IpcChannelSubSender<u32>>().unwrap();
+    raw_tx.send(IpcChannelSubSender::from(tx)).unwrap();
+
+    let transport: IpcChannelSubSender<u32> = raw_rx.recv().unwrap();
+    let recovered_tx: SubSender<u32> = transport.into_sub_sender().unwrap();
+
+    drop(recovered_tx);
+
+    match rx.recv().unwrap_err() {
+        MuxError::Disconnected => (),
+        e => panic!("expected Disconnected, got {e:?}"),
+    }
+}
+
+#[test]
 fn ipc_channel_sub_sender_detects_receiver_disconnection() {
     // Verify that a SubSender reconstructed via into_sub_sender() correctly
     // detects when the SubReceiver is dropped.
