@@ -362,7 +362,7 @@ impl Demuxer {
                 if let Some(sm) = self.sub_channels.get(&scid) {
                     // Convert the opaque receiver to a typed one and wrap in a
                     // Mutex so the Fn() probe closure can call try_recv repeatedly.
-                    let rx = Arc::new(Mutex::new(keepalive.unwrap().to::<()>()));
+                    let rx = Arc::new(Mutex::new(keepalive.into_inner().to::<()>()));
                     sm.to_be_sent(
                         EMPTY_SUBCHANNEL_ID,
                         Box::new(move || match rx.lock().unwrap().try_recv() {
@@ -728,6 +728,9 @@ impl MultiReceiver {
 
     #[instrument(level = "debug")]
     fn drain(mr: &Arc<MultiReceiver>) {
+        // try_recv returns Err(TryRecvError::Handled) whenever any IPC message
+        // (control or data) was received and handled. Keep draining until the
+        // queue is empty (Err(TryRecvError::Empty)) or an error occurs.
         while let Err(TryRecvError::Handled) = Self::try_recv(mr) {}
     }
 

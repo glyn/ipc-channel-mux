@@ -296,7 +296,10 @@ impl SubChannelSender {
                         keepalive: SyncOpaqueIpcReceiver::new(keepalive_rx.to_opaque()),
                     },
                 ) {
-                    log::debug!("Failed to send SendingViaIpcChannel notification: {e}");
+                    log::debug!(
+                        "Failed to send SendingViaIpcChannel notification: {e}; \
+                         crash detection unavailable for this transport"
+                    );
                 }
                 (
                     self.sub_channel_id,

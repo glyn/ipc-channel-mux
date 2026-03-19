@@ -312,7 +312,6 @@ impl<T: Serialize> IpcChannelSubSender<T> {
 
         let disc_arc_sender = arc_ipc_sender.clone();
         let disc_multi_sender = multi_sender.clone();
-        let disc_keepalive = keepalive_tx;
         let disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync>> =
             Arc::new(SubSenderTracker::new(Box::new(move || {
                 SubChannelDisconnector::new(
@@ -322,7 +321,7 @@ impl<T: Serialize> IpcChannelSubSender<T> {
                     disc_multi_sender.clone(),
                 )
                 .dropped();
-                let _ = &disc_keepalive;
+                let _ = &keepalive_tx;
             })));
 
         let sub_channel_sender = SubChannelSender::from_deserialized(

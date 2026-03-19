@@ -46,7 +46,7 @@ impl SyncOpaqueIpcReceiver {
         Self(r)
     }
 
-    pub fn unwrap(self) -> OpaqueIpcReceiver {
+    pub fn into_inner(self) -> OpaqueIpcReceiver {
         self.0
     }
 }
