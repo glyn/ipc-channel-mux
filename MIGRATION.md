@@ -384,6 +384,14 @@ When migrating a multi-process application, you may need `ipc-channel` and `ipc-
 | `mux::IpcReceiver<T>` | IPC endpoint → subchannel | Pass a raw `ipc::IpcReceiver<T>` through a subchannel |
 | `mux::IpcChannelSubSender<T>` | Subchannel sender → IPC channel | Pass a `SubSender<T>` through a raw IPC channel |
 
+### Bridge types and file descriptor consumption
+
+Unlike plain subsender transmission — which consumes no file descriptors — the bridge types all consume file descriptors when transmitted on Unix variants: `mux::IpcSender<T>` and `mux::IpcReceiver<T>` each consume one file descriptor in the receiving process, while `mux::IpcChannelSubSender<T>` consumes three in total (two in the receiving process and one in the sending process).
+
+If bridge types are used at scale — for example, transmitting many wrapped senders or receivers in a loop — file descriptors can be exhausted just as they would be with raw `ipc-channel` usage, negating one of the key benefits of multiplexing.
+
+Bridge types should therefore be used sparingly, only at the boundary between migrated and unmigrated code, and replaced with plain subsenders as soon as both sides of a connection have been migrated.
+
 ### Passing a raw IPC endpoint through a subchannel
 
 If a migrated process needs to hand a raw `IpcSender<T>` or `IpcReceiver<T>` to another process via a subchannel, wrap it in `mux::IpcSender<T>` or `mux::IpcReceiver<T>` first:
