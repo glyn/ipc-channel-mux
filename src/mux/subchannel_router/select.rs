@@ -246,8 +246,24 @@ impl SelectableMultiReceiver {
     #[instrument(level = "debug", ret, err(level = "debug"))]
     fn handle(mr: Arc<SelectableMultiReceiver>, msg: MultiMessage) -> Result<(), MuxError> {
         let demuxer = &mut mr.receiver_demuxer.demuxer.lock().unwrap();
-        if let MultiMessage::Data(scid, payload, ipc_senders, shmems) = msg {
-            demuxer.send(scid, payload, &ipc_senders, mr.ipc_receiver_uuid, shmems)
+        if let MultiMessage::Data(
+            scid,
+            payload,
+            ipc_senders,
+            shmems,
+            ipc_channel_senders,
+            ipc_channel_receivers,
+        ) = msg
+        {
+            demuxer.send(
+                scid,
+                payload,
+                &ipc_senders,
+                mr.ipc_receiver_uuid,
+                shmems,
+                ipc_channel_senders,
+                ipc_channel_receivers,
+            )
         } else {
             demuxer.handle(msg, mr.ipc_receiver_uuid)
         }

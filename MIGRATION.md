@@ -373,3 +373,79 @@ crossbeam_channel::select! {
 ### Async/futures support
 
 `ipc-channel`'s `IpcReceiver::to_stream()` (behind the `"async"` feature flag) converts a receiver into a `futures::Stream`. `ipc-channel-mux` does not currently provide async support.
+
+## Incremental migration
+
+When migrating a multi-process application, you may need `ipc-channel` and `ipc-channel-mux` to interoperate temporarily — some processes using raw IPC channels while others have been migrated to subchannels. The following bridge types support this:
+
+| Type | Direction | Use case |
+|------|-----------|----------|
+| `mux::IpcSender<T>` | IPC endpoint → subchannel | Pass a raw `ipc::IpcSender<T>` through a subchannel |
+| `mux::IpcReceiver<T>` | IPC endpoint → subchannel | Pass a raw `ipc::IpcReceiver<T>` through a subchannel |
+| `mux::IpcChannelSubSender<T>` | Subchannel sender → IPC channel | Pass a `SubSender<T>` through a raw IPC channel |
+
+### Bridge types and file descriptor consumption
+
+Unlike plain subsender transmission — which consumes no file descriptors — the bridge types all consume file descriptors when transmitted on Unix variants: `mux::IpcSender<T>` and `mux::IpcReceiver<T>` each consume one file descriptor in the receiving process, while `mux::IpcChannelSubSender<T>` consumes three in total (two in the receiving process and one in the sending process).
+
+If bridge types are used at scale — for example, transmitting many wrapped senders or receivers in a loop — file descriptors can be exhausted just as they would be with raw `ipc-channel` usage, negating one of the key benefits of multiplexing.
+
+Bridge types should therefore be used sparingly, only at the boundary between migrated and unmigrated code, and replaced with plain subsenders as soon as both sides of a connection have been migrated.
+
+### Passing a raw IPC endpoint through a subchannel
+
+If a migrated process needs to hand a raw `IpcSender<T>` or `IpcReceiver<T>` to another process via a subchannel, wrap it in `mux::IpcSender<T>` or `mux::IpcReceiver<T>` first:
+
+~~~Rust
+use ipc_channel::ipc;
+use ipc_channel_mux::mux;
+
+// Un-migrated side: create a raw IPC channel.
+let (raw_tx, raw_rx) = ipc::channel::<u32>().unwrap();
+
+// Migrated side: pass the raw sender through a subchannel.
+let channel = mux::Channel::new().unwrap();
+let (tx, rx) = channel.sub_channel::<mux::IpcSender<u32>>();
+
+tx.send(mux::IpcSender::from(raw_tx)).unwrap();
+
+// Receiving side: unwrap back to the raw sender.
+let wrapped: mux::IpcSender<u32> = rx.recv().unwrap();
+let raw_tx: ipc::IpcSender<u32> = wrapped.into_inner();
+raw_tx.send(42).unwrap();
+
+assert_eq!(raw_rx.recv().unwrap(), 42);
+~~~
+
+`mux::IpcReceiver<T>` works the same way. Note that an `IpcReceiver<T>` may only be sent once; a second attempt returns a serialization error.
+
+### Passing a subchannel sender through a raw IPC channel
+
+If a process needs to bootstrap a subchannel connection before a mux channel is available, wrap the `SubSender<T>` in `mux::IpcChannelSubSender<T>` and send it over a raw IPC channel:
+
+~~~Rust
+use ipc_channel::ipc;
+use ipc_channel_mux::mux;
+
+// The subchannel exists in the local process.
+let channel = mux::Channel::new().unwrap();
+let (tx, rx) = channel.sub_channel::<u32>();
+
+// Wrap for raw IPC transport.
+let transport = mux::IpcChannelSubSender::from(tx);
+
+// Send over a raw IPC channel to the remote process.
+let (raw_tx, raw_rx) = ipc::channel::<mux::IpcChannelSubSender<u32>>().unwrap();
+raw_tx.send(transport).unwrap();
+
+// Remote process: reconstruct the SubSender.
+let received: mux::IpcChannelSubSender<u32> = raw_rx.recv().unwrap();
+let tx: mux::SubSender<u32> = received.into_sub_sender().unwrap();
+
+tx.send(42).unwrap();
+assert_eq!(rx.recv().unwrap(), 42);
+~~~
+
+The reconstructed `SubSender<T>` is fully functional: it sends `Disconnect` when dropped and detects subreceiver disconnection via `send` returning `Err(MuxError::Disconnected)`.
+
+`From<SubSender<T>>` is consuming. Clone the `SubSender` first if the original is also needed after wrapping.

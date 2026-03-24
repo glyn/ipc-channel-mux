@@ -7,7 +7,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use ipc_channel::ipc::{IpcSender, IpcSharedMemory};
+use crate::mux::ipc_channel::SyncOpaqueIpcReceiver;
+use ipc_channel::ipc::{IpcSender, IpcSharedMemory, OpaqueIpcSender};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::{Display, Formatter};
 use uuid::Uuid;
@@ -93,13 +94,15 @@ impl SubChannelSenderIds {
 
 /// MultiMessage is used to communicate across multiplexing channels.
 #[derive(Serialize, Deserialize, Debug)]
-pub enum MultiMessage {
+pub(crate) enum MultiMessage {
     Connect(IpcSender<MultiResponse>, ClientId),
     Data(
         SubChannelId,
         Vec<u8>,
         Vec<(SubChannelId, IpcSenderAndOrId)>,
         Vec<IpcSharedMemory>,
+        Vec<OpaqueIpcSender>,
+        Vec<SyncOpaqueIpcReceiver>,
     ),
     SubChannelId(SubChannelId, String),
     Sending {
@@ -117,6 +120,15 @@ pub enum MultiMessage {
         new_source: Uuid,
     },
     Disconnect(SubChannelId, Uuid),
+    /// Notifies the receiver that a subsender for `scid` is being transported
+    /// via an IPC channel (i.e. inside an `IpcChannelSubSender`). The
+    /// `keepalive` receiver remains open as long as the `IpcChannelSubSender`
+    /// (or the `SubSender` reconstructed from it) is alive in the remote
+    /// process; when it closes the probe detects the crash.
+    SendingViaIpcChannel {
+        scid: SubChannelId,
+        keepalive: SyncOpaqueIpcReceiver,
+    },
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]

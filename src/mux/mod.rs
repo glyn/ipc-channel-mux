@@ -131,6 +131,8 @@
 mod channel;
 mod demux;
 mod error;
+pub(crate) mod ipc_channel;
+mod ipc_channel_sub_sender;
 mod protocol;
 mod sender;
 pub(crate) mod shared_memory;
@@ -140,6 +142,8 @@ pub mod subchannel_router;
 
 pub use channel::{Channel, SubOneShotServer};
 pub use error::{MuxError, TryRecvError};
+pub use ipc_channel::{IpcReceiver, IpcSender};
+pub use ipc_channel_sub_sender::IpcChannelSubSender;
 pub use shared_memory::SharedMemory;
 pub use subchannel_endpoint::{
     BytesSubReceiver, BytesSubSender, OpaqueSubReceiver, OpaqueSubSender, SubReceiver, SubSender,

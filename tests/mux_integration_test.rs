@@ -7,6 +7,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use ipc_channel::ipc::{IpcOneShotServer, IpcSender as RawIpcSender};
 use ipc_channel_mux::mux;
 use std::{env, process};
 
@@ -58,6 +59,138 @@ fn spawn_sub_one_shot_server_client() {
         result.success(),
         "child process failed with exit status code {}",
         result.code().expect("exit status code not available")
+    );
+}
+
+/// Test that `IpcChannelSubSender` correctly transports a `SubSender` across a
+/// real process boundary.
+///
+/// The parent wraps its `SubSender<u32>` in an `IpcChannelSubSender` and
+/// delivers it to a child process over a raw IPC channel. The child
+/// reconstructs the `SubSender` and sends the value `42`. The parent asserts
+/// it receives `42` on the original `SubReceiver`.
+#[test]
+fn ipc_channel_sub_sender_cross_process() {
+    let executable_path: String =
+        env!("CARGO_BIN_EXE_ipc_channel_sub_sender_cross_process_helper").to_string();
+
+    // Create the mux channel and wrap the sender for transport.
+    let channel = mux::Channel::new().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel::<u32>();
+    let transport = mux::IpcChannelSubSender::try_from(sub_tx).unwrap();
+
+    // Create a one-shot server so the child can hand us an IpcSender endpoint.
+    // The child will send us an IpcSender<IpcChannelSubSender<u32>> which we
+    // then use to deliver the transport.
+    let (bootstrap_server, bootstrap_token) =
+        IpcOneShotServer::<RawIpcSender<mux::IpcChannelSubSender<u32>>>::new()
+            .expect("Failed to create bootstrap server");
+
+    let mut child = process::Command::new(executable_path)
+        .arg(bootstrap_token)
+        .spawn()
+        .expect("Failed to start child process");
+
+    // Accept the child's sender and deliver the IpcChannelSubSender to it.
+    let (_, child_sender) = bootstrap_server.accept().expect("bootstrap accept failed");
+    child_sender
+        .send(transport)
+        .expect("send of IpcChannelSubSender failed");
+
+    // The child reconstructs the SubSender and sends 42.
+    assert_eq!(sub_rx.recv().unwrap(), 42);
+
+    let result = child.wait().expect("wait for child process failed");
+    assert!(
+        result.success(),
+        "child process failed with exit status code {}",
+        result.code().expect("exit status code not available")
+    );
+}
+
+/// Test that when an `IpcChannelSubSender` is delivered to a process that
+/// crashes before calling `into_sub_sender`, the corresponding `SubReceiver`
+/// returns `MuxError::Disconnected`.
+#[test]
+fn ipc_channel_sub_sender_cross_process_crash() {
+    let executable_path: String =
+        env!("CARGO_BIN_EXE_ipc_channel_sub_sender_crashing_helper").to_string();
+
+    let channel = mux::Channel::new().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel::<u32>();
+    let transport = mux::IpcChannelSubSender::try_from(sub_tx).unwrap();
+
+    let (bootstrap_server, bootstrap_token) =
+        IpcOneShotServer::<RawIpcSender<mux::IpcChannelSubSender<u32>>>::new()
+            .expect("Failed to create bootstrap server");
+
+    let mut child = process::Command::new(executable_path)
+        .arg(bootstrap_token)
+        .spawn()
+        .expect("Failed to start child process");
+
+    let (_, child_sender) = bootstrap_server.accept().expect("bootstrap accept failed");
+    child_sender
+        .send(transport)
+        .expect("send of IpcChannelSubSender failed");
+
+    match sub_rx.recv() {
+        Err(mux::MuxError::Disconnected) => {},
+        result => panic!("unexpected result {result:?}"),
+    }
+
+    let result = child.wait().expect("wait for child process failed");
+    assert_eq!(
+        result.code().unwrap(),
+        1,
+        "child process did not terminate with exit status code 1"
+    );
+}
+
+/// Test that when a process crashes before receiving an `IpcChannelSubSender`
+/// (leaving it unread in the OS IPC buffer), the corresponding `SubReceiver`
+/// returns `MuxError::Disconnected`.
+#[test]
+fn ipc_channel_sub_sender_cross_process_crash_before_recv() {
+    let executable_path: String =
+        env!("CARGO_BIN_EXE_ipc_channel_sub_sender_crash_before_recv_helper").to_string();
+
+    let channel = mux::Channel::new().unwrap();
+    let (sub_tx, sub_rx) = channel.sub_channel::<u32>();
+    let transport = mux::IpcChannelSubSender::try_from(sub_tx).unwrap();
+
+    let (bootstrap_server, bootstrap_token) = IpcOneShotServer::<(
+        RawIpcSender<mux::IpcChannelSubSender<u32>>,
+        RawIpcSender<()>,
+    )>::new()
+    .expect("Failed to create bootstrap server");
+
+    let mut child = process::Command::new(executable_path)
+        .arg(bootstrap_token)
+        .spawn()
+        .expect("Failed to start child process");
+
+    let (_, (transport_sender, exit_sender)) =
+        bootstrap_server.accept().expect("bootstrap accept failed");
+
+    // Deliver the transport — the child will never read it.
+    transport_sender
+        .send(transport)
+        .expect("send of IpcChannelSubSender failed");
+
+    // Signal the child to exit.
+    exit_sender.send(()).expect("send of exit signal failed");
+
+    match sub_rx.recv() {
+        Err(mux::MuxError::Disconnected) => {},
+        result => panic!("unexpected result {result:?}"),
+    }
+
+    let result = child.wait().expect("wait for child process failed");
+    assert_eq!(
+        result.code().unwrap(),
+        1,
+        "child process did not terminate with exit status code 1"
     );
 }
 

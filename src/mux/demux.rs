@@ -8,6 +8,10 @@
 // except according to those terms.
 
 use crate::mux::error::MuxError;
+use crate::mux::ipc_channel::{
+    SyncOpaqueIpcReceiver, clear_ipc_receiver_deserialization_context,
+    clear_ipc_sender_deserialization_context, set_ipc_receivers_for_recv, set_ipc_senders_for_recv,
+};
 use crate::mux::protocol::{
     ClientId, EMPTY_SUBCHANNEL_ID, IpcSenderAndOrId, MultiMessage, MultiResponse, ORIGIN,
     SubChannelId, SubChannelSenderIds,
@@ -16,7 +20,7 @@ use crate::mux::sender::Target;
 use crate::mux::sender::{MultiSender, SubChannelDisconnector, SubChannelSender};
 use crate::mux::shared_memory::{clear_shmem_deserialization_context, set_shmems_for_recv};
 use crate::mux::subchannel_lifecycle::SubSenderTracker;
-use ipc_channel::ipc::{IpcReceiver, IpcSender, IpcSharedMemory};
+use ipc_channel::ipc::{IpcReceiver, IpcSender, IpcSharedMemory, OpaqueIpcSender};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
@@ -38,23 +42,34 @@ pub type ProtoSender = (
     Arc<SubSenderTracker<dyn Fn() + Send + Sync>>,
 );
 
+pub type ResolvedMessageParts = (
+    SubChannelId,
+    Vec<u8>,
+    VecDeque<ProtoSender>,
+    Vec<IpcSharedMemory>,
+    Vec<OpaqueIpcSender>,
+    Vec<SyncOpaqueIpcReceiver>,
+);
+
 pub struct ResolvedMessage {
     scid: SubChannelId,
     payload: Vec<u8>,
     senders: VecDeque<ProtoSender>,
     shmems: Vec<IpcSharedMemory>,
+    ipc_senders: Vec<OpaqueIpcSender>,
+    ipc_receivers: Vec<SyncOpaqueIpcReceiver>,
 }
 
 impl ResolvedMessage {
-    pub fn into_parts(
-        self,
-    ) -> (
-        SubChannelId,
-        Vec<u8>,
-        VecDeque<ProtoSender>,
-        Vec<IpcSharedMemory>,
-    ) {
-        (self.scid, self.payload, self.senders, self.shmems)
+    pub fn into_parts(self) -> ResolvedMessageParts {
+        (
+            self.scid,
+            self.payload,
+            self.senders,
+            self.shmems,
+            self.ipc_senders,
+            self.ipc_receivers,
+        )
     }
 
     fn deserialize<T>(self) -> Result<T, MuxError>
@@ -64,11 +79,15 @@ impl ResolvedMessage {
         log::trace!("ResolvedMessage::deserialize payload = {:#?}", self.payload);
         establish_deserialization_context(self.senders, self.scid);
         set_shmems_for_recv(self.shmems);
+        set_ipc_senders_for_recv(self.ipc_senders);
+        set_ipc_receivers_for_recv(self.ipc_receivers);
 
         let result = postcard::from_bytes::<T>(self.payload.as_slice());
 
         clear_deserialization_context();
         clear_shmem_deserialization_context();
+        clear_ipc_sender_deserialization_context();
+        clear_ipc_receiver_deserialization_context();
 
         result.map_err(From::from)
     }
@@ -195,7 +214,14 @@ impl Demuxer {
                 Ok(())
             },
 
-            MultiMessage::Data(scid, payload, ipc_senders, shmems) => {
+            MultiMessage::Data(
+                scid,
+                payload,
+                ipc_senders,
+                shmems,
+                ipc_channel_senders,
+                ipc_channel_receivers,
+            ) => {
                 let srs: VecDeque<ProtoSender> = ipc_senders
                     .iter()
                     .map(|(scid, s)| {
@@ -236,6 +262,8 @@ impl Demuxer {
                                 payload,
                                 senders: srs,
                                 shmems,
+                                ipc_senders: ipc_channel_senders,
+                                ipc_receivers: ipc_channel_receivers,
                             },
                         ))
                     } else {
@@ -330,6 +358,23 @@ impl Demuxer {
 
                 Ok(())
             },
+            MultiMessage::SendingViaIpcChannel { scid, keepalive } => {
+                if let Some(sm) = self.sub_channels.get(&scid) {
+                    // Convert the opaque receiver to a typed one and wrap in a
+                    // Mutex so the Fn() probe closure can call try_recv repeatedly.
+                    let rx = Arc::new(Mutex::new(keepalive.into_inner().to::<()>()));
+                    // EMPTY_SUBCHANNEL_ID is the sentinel for "not via any subchannel"; the
+                    // matching Received notification in into_sub_sender uses the same key.
+                    sm.to_be_sent(
+                        EMPTY_SUBCHANNEL_ID,
+                        Box::new(move || match rx.lock().unwrap().try_recv() {
+                            Ok(()) | Err(ipc_channel::TryRecvError::Empty) => true,
+                            Err(ipc_channel::TryRecvError::IpcError(_)) => false,
+                        }),
+                    );
+                }
+                Ok(())
+            },
             m @ MultiMessage::SubChannelId(..) => Err(MuxError::InternalError(format!(
                 "unexpected multi message {m:?}"
             ))),
@@ -374,6 +419,7 @@ impl Demuxer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn send(
         self: &mut Demuxer,
         scid: SubChannelId,
@@ -381,6 +427,8 @@ impl Demuxer {
         ipc_senders: &[(SubChannelId, IpcSenderAndOrId)],
         ipc_receiver_uuid: Uuid,
         shmems: Vec<IpcSharedMemory>,
+        ipc_channel_senders: Vec<OpaqueIpcSender>,
+        ipc_channel_receivers: Vec<SyncOpaqueIpcReceiver>,
     ) -> Result<(), MuxError> {
         let mut id_sender_results: IdSenderResults = VecDeque::new();
         for (scid, s) in ipc_senders {
@@ -416,6 +464,8 @@ impl Demuxer {
                         payload,
                         senders: srs,
                         shmems,
+                        ipc_senders: ipc_channel_senders,
+                        ipc_receivers: ipc_channel_receivers,
                     },
                 ));
                 match sent {
@@ -680,13 +730,10 @@ impl MultiReceiver {
 
     #[instrument(level = "debug")]
     fn drain(mr: &Arc<MultiReceiver>) {
-        loop {
-            let result = Self::try_recv(mr);
-            match result {
-                Ok(()) => {},
-                Err(_) => break,
-            }
-        }
+        // try_recv returns Err(TryRecvError::Handled) whenever any IPC message
+        // (control or data) was received and handled. Keep draining until the
+        // queue is empty (Err(TryRecvError::Empty)) or an error occurs.
+        while let Err(TryRecvError::Handled) = Self::try_recv(mr) {}
     }
 
     #[instrument(level = "debug", ret, err(level = "debug"))]
@@ -742,8 +789,10 @@ unsafe impl Sync for SubChannelReceiver {}
 
 impl Drop for SubChannelReceiver {
     fn drop(&mut self) {
-        // Clear any messages in MultiReceiver (which could cause sending to block).
-        let _ = MultiReceiver::try_recv(&self.multi_receiver);
+        // Drain all pending IPC messages. This ensures any Connect messages sent
+        // just before this drop are processed, so those clients are registered in
+        // ipc_senders before we broadcast SubReceiverDisconnected below.
+        MultiReceiver::drain(&self.multi_receiver);
 
         // Broadcast disconnection to all MultiSenders connected to the MultiReceiver for this SubChannelReceiver.
         // Note: This may be overkill as not all MultiSenders will have a SubChannelSender corresponding to this
@@ -775,6 +824,8 @@ impl Drop for SubChannelReceiver {
             payload: _,
             senders: scids_and_multi_senders,
             shmems: _,
+            ipc_senders: _,
+            ipc_receivers: _,
         })) = self.channel.try_recv()
         {
             // log::trace!(
@@ -996,6 +1047,8 @@ mod tests {
                 IpcSenderAndOrId::IpcSender(ipc_tx, sender_uuid.to_string()),
             )],
             vec![],
+            vec![],
+            vec![],
         );
 
         let result = demuxer.handle(msg, Uuid::new_v4());
@@ -1045,6 +1098,8 @@ mod tests {
                 IpcSenderAndOrId::IpcSender(ipc_tx, sender_uuid.to_string()),
             )],
             Uuid::new_v4(),
+            vec![],
+            vec![],
             vec![],
         );
 

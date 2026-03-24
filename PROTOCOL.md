@@ -62,6 +62,21 @@ being transmitted inside a `Data` message on subchannel `via`. The
 `via_chan` field carries the `IpcSenderAndOrId` of the IPC sender used by
 the channel carrying the subsender.
 
+### `SendingViaIpcChannel { scid, keepalive }`
+
+Notifies the receiver that a subsender for subchannel `scid` is being
+transported via an `IpcChannelSubSender` (i.e. over a raw IPC channel to
+another process). The `keepalive` field is an `IpcReceiver<()>` whose
+sender end (`keepalive_tx`) is embedded in the `IpcChannelSubSender` and
+held by the remote process for the lifetime of the wrapper or the
+`SubSender` reconstructed from it. When the remote process drops the sender
+or crashes, the receiver end closes and the probe detects the disconnection.
+
+This message is used instead of `Sending` for IPC channel transport because
+`Sending`'s probe mechanism (checking the response channel of the carrying
+IPC sender) does not detect remote-process crashes when the carrying sender
+belongs to the local process.
+
 ### `Received { scid, via, new_source }`
 
 Confirms that a subsender for subchannel `scid`, which was in flight via
@@ -182,12 +197,47 @@ lifecycle is tracked to ensure proper disconnection detection:
    disconnected and no copies are in flight, the subchannel is fully
    disconnected.
 
+### IpcChannelSubSender Lifecycle
+
+When a `SubSender` is transported to another process via `IpcChannelSubSender`
+(a raw `ipc-channel` IPC channel), a different lifecycle applies:
+
+1. **Wrap**: `IpcChannelSubSender::from(sub_tx)` calls
+   `begin_ipc_channel_transport`, which:
+   - Creates a keepalive IPC channel `(keepalive_tx, keepalive_rx)`.
+   - Sends `SendingViaIpcChannel { scid, keepalive: keepalive_rx }` to the
+     local demuxer to register the in-flight entry and install the probe.
+   - Embeds `keepalive_tx` in the `IpcChannelSubSender` value.
+   - The original `SubSender` is consumed; its disconnector fires, sending
+     `Disconnect(scid, ORIGIN)`. Because the in-flight entry was registered
+     first, the state machine defers full disconnection.
+2. **Transport**: The `IpcChannelSubSender` (including `keepalive_tx`) is
+   sent over a raw IPC channel to the remote process. The OS handle for
+   `keepalive_tx` is duplicated into the remote process.
+3. **Reconstruct**: The remote process calls `into_sub_sender()`, which:
+   - Extracts `keepalive_tx` and stores it in the reconstructed
+     `SubChannelSender` so it is held for the sender's lifetime.
+   - Sends `Received { scid, via: EMPTY_SUBCHANNEL_ID, new_source }` to
+     register the remote process as the new source.
+4. **Disconnection**: When the reconstructed `SubSender` is dropped in the
+   remote process, `keepalive_tx` drops and `Disconnect(scid, new_source)`
+   is sent as usual.
+5. **Crash detection**: If the remote process crashes (or drops the
+   `IpcChannelSubSender` without calling `into_sub_sender`), `keepalive_tx`
+   is closed by the OS. The next probe call finds `IpcError` on `keepalive_rx`
+   and signals disconnection (see _Probing_ below).
+
 ### Probing
 
-When subsenders are in flight (between `Sending` and `Received`), the
-receiver periodically checks whether the channel carrying the subsender is
-still alive by performing a non-blocking `try_recv` on the response channel
-associated with the carrying channel's IPC sender:
+When subsenders are in flight the receiver periodically performs a
+non-blocking probe to detect whether the remote process carrying the
+subsender has crashed. Two probing mechanisms are used depending on how the
+subsender is being transported.
+
+**`Sending` (subsender sent inside a `Data` message on another subchannel)**
+
+The probe calls `try_recv` on the response channel associated with the
+carrying channel's IPC sender:
 
 - If `try_recv` returns `IpcError`, the remote process has crashed and all
   in-flight entries for that channel are removed. If no sources remain, the
@@ -195,8 +245,25 @@ associated with the carrying channel's IPC sender:
 - If `try_recv` returns `Empty`, the channel is still alive.
 - Any `SubReceiverDisconnected` messages received are processed normally.
 
-This prevents indefinite waits when a process carrying a subsender in transit
-has crashed.
+**`SendingViaIpcChannel` (subsender transported via `IpcChannelSubSender`)**
+
+The probe calls `try_recv` on the `keepalive` `IpcReceiver<()>` that was
+delivered in the `SendingViaIpcChannel` message. The sender end
+(`keepalive_tx`) is held by the remote process inside the
+`IpcChannelSubSender` or the `SubSender` reconstructed from it:
+
+- If `try_recv` returns `IpcError`, the remote process has dropped the
+  keepalive sender (crashed or cleanly dropped the subsender) and all
+  in-flight entries are removed. If no sources remain, the subchannel is
+  marked as disconnected.
+- If `try_recv` returns `Empty` or `Ok`, the sender is still alive.
+
+If keepalive channel creation fails at transport time, the implementation
+falls back to sending a `Sending` message instead; crash detection is then
+unavailable for that transport.
+
+Both mechanisms prevent indefinite waits when a process carrying a subsender
+in transit has crashed.
 
 ### Shared Memory
 

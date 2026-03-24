@@ -9,11 +9,16 @@
 
 use crate::mux::demux::SubChannelReceiver;
 use crate::mux::error::{MuxError, TryRecvError};
-use crate::mux::sender::SubChannelSender;
+use crate::mux::ipc_channel_sub_sender::IpcChannelSubSender;
+use crate::mux::protocol::{EMPTY_SUBCHANNEL_ID, MultiMessage};
+use crate::mux::sender::{MultiSender, SubChannelDisconnector, SubChannelSender};
+use crate::mux::subchannel_lifecycle::{SubReceiverProxy, SubSenderTracker};
 use serde::{Deserialize, Serialize};
 use std::marker::PhantomData;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing::instrument;
+use uuid::Uuid;
 
 /// SubSender is the sending end of a subchannel, used to serialize and send messages of a given type.
 ///
@@ -32,7 +37,7 @@ where
     T: Serialize,
 {
     /// Convert a SubChannelSender to a SubSender.
-    pub fn from_sender(sub_channel_sender: SubChannelSender) -> Self {
+    pub(crate) fn from_sender(sub_channel_sender: SubChannelSender) -> Self {
         SubSender {
             sub_channel_sender,
             phantom: PhantomData,
@@ -265,6 +270,80 @@ impl OpaqueSubReceiver {
     }
 }
 
+impl<T: Serialize> TryFrom<SubSender<T>> for IpcChannelSubSender<T> {
+    type Error = MuxError;
+
+    fn try_from(sender: SubSender<T>) -> Result<Self, MuxError> {
+        let (sub_channel_id, ipc_sender, ipc_sender_uuid, keepalive_tx) =
+            sender.sub_channel_sender.begin_ipc_channel_transport()?;
+        Ok(IpcChannelSubSender::new(
+            sub_channel_id,
+            ipc_sender,
+            ipc_sender_uuid,
+            keepalive_tx,
+        ))
+    }
+}
+
+impl<T: Serialize> IpcChannelSubSender<T> {
+    /// Reconstruct a [`SubSender<T>`] from this transport value.
+    ///
+    /// Sends a `Connect` message to register a response channel with the
+    /// receiver so that subreceiver disconnection can be detected, and a
+    /// `Received` lifecycle notification to register the calling process as a
+    /// new sender source. The returned [`SubSender<T>`] behaves identically to
+    /// a locally-created `SubSender`: it can send messages, detects subreceiver
+    /// disconnection via `is_receiver_connected`, and sends `Disconnect` when
+    /// dropped.
+    pub fn into_sub_sender(self) -> Result<SubSender<T>, MuxError> {
+        let (sub_channel_id, ipc_sender, ipc_sender_uuid, keepalive_tx) = self.into_parts();
+        let arc_ipc_sender = Arc::new(ipc_sender);
+        let new_source = Uuid::new_v4();
+        let multi_sender = MultiSender::connect_sender(arc_ipc_sender.clone(), ipc_sender_uuid)?;
+        multi_sender
+            .lock()
+            .unwrap()
+            .insert_sub_receiver_proxy(sub_channel_id, SubReceiverProxy::new());
+
+        let disc_arc_sender = arc_ipc_sender.clone();
+        let disc_multi_sender = multi_sender.clone();
+        let disconnector: Arc<SubSenderTracker<dyn Fn() + Send + Sync>> =
+            Arc::new(SubSenderTracker::new(Box::new(move || {
+                SubChannelDisconnector::new(
+                    sub_channel_id,
+                    disc_arc_sender.clone(),
+                    new_source,
+                    disc_multi_sender.clone(),
+                )
+                .dropped();
+                // Keep keepalive_tx alive until the disconnector is dropped; dropping it
+                // signals the demuxer's probe that this sender is gone.
+                let _ = &keepalive_tx;
+            })));
+
+        let sub_channel_sender = SubChannelSender::from_deserialized(
+            sub_channel_id,
+            arc_ipc_sender.clone(),
+            disconnector,
+            ipc_sender_uuid,
+            multi_sender,
+        );
+
+        // Register this process as a new source in the state machine.
+        arc_ipc_sender
+            .send(MultiMessage::Received {
+                scid: sub_channel_id,
+                // EMPTY_SUBCHANNEL_ID matches the key used by the demuxer's
+                // SendingViaIpcChannel handler when registering the in-flight entry.
+                via: EMPTY_SUBCHANNEL_ID,
+                new_source,
+            })
+            .map_err(MuxError::from)?;
+
+        Ok(SubSender::from_sender(sub_channel_sender))
+    }
+}
+
 /// BytesSubSender is the sending end of a bytes subchannel, used to send raw byte data
 /// with reduced serialization overhead.
 ///
@@ -278,8 +357,7 @@ pub struct BytesSubSender {
 
 impl BytesSubSender {
     /// Convert a SubChannelSender to a BytesSubSender.
-    #[doc(hidden)]
-    pub fn from_sender(sub_channel_sender: SubChannelSender) -> Self {
+    pub(crate) fn from_sender(sub_channel_sender: SubChannelSender) -> Self {
         BytesSubSender { sub_channel_sender }
     }
 }

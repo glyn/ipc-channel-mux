@@ -10,9 +10,14 @@
 mod sender_id;
 
 use crate::mux::error::MuxError;
+use crate::mux::ipc_channel::SyncOpaqueIpcReceiver;
+use crate::mux::ipc_channel::{
+    clear_ipc_receiver_serialization_context, clear_ipc_sender_serialization_context,
+    take_ipc_receivers_for_send, take_ipc_senders_for_send,
+};
 use crate::mux::protocol::{
-    ClientId, IpcSenderAndOrId, MultiMessage, MultiResponse, ORIGIN, SubChannelId,
-    SubChannelSenderIds,
+    ClientId, EMPTY_SUBCHANNEL_ID, IpcSenderAndOrId, MultiMessage, MultiResponse, ORIGIN,
+    SubChannelId, SubChannelSenderIds,
 };
 use crate::mux::shared_memory::{clear_shmem_serialization_context, take_shmems_for_send};
 use crate::mux::subchannel_lifecycle::{SubReceiverProxy, SubSenderTracker};
@@ -34,7 +39,7 @@ pub struct MultiSender {
     ipc_sender: Arc<IpcSender<MultiMessage>>,
     uuid: Uuid,
     sender_id: Arc<Mutex<Source<Weak<IpcSender<MultiMessage>>>>>,
-    response_receiver: IpcReceiver<MultiResponse>,
+    response_receiver: Option<IpcReceiver<MultiResponse>>,
     disconnected: AtomicBool,
     sub_receiver_proxies: Mutex<HashMap<SubChannelId, SubReceiverProxy>>,
 }
@@ -61,7 +66,7 @@ impl MultiSender {
             ipc_sender,
             uuid: Uuid::new_v4(),
             sender_id: Arc::new(Mutex::new(Source::new())),
-            response_receiver,
+            response_receiver: Some(response_receiver),
             disconnected: AtomicBool::new(false),
             sub_receiver_proxies: Mutex::new(HashMap::new()),
         }
@@ -109,7 +114,7 @@ impl MultiSender {
             ipc_sender: sender,
             uuid: ipc_sender_uuid,
             sender_id: Arc::new(Mutex::new(Source::new())),
-            response_receiver,
+            response_receiver: Some(response_receiver),
             disconnected: AtomicBool::new(false),
             sub_receiver_proxies: Mutex::new(HashMap::new()),
         })))
@@ -146,8 +151,11 @@ impl MultiSender {
         if self.disconnected.load(Ordering::Relaxed) {
             return false;
         }
+        let Some(ref response_receiver) = self.response_receiver else {
+            return true;
+        };
         loop {
-            match self.response_receiver.try_recv() {
+            match response_receiver.try_recv() {
                 Ok(MultiResponse::SubReceiverDisconnected(scid)) => {
                     if let Some(proxy) = self.sub_receiver_proxies.lock().unwrap().get(&scid) {
                         proxy.disconnect();
@@ -201,6 +209,15 @@ impl SubChannelDisconnector {
         }
     }
 }
+
+/// Components returned by [`SubChannelSender::begin_ipc_channel_transport`]:
+/// the subchannel ID, raw IPC sender, sender UUID, and optional keepalive sender.
+pub type IpcChannelTransportParts = (
+    SubChannelId,
+    IpcSender<MultiMessage>,
+    Uuid,
+    Option<ipc_channel::ipc::IpcSender<()>>,
+);
 
 pub struct SubChannelSender {
     sub_channel_id: SubChannelId,
@@ -266,6 +283,61 @@ impl SubChannelSender {
         }
     }
 
+    /// Extract the components needed to reconstruct this sender in another process
+    /// via an IPC channel transport. Sends a `SendingViaIpcChannel` lifecycle
+    /// notification (with a keepalive sender included in the returned value) so the
+    /// state machine does not signal premature disconnection while the transport is
+    /// in transit, and can detect a crash of the receiving process.
+    pub fn begin_ipc_channel_transport(self) -> Result<IpcChannelTransportParts, MuxError> {
+        let raw_ipc_sender = (*self.ipc_sender).clone();
+        match ipc::channel::<()>() {
+            Ok((keepalive_tx, keepalive_rx)) => {
+                if let Err(e) = self.multi_sender.lock().unwrap().send_message(
+                    MultiMessage::SendingViaIpcChannel {
+                        scid: self.sub_channel_id,
+                        keepalive: SyncOpaqueIpcReceiver::new(keepalive_rx.to_opaque()),
+                    },
+                ) {
+                    log::debug!(
+                        "Failed to send SendingViaIpcChannel notification: {e}; \
+                         crash detection unavailable for this transport"
+                    );
+                }
+                Ok((
+                    self.sub_channel_id,
+                    raw_ipc_sender,
+                    self.ipc_sender_uuid,
+                    Some(keepalive_tx),
+                ))
+            },
+            Err(e) => {
+                log::debug!(
+                    "Failed to create keepalive channel for IPC channel transport: {e}; \
+                     falling back to Sending without crash detection"
+                );
+                self.multi_sender
+                    .lock()
+                    .unwrap()
+                    .send_message(MultiMessage::Sending {
+                        scid: self.sub_channel_id,
+                        // EMPTY_SUBCHANNEL_ID is the sentinel for "not via any subchannel"; the
+                        // matching Received notification in into_sub_sender uses the same key.
+                        via: EMPTY_SUBCHANNEL_ID,
+                        via_chan: IpcSenderAndOrId::IpcSender(
+                            raw_ipc_sender.clone(),
+                            self.ipc_sender_uuid.to_string(),
+                        ),
+                    })?;
+                Ok((
+                    self.sub_channel_id,
+                    raw_ipc_sender,
+                    self.ipc_sender_uuid,
+                    None,
+                ))
+            },
+        }
+    }
+
     #[instrument(level = "debug", skip(msg), err(level = "debug"))]
     pub fn send<T>(&self, msg: T) -> Result<(), MuxError>
     where
@@ -282,10 +354,14 @@ impl SubChannelSender {
         }
         clear_serialization_context();
         clear_shmem_serialization_context();
+        clear_ipc_sender_serialization_context();
+        clear_ipc_receiver_serialization_context();
 
         let payload = postcard::to_stdvec(&msg).map_err(MuxError::from)?;
 
         let shmems = take_shmems_for_send();
+        let ipc_channel_senders = take_ipc_senders_for_send();
+        let ipc_channel_receivers = take_ipc_receivers_for_send();
         let serialized_senders = take_serialization_context();
 
         // Notify transmission of any subchannel senders so that they are counted during transmission.
@@ -316,6 +392,8 @@ impl SubChannelSender {
             payload,
             srs,
             shmems,
+            ipc_channel_senders,
+            ipc_channel_receivers,
         ));
         log::debug!("<SubChannelSender::send -> {:#?}", result.as_ref());
         result.map_err(From::from)

@@ -12,13 +12,17 @@ use crate::mux::demux::{
     establish_deserialization_context,
 };
 use crate::mux::error::MuxError;
+use crate::mux::ipc_channel::{
+    SyncOpaqueIpcReceiver, clear_ipc_receiver_deserialization_context,
+    clear_ipc_sender_deserialization_context, set_ipc_receivers_for_recv, set_ipc_senders_for_recv,
+};
 use crate::mux::protocol::SubChannelId;
 use crate::mux::shared_memory::{clear_shmem_deserialization_context, set_shmems_for_recv};
 use crate::mux::subchannel_router::select::{
     MultiReceiverSet, OpaqueSelectableSubReceiver, SelectableSubChannelReceiver,
     SelectableSubReceiver,
 };
-use ipc_channel::ipc::IpcSharedMemory;
+use ipc_channel::ipc::{IpcSharedMemory, OpaqueIpcSender};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::io;
@@ -66,6 +70,8 @@ pub struct RawMessage {
     senders: VecDeque<ProtoSender>,
     scid: SubChannelId,
     shmems: Vec<IpcSharedMemory>,
+    ipc_senders: Vec<OpaqueIpcSender>,
+    ipc_receivers: Vec<SyncOpaqueIpcReceiver>,
 }
 
 impl RawMessage {
@@ -76,11 +82,15 @@ impl RawMessage {
     {
         establish_deserialization_context(self.senders, self.scid);
         set_shmems_for_recv(self.shmems);
+        set_ipc_senders_for_recv(self.ipc_senders);
+        set_ipc_receivers_for_recv(self.ipc_receivers);
 
         let result = postcard::from_bytes::<T>(self.payload.as_slice());
 
         clear_deserialization_context();
         clear_shmem_deserialization_context();
+        clear_ipc_sender_deserialization_context();
+        clear_ipc_receiver_deserialization_context();
 
         result.map_err(From::from)
     }
@@ -201,7 +211,8 @@ impl SubReceiverSet {
         loop {
             match self.rx.try_recv() {
                 Ok(ResolvedMessageOrDisconnect::ResolvedMessage(resolved)) => {
-                    let (scid, payload, senders, shmems) = resolved.into_parts();
+                    let (scid, payload, senders, shmems, ipc_senders, ipc_receivers) =
+                        resolved.into_parts();
                     let id = *self.ids.get(&scid).ok_or_else(|| {
                         MuxError::InternalError(format!("missing id for subchannel {scid}"))
                     })?;
@@ -212,6 +223,8 @@ impl SubReceiverSet {
                             senders,
                             scid,
                             shmems,
+                            ipc_senders,
+                            ipc_receivers,
                         },
                     ));
                 },

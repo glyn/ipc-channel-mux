@@ -68,7 +68,7 @@ jobs:
       - name: Cargo test
         run: cargo test --features "${{ matrix.features }}" --target ${{ matrix.platform.target }} -- --nocapture
         env:
-          RUST_MIN_STACK: ${{ contains(matrix.platform.target, 'windows') && '8388608' || '' }}
+          RUST_MIN_STACK: ${{ contains(matrix.platform.target, 'windows') && '16777216' || '' }}
 
   build_result:
     name: Result
