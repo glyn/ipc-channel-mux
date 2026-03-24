@@ -98,6 +98,12 @@ pub enum ResolvedMessageOrDisconnect {
     Disconnect(SubChannelId),
 }
 
+impl From<mpsc::SendError<ResolvedMessageOrDisconnect>> for MuxError {
+    fn from(_: mpsc::SendError<ResolvedMessageOrDisconnect>) -> Self {
+        MuxError::Disconnected
+    }
+}
+
 type IdSenders = VecDeque<(
     SubChannelId,
     Arc<Mutex<MultiSender>>,
@@ -295,9 +301,7 @@ impl Demuxer {
                 if let Some(sm) = self.sub_channels.get(&scid) {
                     log::trace!("About to send disconnect to SubSenderStateMachine");
                     if let Some(sender) = sm.disconnect(source) {
-                        if let Err(e) = sender.send(ResolvedMessageOrDisconnect::Disconnect(scid)) {
-                            log::debug!("Failed to send disconnect: {e}");
-                        }
+                        sender.send(ResolvedMessageOrDisconnect::Disconnect(scid))?;
                     }
                 }
 
@@ -322,13 +326,7 @@ impl Demuxer {
                             log::trace!("Error processing Sending message: {e:?}");
                             sm.to_be_sent(via, Box::new(|| false));
                             if let Some(sender) = sm.receive_failed(&via) {
-                                if let Err(e) =
-                                    sender.send(ResolvedMessageOrDisconnect::Disconnect(scid))
-                                {
-                                    log::debug!(
-                                        "Failed to send disconnect after receive_failed: {e}"
-                                    );
-                                }
+                                sender.send(ResolvedMessageOrDisconnect::Disconnect(scid))?;
                             }
                         },
                     }
@@ -339,9 +337,7 @@ impl Demuxer {
             MultiMessage::ReceiveFailed { scid, via } => {
                 if let Some(sm) = self.sub_channels.get(&scid) {
                     if let Some(sender) = sm.receive_failed(&via) {
-                        if let Err(e) = sender.send(ResolvedMessageOrDisconnect::Disconnect(scid)) {
-                            log::debug!("Failed to send disconnect after receive_failed: {e}");
-                        }
+                        sender.send(ResolvedMessageOrDisconnect::Disconnect(scid))?;
                     }
                 }
 
