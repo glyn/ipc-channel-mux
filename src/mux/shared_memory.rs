@@ -130,23 +130,23 @@ impl<'de> Deserialize<'de> for SharedMemory {
 
 // Context management functions used by the sender and demuxer.
 
-pub(crate) fn clear_shmem_serialization_context() {
+pub fn clear_shmem_serialization_context() {
     SHMEM_FOR_SERIALIZATION.with(|regions| {
         regions.borrow_mut().clear();
     });
 }
 
-pub(crate) fn take_shmems_for_send() -> Vec<IpcSharedMemory> {
+pub fn take_shmems_for_send() -> Vec<IpcSharedMemory> {
     SHMEM_FOR_SERIALIZATION.with(std::cell::RefCell::take)
 }
 
-pub(crate) fn set_shmems_for_recv(shmems: Vec<IpcSharedMemory>) {
+pub fn set_shmems_for_recv(shmems: Vec<IpcSharedMemory>) {
     SHMEM_FOR_DESERIALIZATION.with(|regions| {
         *regions.borrow_mut() = shmems.into_iter().map(Some).collect();
     });
 }
 
-pub(crate) fn clear_shmem_deserialization_context() {
+pub fn clear_shmem_deserialization_context() {
     SHMEM_FOR_DESERIALIZATION.with(|regions| {
         regions.borrow_mut().clear();
     });

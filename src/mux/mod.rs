@@ -135,7 +135,7 @@ pub(crate) mod ipc_channel;
 mod ipc_channel_sub_sender;
 mod protocol;
 mod sender;
-pub(crate) mod shared_memory;
+mod shared_memory;
 mod subchannel_endpoint;
 mod subchannel_lifecycle;
 pub mod subchannel_router;

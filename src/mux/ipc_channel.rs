@@ -242,38 +242,38 @@ impl<'de, T: Serialize + Deserialize<'de>> Deserialize<'de> for IpcReceiver<T> {
 
 // Context management functions used by the sender and demuxer.
 
-pub(crate) fn clear_ipc_sender_serialization_context() {
+pub fn clear_ipc_sender_serialization_context() {
     IPC_SENDERS_FOR_SER.with(|s| s.borrow_mut().clear());
 }
 
-pub(crate) fn clear_ipc_receiver_serialization_context() {
+pub fn clear_ipc_receiver_serialization_context() {
     IPC_RECEIVERS_FOR_SER.with(|r| r.borrow_mut().clear());
 }
 
-pub(crate) fn take_ipc_senders_for_send() -> Vec<OpaqueIpcSender> {
+pub fn take_ipc_senders_for_send() -> Vec<OpaqueIpcSender> {
     IPC_SENDERS_FOR_SER.with(|s| std::mem::take(&mut *s.borrow_mut()))
 }
 
-pub(crate) fn take_ipc_receivers_for_send() -> Vec<SyncOpaqueIpcReceiver> {
+pub fn take_ipc_receivers_for_send() -> Vec<SyncOpaqueIpcReceiver> {
     IPC_RECEIVERS_FOR_SER.with(|r| std::mem::take(&mut *r.borrow_mut()))
 }
 
-pub(crate) fn set_ipc_senders_for_recv(senders: Vec<OpaqueIpcSender>) {
+pub fn set_ipc_senders_for_recv(senders: Vec<OpaqueIpcSender>) {
     IPC_SENDERS_FOR_DE.with(|s| {
         *s.borrow_mut() = senders.into_iter().map(Some).collect();
     });
 }
 
-pub(crate) fn set_ipc_receivers_for_recv(receivers: Vec<SyncOpaqueIpcReceiver>) {
+pub fn set_ipc_receivers_for_recv(receivers: Vec<SyncOpaqueIpcReceiver>) {
     IPC_RECEIVERS_FOR_DE.with(|r| {
         *r.borrow_mut() = receivers.into_iter().map(|r| Some(r.0)).collect();
     });
 }
 
-pub(crate) fn clear_ipc_sender_deserialization_context() {
+pub fn clear_ipc_sender_deserialization_context() {
     IPC_SENDERS_FOR_DE.with(|s| s.borrow_mut().clear());
 }
 
-pub(crate) fn clear_ipc_receiver_deserialization_context() {
+pub fn clear_ipc_receiver_deserialization_context() {
     IPC_RECEIVERS_FOR_DE.with(|r| r.borrow_mut().clear());
 }
