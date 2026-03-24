@@ -6,11 +6,9 @@ Meet the design goals in README.md.
 
 ## Error handling
 
-The code should return errors rather than use unwrap(), except in examples, tests, benchmarks, spawned threads and processes, and for unwrapping MutexGuards.
+Propagate errors to the caller using `?` or by returning `Result`. Do not swallow errors by logging and continuing.
 
-In spawned threads and processes use except() rather than unwrap().
-
-Do not swallow errors, log them using log::debug!().
+Do not use `unwrap()`, except in examples, tests, benchmarks, spawned threads and processes, and for unwrapping `MutexGuard`s. In spawned threads and processes use `expect()` rather than `unwrap()`.
 
 ## Encapsulation
 

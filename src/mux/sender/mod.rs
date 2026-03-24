@@ -16,8 +16,8 @@ use crate::mux::ipc_channel::{
     take_ipc_receivers_for_send, take_ipc_senders_for_send,
 };
 use crate::mux::protocol::{
-    ClientId, EMPTY_SUBCHANNEL_ID, IpcSenderAndOrId, MultiMessage, MultiResponse, ORIGIN,
-    SubChannelId, SubChannelSenderIds,
+    ClientId, IpcSenderAndOrId, MultiMessage, MultiResponse, ORIGIN, SubChannelId,
+    SubChannelSenderIds,
 };
 use crate::mux::shared_memory::{clear_shmem_serialization_context, take_shmems_for_send};
 use crate::mux::subchannel_lifecycle::{SubReceiverProxy, SubSenderTracker};
@@ -290,52 +290,20 @@ impl SubChannelSender {
     /// in transit, and can detect a crash of the receiving process.
     pub fn begin_ipc_channel_transport(self) -> Result<IpcChannelTransportParts, MuxError> {
         let raw_ipc_sender = (*self.ipc_sender).clone();
-        match ipc::channel::<()>() {
-            Ok((keepalive_tx, keepalive_rx)) => {
-                if let Err(e) = self.multi_sender.lock().unwrap().send_message(
-                    MultiMessage::SendingViaIpcChannel {
-                        scid: self.sub_channel_id,
-                        keepalive: SyncOpaqueIpcReceiver::new(keepalive_rx.to_opaque()),
-                    },
-                ) {
-                    log::debug!(
-                        "Failed to send SendingViaIpcChannel notification: {e}; \
-                         crash detection unavailable for this transport"
-                    );
-                }
-                Ok((
-                    self.sub_channel_id,
-                    raw_ipc_sender,
-                    self.ipc_sender_uuid,
-                    Some(keepalive_tx),
-                ))
-            },
-            Err(e) => {
-                log::debug!(
-                    "Failed to create keepalive channel for IPC channel transport: {e}; \
-                     falling back to Sending without crash detection"
-                );
-                self.multi_sender
-                    .lock()
-                    .unwrap()
-                    .send_message(MultiMessage::Sending {
-                        scid: self.sub_channel_id,
-                        // EMPTY_SUBCHANNEL_ID is the sentinel for "not via any subchannel"; the
-                        // matching Received notification in into_sub_sender uses the same key.
-                        via: EMPTY_SUBCHANNEL_ID,
-                        via_chan: IpcSenderAndOrId::IpcSender(
-                            raw_ipc_sender.clone(),
-                            self.ipc_sender_uuid.to_string(),
-                        ),
-                    })?;
-                Ok((
-                    self.sub_channel_id,
-                    raw_ipc_sender,
-                    self.ipc_sender_uuid,
-                    None,
-                ))
-            },
-        }
+        let (keepalive_tx, keepalive_rx) = ipc::channel::<()>()?;
+        self.multi_sender
+            .lock()
+            .unwrap()
+            .send_message(MultiMessage::SendingViaIpcChannel {
+                scid: self.sub_channel_id,
+                keepalive: SyncOpaqueIpcReceiver::new(keepalive_rx.to_opaque()),
+            })?;
+        Ok((
+            self.sub_channel_id,
+            raw_ipc_sender,
+            self.ipc_sender_uuid,
+            Some(keepalive_tx),
+        ))
     }
 
     #[instrument(level = "debug", skip(msg), err(level = "debug"))]
@@ -369,7 +337,7 @@ impl SubChannelSender {
         let mut srs: Vec<(SubChannelId, IpcSenderAndOrId)> =
             Vec::with_capacity(serialized_senders.len());
         for ctx in &serialized_senders {
-            if let Err(e) = ctx.ipc_sender.send(MultiMessage::Sending {
+            ctx.ipc_sender.send(MultiMessage::Sending {
                 scid: ctx.sub_channel_id,
                 via: self.sub_channel_id,
                 via_chan: Self::ipc_sender_and_or_uuid(
@@ -377,9 +345,7 @@ impl SubChannelSender {
                     &self.ipc_sender,
                     self.ipc_sender_uuid,
                 ),
-            }) {
-                log::debug!("Failed to send Sending notification: {e}");
-            }
+            })?;
 
             srs.push((
                 ctx.sub_channel_id,
