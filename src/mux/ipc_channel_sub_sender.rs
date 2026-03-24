@@ -35,7 +35,7 @@ use uuid::Uuid;
 /// let (tx, rx) = channel.sub_channel::<u32>();
 ///
 /// // Wrap the SubSender for IPC channel transport (consuming it).
-/// let transport = mux::IpcChannelSubSender::from(tx);
+/// let transport = mux::IpcChannelSubSender::try_from(tx).unwrap();
 ///
 /// // Send over a raw IPC channel, then reconstruct on the receiving side.
 /// let (raw_tx, raw_rx) = ipc::channel().unwrap();

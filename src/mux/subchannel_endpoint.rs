@@ -270,11 +270,18 @@ impl OpaqueSubReceiver {
     }
 }
 
-impl<T: Serialize> From<SubSender<T>> for IpcChannelSubSender<T> {
-    fn from(sender: SubSender<T>) -> Self {
+impl<T: Serialize> TryFrom<SubSender<T>> for IpcChannelSubSender<T> {
+    type Error = MuxError;
+
+    fn try_from(sender: SubSender<T>) -> Result<Self, MuxError> {
         let (sub_channel_id, ipc_sender, ipc_sender_uuid, keepalive_tx) =
-            sender.sub_channel_sender.begin_ipc_channel_transport();
-        IpcChannelSubSender::new(sub_channel_id, ipc_sender, ipc_sender_uuid, keepalive_tx)
+            sender.sub_channel_sender.begin_ipc_channel_transport()?;
+        Ok(IpcChannelSubSender::new(
+            sub_channel_id,
+            ipc_sender,
+            ipc_sender_uuid,
+            keepalive_tx,
+        ))
     }
 }
 
@@ -323,15 +330,15 @@ impl<T: Serialize> IpcChannelSubSender<T> {
         );
 
         // Register this process as a new source in the state machine.
-        if let Err(e) = arc_ipc_sender.send(MultiMessage::Received {
-            scid: sub_channel_id,
-            // EMPTY_SUBCHANNEL_ID matches the key used by the demuxer's
-            // SendingViaIpcChannel handler when registering the in-flight entry.
-            via: EMPTY_SUBCHANNEL_ID,
-            new_source,
-        }) {
-            log::debug!("Failed to send Received for IPC channel transport: {e}");
-        }
+        arc_ipc_sender
+            .send(MultiMessage::Received {
+                scid: sub_channel_id,
+                // EMPTY_SUBCHANNEL_ID matches the key used by the demuxer's
+                // SendingViaIpcChannel handler when registering the in-flight entry.
+                via: EMPTY_SUBCHANNEL_ID,
+                new_source,
+            })
+            .map_err(MuxError::from)?;
 
         Ok(SubSender::from_sender(sub_channel_sender))
     }

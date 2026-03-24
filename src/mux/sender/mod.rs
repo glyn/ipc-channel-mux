@@ -281,12 +281,15 @@ impl SubChannelSender {
     /// in transit, and can detect a crash of the receiving process.
     pub fn begin_ipc_channel_transport(
         self,
-    ) -> (
-        SubChannelId,
-        IpcSender<MultiMessage>,
-        Uuid,
-        Option<ipc_channel::ipc::IpcSender<()>>,
-    ) {
+    ) -> Result<
+        (
+            SubChannelId,
+            IpcSender<MultiMessage>,
+            Uuid,
+            Option<ipc_channel::ipc::IpcSender<()>>,
+        ),
+        MuxError,
+    > {
         let raw_ipc_sender = (*self.ipc_sender).clone();
         match ipc::channel::<()>() {
             Ok((keepalive_tx, keepalive_rx)) => {
@@ -301,43 +304,37 @@ impl SubChannelSender {
                          crash detection unavailable for this transport"
                     );
                 }
-                (
+                Ok((
                     self.sub_channel_id,
                     raw_ipc_sender,
                     self.ipc_sender_uuid,
                     Some(keepalive_tx),
-                )
+                ))
             },
             Err(e) => {
                 log::debug!(
                     "Failed to create keepalive channel for IPC channel transport: {e}; \
                      falling back to Sending without crash detection"
                 );
-                if let Err(e) =
-                    self.multi_sender
-                        .lock()
-                        .unwrap()
-                        .send_message(MultiMessage::Sending {
-                            scid: self.sub_channel_id,
-                            // EMPTY_SUBCHANNEL_ID is the sentinel for "not via any subchannel"; the
-                            // matching Received notification in into_sub_sender uses the same key.
-                            via: EMPTY_SUBCHANNEL_ID,
-                            via_chan: IpcSenderAndOrId::IpcSender(
-                                raw_ipc_sender.clone(),
-                                self.ipc_sender_uuid.to_string(),
-                            ),
-                        })
-                {
-                    log::debug!(
-                        "Failed to send Sending notification for IPC channel transport: {e}"
-                    );
-                }
-                (
+                self.multi_sender
+                    .lock()
+                    .unwrap()
+                    .send_message(MultiMessage::Sending {
+                        scid: self.sub_channel_id,
+                        // EMPTY_SUBCHANNEL_ID is the sentinel for "not via any subchannel"; the
+                        // matching Received notification in into_sub_sender uses the same key.
+                        via: EMPTY_SUBCHANNEL_ID,
+                        via_chan: IpcSenderAndOrId::IpcSender(
+                            raw_ipc_sender.clone(),
+                            self.ipc_sender_uuid.to_string(),
+                        ),
+                    })?;
+                Ok((
                     self.sub_channel_id,
                     raw_ipc_sender,
                     self.ipc_sender_uuid,
                     None,
-                )
+                ))
             },
         }
     }

@@ -77,7 +77,7 @@ fn ipc_channel_sub_sender_cross_process() {
     // Create the mux channel and wrap the sender for transport.
     let channel = mux::Channel::new().unwrap();
     let (sub_tx, sub_rx) = channel.sub_channel::<u32>();
-    let transport = mux::IpcChannelSubSender::from(sub_tx);
+    let transport = mux::IpcChannelSubSender::try_from(sub_tx).unwrap();
 
     // Create a one-shot server so the child can hand us an IpcSender endpoint.
     // The child will send us an IpcSender<IpcChannelSubSender<u32>> which we
@@ -118,7 +118,7 @@ fn ipc_channel_sub_sender_cross_process_crash() {
 
     let channel = mux::Channel::new().unwrap();
     let (sub_tx, sub_rx) = channel.sub_channel::<u32>();
-    let transport = mux::IpcChannelSubSender::from(sub_tx);
+    let transport = mux::IpcChannelSubSender::try_from(sub_tx).unwrap();
 
     let (bootstrap_server, bootstrap_token) =
         IpcOneShotServer::<RawIpcSender<mux::IpcChannelSubSender<u32>>>::new()
@@ -157,7 +157,7 @@ fn ipc_channel_sub_sender_cross_process_crash_before_recv() {
 
     let channel = mux::Channel::new().unwrap();
     let (sub_tx, sub_rx) = channel.sub_channel::<u32>();
-    let transport = mux::IpcChannelSubSender::from(sub_tx);
+    let transport = mux::IpcChannelSubSender::try_from(sub_tx).unwrap();
 
     let (bootstrap_server, bootstrap_token) = IpcOneShotServer::<(
         RawIpcSender<mux::IpcChannelSubSender<u32>>,

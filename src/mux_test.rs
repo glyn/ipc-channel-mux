@@ -1451,7 +1451,9 @@ fn ipc_channel_sub_sender_basic() {
 
     // Convert the SubSender to a transport wrapper and send it over a raw IPC channel.
     let (raw_tx, raw_rx) = raw_ipc::channel::<IpcChannelSubSender<u32>>().unwrap();
-    raw_tx.send(IpcChannelSubSender::from(tx)).unwrap();
+    raw_tx
+        .send(IpcChannelSubSender::try_from(tx).unwrap())
+        .unwrap();
 
     // Reconstruct the SubSender on the "receiving process" side.
     let transport: IpcChannelSubSender<u32> = raw_rx.recv().unwrap();
@@ -1469,7 +1471,9 @@ fn ipc_channel_sub_sender_original_dropped() {
     let (tx, rx) = channel.sub_channel::<u32>();
 
     let (raw_tx, raw_rx) = raw_ipc::channel::<IpcChannelSubSender<u32>>().unwrap();
-    raw_tx.send(IpcChannelSubSender::from(tx)).unwrap();
+    raw_tx
+        .send(IpcChannelSubSender::try_from(tx).unwrap())
+        .unwrap();
     // The original tx is consumed above; no clone remains on the sending side.
 
     let transport: IpcChannelSubSender<u32> = raw_rx.recv().unwrap();
@@ -1487,7 +1491,9 @@ fn ipc_channel_sub_sender_from_clone() {
     let (tx, rx) = channel.sub_channel::<u32>();
 
     let (raw_tx, raw_rx) = raw_ipc::channel::<IpcChannelSubSender<u32>>().unwrap();
-    raw_tx.send(IpcChannelSubSender::from(tx.clone())).unwrap();
+    raw_tx
+        .send(IpcChannelSubSender::try_from(tx.clone()).unwrap())
+        .unwrap();
 
     let transport: IpcChannelSubSender<u32> = raw_rx.recv().unwrap();
     let recovered_tx: SubSender<u32> = transport.into_sub_sender().unwrap();
@@ -1506,7 +1512,9 @@ fn ipc_channel_sub_sender_dropped_after_reconstruction() {
     let (tx, rx) = channel.sub_channel::<u32>();
 
     let (raw_tx, raw_rx) = raw_ipc::channel::<IpcChannelSubSender<u32>>().unwrap();
-    raw_tx.send(IpcChannelSubSender::from(tx)).unwrap();
+    raw_tx
+        .send(IpcChannelSubSender::try_from(tx).unwrap())
+        .unwrap();
 
     let transport: IpcChannelSubSender<u32> = raw_rx.recv().unwrap();
     let recovered_tx: SubSender<u32> = transport.into_sub_sender().unwrap();
@@ -1527,7 +1535,9 @@ fn ipc_channel_sub_sender_detects_receiver_disconnection() {
     let (tx, rx) = channel.sub_channel::<u32>();
 
     let (raw_tx, raw_rx) = raw_ipc::channel::<IpcChannelSubSender<u32>>().unwrap();
-    raw_tx.send(IpcChannelSubSender::from(tx)).unwrap();
+    raw_tx
+        .send(IpcChannelSubSender::try_from(tx).unwrap())
+        .unwrap();
 
     let transport: IpcChannelSubSender<u32> = raw_rx.recv().unwrap();
     let recovered_tx: SubSender<u32> = transport.into_sub_sender().unwrap();
