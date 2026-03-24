@@ -210,6 +210,15 @@ impl SubChannelDisconnector {
     }
 }
 
+/// Components returned by [`SubChannelSender::begin_ipc_channel_transport`]:
+/// the subchannel ID, raw IPC sender, sender UUID, and optional keepalive sender.
+pub(crate) type IpcChannelTransportParts = (
+    SubChannelId,
+    IpcSender<MultiMessage>,
+    Uuid,
+    Option<ipc_channel::ipc::IpcSender<()>>,
+);
+
 pub struct SubChannelSender {
     sub_channel_id: SubChannelId,
     ipc_sender: Arc<IpcSender<MultiMessage>>,
@@ -279,17 +288,7 @@ impl SubChannelSender {
     /// notification (with a keepalive sender included in the returned value) so the
     /// state machine does not signal premature disconnection while the transport is
     /// in transit, and can detect a crash of the receiving process.
-    pub fn begin_ipc_channel_transport(
-        self,
-    ) -> Result<
-        (
-            SubChannelId,
-            IpcSender<MultiMessage>,
-            Uuid,
-            Option<ipc_channel::ipc::IpcSender<()>>,
-        ),
-        MuxError,
-    > {
+    pub fn begin_ipc_channel_transport(self) -> Result<IpcChannelTransportParts, MuxError> {
         let raw_ipc_sender = (*self.ipc_sender).clone();
         match ipc::channel::<()>() {
             Ok((keepalive_tx, keepalive_rx)) => {
