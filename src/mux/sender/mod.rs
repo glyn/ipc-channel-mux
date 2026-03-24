@@ -319,6 +319,8 @@ impl SubChannelSender {
                         .unwrap()
                         .send_message(MultiMessage::Sending {
                             scid: self.sub_channel_id,
+                            // EMPTY_SUBCHANNEL_ID is the sentinel for "not via any subchannel"; the
+                            // matching Received notification in into_sub_sender uses the same key.
                             via: EMPTY_SUBCHANNEL_ID,
                             via_chan: IpcSenderAndOrId::IpcSender(
                                 raw_ipc_sender.clone(),

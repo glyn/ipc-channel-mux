@@ -309,6 +309,8 @@ impl<T: Serialize> IpcChannelSubSender<T> {
                     disc_multi_sender.clone(),
                 )
                 .dropped();
+                // Keep keepalive_tx alive until the disconnector is dropped; dropping it
+                // signals the demuxer's probe that this sender is gone.
                 let _ = &keepalive_tx;
             })));
 
@@ -323,6 +325,8 @@ impl<T: Serialize> IpcChannelSubSender<T> {
         // Register this process as a new source in the state machine.
         if let Err(e) = arc_ipc_sender.send(MultiMessage::Received {
             scid: sub_channel_id,
+            // EMPTY_SUBCHANNEL_ID matches the key used by the demuxer's
+            // SendingViaIpcChannel handler when registering the in-flight entry.
             via: EMPTY_SUBCHANNEL_ID,
             new_source,
         }) {

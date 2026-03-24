@@ -363,6 +363,8 @@ impl Demuxer {
                     // Convert the opaque receiver to a typed one and wrap in a
                     // Mutex so the Fn() probe closure can call try_recv repeatedly.
                     let rx = Arc::new(Mutex::new(keepalive.into_inner().to::<()>()));
+                    // EMPTY_SUBCHANNEL_ID is the sentinel for "not via any subchannel"; the
+                    // matching Received notification in into_sub_sender uses the same key.
                     sm.to_be_sent(
                         EMPTY_SUBCHANNEL_ID,
                         Box::new(move || match rx.lock().unwrap().try_recv() {
