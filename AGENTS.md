@@ -16,6 +16,15 @@ Do not swallow errors, log them using log::debug!().
 
 Keep struct fields private.
 
+## Visibility
+
+Prefer `pub` over `pub(crate)`. `pub(crate)` grants visibility crate-wide
+regardless of module hierarchy, which is broader than necessary for items that
+are not part of the crate's public API. When an item's containing type or
+module is not re-exported, `pub` is sufficient: the module system naturally
+limits access to callers that can reach the module, without artificially
+flattening visibility across the whole crate.
+
 ## git history
 
 Do not amend commits without confirming with the user.
