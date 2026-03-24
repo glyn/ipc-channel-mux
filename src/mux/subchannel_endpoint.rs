@@ -274,13 +274,7 @@ impl<T: Serialize> From<SubSender<T>> for IpcChannelSubSender<T> {
     fn from(sender: SubSender<T>) -> Self {
         let (sub_channel_id, ipc_sender, ipc_sender_uuid, keepalive_tx) =
             sender.sub_channel_sender.begin_ipc_channel_transport();
-        IpcChannelSubSender {
-            sub_channel_id,
-            ipc_sender,
-            ipc_sender_uuid,
-            keepalive_tx,
-            _phantom: PhantomData,
-        }
+        IpcChannelSubSender::new(sub_channel_id, ipc_sender, ipc_sender_uuid, keepalive_tx)
     }
 }
 
@@ -295,13 +289,7 @@ impl<T: Serialize> IpcChannelSubSender<T> {
     /// disconnection via `is_receiver_connected`, and sends `Disconnect` when
     /// dropped.
     pub fn into_sub_sender(self) -> Result<SubSender<T>, MuxError> {
-        let IpcChannelSubSender {
-            sub_channel_id,
-            ipc_sender,
-            ipc_sender_uuid,
-            keepalive_tx,
-            _phantom: _,
-        } = self;
+        let (sub_channel_id, ipc_sender, ipc_sender_uuid, keepalive_tx) = self.into_parts();
         let arc_ipc_sender = Arc::new(ipc_sender);
         let new_source = Uuid::new_v4();
         let multi_sender = MultiSender::connect_sender(arc_ipc_sender.clone(), ipc_sender_uuid)?;

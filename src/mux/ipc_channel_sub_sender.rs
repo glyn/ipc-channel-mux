@@ -63,14 +63,47 @@ use uuid::Uuid;
 #[derive(Serialize, Deserialize)]
 #[serde(bound = "")]
 pub struct IpcChannelSubSender<T> {
-    pub(crate) sub_channel_id: SubChannelId,
-    pub(crate) ipc_sender: RawIpcSender<MultiMessage>,
-    pub(crate) ipc_sender_uuid: Uuid,
+    sub_channel_id: SubChannelId,
+    ipc_sender: RawIpcSender<MultiMessage>,
+    ipc_sender_uuid: Uuid,
     /// Keepalive sender. Held by the receiving process as long as this wrapper
     /// (or the `SubSender` reconstructed from it) is alive; dropping it signals
     /// the parent's probe that the receiver has crashed or finished.
     /// `None` when keepalive channel creation failed at transport time.
-    pub(crate) keepalive_tx: Option<RawIpcSender<()>>,
+    keepalive_tx: Option<RawIpcSender<()>>,
     #[serde(skip)]
-    pub(crate) _phantom: PhantomData<T>,
+    _phantom: PhantomData<T>,
+}
+
+impl<T> IpcChannelSubSender<T> {
+    pub(crate) fn new(
+        sub_channel_id: SubChannelId,
+        ipc_sender: RawIpcSender<MultiMessage>,
+        ipc_sender_uuid: Uuid,
+        keepalive_tx: Option<RawIpcSender<()>>,
+    ) -> Self {
+        IpcChannelSubSender {
+            sub_channel_id,
+            ipc_sender,
+            ipc_sender_uuid,
+            keepalive_tx,
+            _phantom: PhantomData,
+        }
+    }
+
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        SubChannelId,
+        RawIpcSender<MultiMessage>,
+        Uuid,
+        Option<RawIpcSender<()>>,
+    ) {
+        (
+            self.sub_channel_id,
+            self.ipc_sender,
+            self.ipc_sender_uuid,
+            self.keepalive_tx,
+        )
+    }
 }
