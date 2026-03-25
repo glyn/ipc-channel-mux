@@ -704,10 +704,7 @@ impl MultiReceiver {
                 ipc_channel::TryRecvError::IpcError(ipc_error) => {
                     TryRecvError::MuxError(ipc_error.into())
                 },
-                ipc_channel::TryRecvError::Empty => {
-                    mr.poll(demuxer);
-                    TryRecvError::Empty
-                },
+                ipc_channel::TryRecvError::Empty => TryRecvError::Empty,
             }),
         }
     }
@@ -945,7 +942,14 @@ impl SubChannelReceiver {
 
         // Do a non-blocking receive from the IPC channel to demux any pending messages.
         match MultiReceiver::try_recv(&self.multi_receiver) {
-            Ok(()) | Err(TryRecvError::Empty | TryRecvError::Handled) => {},
+            Ok(()) | Err(TryRecvError::Handled) => {},
+            Err(TryRecvError::Empty) => {
+                // IPC is empty; poll state machines to detect any pending disconnects.
+                // This is done here rather than inside MultiReceiver::try_recv() to
+                // avoid O(n²) behaviour when drain() drops n subchannels.
+                let demuxer = self.multi_receiver.receiver_demuxer.demuxer.lock().unwrap();
+                self.multi_receiver.poll(demuxer);
+            },
             Err(TryRecvError::MuxError(e)) => {
                 return Err(crate::mux::error::TryRecvError::MuxError(e));
             },
