@@ -301,7 +301,14 @@ impl Demuxer {
                 if let Some(sm) = self.sub_channels.get(&scid) {
                     log::trace!("About to send disconnect to SubSenderStateMachine");
                     if let Some(sender) = sm.disconnect(source) {
-                        sender.send(ResolvedMessageOrDisconnect::Disconnect(scid))?;
+                        // Restore the sender rather than immediately signalling
+                        // Disconnect via mpsc. On some platforms IPC message
+                        // ordering is not strictly guaranteed, so a Data message
+                        // may arrive after this Disconnect. Keeping the sender
+                        // alive lets handle(Data) still deliver such messages.
+                        // poll() will detect that all sources have disconnected
+                        // and signal Disconnect once the IPC channel is empty.
+                        sm.switch_sender(sender);
                     }
                 }
 
@@ -697,7 +704,10 @@ impl MultiReceiver {
                 ipc_channel::TryRecvError::IpcError(ipc_error) => {
                     TryRecvError::MuxError(ipc_error.into())
                 },
-                ipc_channel::TryRecvError::Empty => TryRecvError::Empty,
+                ipc_channel::TryRecvError::Empty => {
+                    mr.poll(demuxer);
+                    TryRecvError::Empty
+                },
             }),
         }
     }
@@ -719,7 +729,12 @@ impl MultiReceiver {
                 Ok(())
             },
             Err(ipc_channel::TryRecvError::IpcError(ipc_error)) => {
-                Err(TryRecvError::MuxError(ipc_error.into()))
+                let probe_failed = mr.poll(demuxer);
+                if probe_failed {
+                    Ok(())
+                } else {
+                    Err(TryRecvError::MuxError(ipc_error.into()))
+                }
             },
         }
     }
