@@ -29,3 +29,5 @@ jobs:
 
       - name: Cargo test
         run: cargo test --target ${{ matrix.target }} -- --nocapture
+        env:
+          RUST_MIN_STACK: ${{ contains(matrix.target, 'windows') && '16777216' || '' }}
