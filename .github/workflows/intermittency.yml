@@ -1,0 +1,29 @@
+name: Intermittency
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: ${{ format('{0} run {1}', matrix.target, matrix.run) }}
+    runs-on: windows-latest
+    continue-on-error: true
+    env:
+      RUST_BACKTRACE: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - x86_64-pc-windows-msvc
+          - i686-pc-windows-msvc
+        run: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cargo test
+        run: cargo test --target ${{ matrix.target }} -- --nocapture
