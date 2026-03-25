@@ -302,12 +302,13 @@ impl Demuxer {
                     log::trace!("About to send disconnect to SubSenderStateMachine");
                     if let Some(sender) = sm.disconnect(source) {
                         // Restore the sender rather than immediately signalling
-                        // Disconnect via mpsc. On some platforms IPC message
-                        // ordering is not strictly guaranteed, so a Data message
-                        // may arrive after this Disconnect. Keeping the sender
-                        // alive lets handle(Data) still deliver such messages.
-                        // poll() will detect that all sources have disconnected
-                        // and signal Disconnect once the IPC channel is empty.
+                        // Disconnect via mpsc. If we signalled immediately, a
+                        // caller receiving from the mpsc channel could see
+                        // Disconnect before a Data message that is already in
+                        // the IPC queue but not yet processed. By keeping the
+                        // sender alive, handle(Data) can still deliver any such
+                        // messages. poll() signals Disconnect only once the IPC
+                        // channel is observed to be empty.
                         sm.switch_sender(sender);
                     }
                 }
