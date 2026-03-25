@@ -3,7 +3,7 @@ name: Intermittency
 on:
   workflow_dispatch:
   push:
-    branches: [33-intermittency]
+    branches: [33-try-stable-toolset]
 
 jobs:
   test:
