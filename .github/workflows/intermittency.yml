@@ -2,6 +2,8 @@ name: Intermittency
 
 on:
   workflow_dispatch:
+  push:
+    branches: [33-intermittency]
 
 jobs:
   test:
