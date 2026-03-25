@@ -151,6 +151,11 @@ pub struct Demuxer {
     sub_channels: HashMap<SubChannelId, Arc<SubSenderStateMachine>>,
     disconnectors: WeakValueHashMap<SubChannelId, Weak<SubSenderTracker<dyn Fn() + Send + Sync>>>,
     ipc_senders_by_id: Target,
+    /// Set when handle(Disconnect) defers signalling via switch_sender. The
+    /// caller should immediately drain any remaining IPC messages and then call
+    /// poll() so that Data sent before the Disconnect is delivered to the mpsc
+    /// channel before the Disconnect signal is placed there.
+    sender_switched: bool,
 }
 
 impl std::fmt::Debug for Demuxer {
@@ -169,6 +174,7 @@ impl Demuxer {
             sub_channels: HashMap::new(),
             disconnectors: WeakValueHashMap::new(),
             ipc_senders_by_id: Target::new(),
+            sender_switched: false,
         }
     }
 
@@ -180,6 +186,7 @@ impl Demuxer {
             sub_channels: HashMap::new(),
             disconnectors: WeakValueHashMap::new(),
             ipc_senders_by_id: Target::new(),
+            sender_switched: false,
         }
     }
 
@@ -307,9 +314,14 @@ impl Demuxer {
                         // Disconnect before a Data message that is already in
                         // the IPC queue but not yet processed. By keeping the
                         // sender alive, handle(Data) can still deliver any such
-                        // messages. poll() signals Disconnect only once the IPC
-                        // channel is observed to be empty.
+                        // messages.
+                        //
+                        // Set sender_switched so the caller drains remaining
+                        // IPC messages immediately and then calls poll().
+                        // poll() signals Disconnect once the IPC channel is
+                        // observed to be empty.
                         sm.switch_sender(sender);
+                        self.sender_switched = true;
                     }
                 }
 
@@ -719,9 +731,25 @@ impl MultiReceiver {
     ) -> Result<(), TryRecvError> {
         let result = mr.receiver_demuxer.ipc_receiver.try_recv_timeout(duration);
         match result {
-            Ok(msg) => demuxer
-                .handle(msg, mr.ipc_receiver_uuid)
-                .map_err(TryRecvError::MuxError),
+            Ok(msg) => {
+                demuxer
+                    .handle(msg, mr.ipc_receiver_uuid)
+                    .map_err(TryRecvError::MuxError)?;
+                if std::mem::take(&mut demuxer.sender_switched) {
+                    // A Disconnect was processed and switch_sender was applied.
+                    // Drain remaining IPC messages immediately so any Data that
+                    // was sent before the Disconnect (and may arrive out of
+                    // order) is delivered to the mpsc channel before Disconnect
+                    // is signalled there by poll().
+                    while let Ok(m) = mr.receiver_demuxer.ipc_receiver.try_recv() {
+                        demuxer
+                            .handle(m, mr.ipc_receiver_uuid)
+                            .map_err(TryRecvError::MuxError)?;
+                    }
+                    mr.poll(demuxer);
+                }
+                Ok(())
+            },
             Err(ipc_channel::TryRecvError::Empty) => {
                 mr.poll(demuxer);
                 Ok(())
