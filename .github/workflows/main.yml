@@ -105,6 +105,7 @@ jobs:
               exit 1
             }
           }
+          exit 0
         env:
           RUST_MIN_STACK: ${{ contains(matrix.platform.target, 'windows') && '16777216' || '' }}
 
