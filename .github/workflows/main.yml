@@ -93,7 +93,16 @@ jobs:
           $testExes = [regex]::Matches($buildOutput, 'Executable unittests.*\(([^)]+)\)') | ForEach-Object { $_.Groups[1].Value }
           foreach ($exe in $testExes) {
             Write-Host "Running under procdump: $exe"
-            & "${{ runner.temp }}\Procdump\procdump.exe" -accepteula -e -ma -x "${{ github.workspace }}\CrashDumps" $exe --nocapture
+            $output = & "${{ runner.temp }}\Procdump\procdump.exe" -accepteula -e -ma -x "${{ github.workspace }}\CrashDumps" $exe --nocapture 2>&1 | Out-String
+            Write-Host $output
+            # Extract the child process exit code from procdump output
+            if ($output -match 'Exit Code\s+0x([0-9A-Fa-f]+)') {
+              $childExit = [Convert]::ToUInt32($Matches[1], 16)
+              if ($childExit -ne 0) {
+                Write-Host "Test process exited with code 0x$($Matches[1])"
+                exit 1
+              }
+            }
           }
         env:
           RUST_MIN_STACK: ${{ contains(matrix.platform.target, 'windows') && '16777216' || '' }}
