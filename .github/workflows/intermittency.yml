@@ -29,8 +29,25 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Enable Windows crash dumps
+        shell: pwsh
+        run: |
+          New-Item -Path "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" -Force
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" -Name "DumpFolder" -Value "${{ github.workspace }}\CrashDumps" -Type ExpandString
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" -Name "DumpType" -Value 2 -Type DWord
+          Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting\LocalDumps" -Name "DumpCount" -Value 10 -Type DWord
+          New-Item -Path "${{ github.workspace }}\CrashDumps" -ItemType Directory -Force
+
       - name: Cargo test
         run: cargo test --target ${{ matrix.target }} -- --nocapture
         env:
           RUST_MIN_STACK: ${{ contains(matrix.target, 'windows') && '16777216' || '' }}
+
+      - name: Upload crash dumps
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: crash-dumps-${{ matrix.target }}-run${{ matrix.run }}
+          path: ${{ github.workspace }}/CrashDumps/
+          if-no-files-found: ignore
 
