@@ -71,6 +71,7 @@ jobs:
         run: |
           Invoke-WebRequest -Uri "https://download.sysinternals.com/files/Procdump.zip" -OutFile "${{ runner.temp }}\Procdump.zip"
           Expand-Archive -Path "${{ runner.temp }}\Procdump.zip" -DestinationPath "${{ runner.temp }}\Procdump"
+          New-Item -Path "${{ github.workspace }}\CrashDumps" -ItemType Directory -Force
           & "${{ runner.temp }}\Procdump\procdump.exe" -accepteula -i "${{ github.workspace }}\CrashDumps"
 
       - name: Cargo test
