@@ -996,7 +996,7 @@ fn try_recv_timeout_message_arrives_during_wait() {
     let (tx, rx) = channel.sub_channel();
     let timeout = Duration::from_secs(5);
     thread::spawn(move || {
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(50));
         tx.send(77).unwrap();
     });
     let start = Instant::now();
@@ -1256,7 +1256,7 @@ fn bytes_try_recv_timeout_message_arrives_during_wait() {
     let (tx, rx) = channel.bytes_sub_channel();
     let timeout = Duration::from_secs(5);
     thread::spawn(move || {
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(50));
         tx.send(b"delayed").unwrap();
     });
     let start = Instant::now();
