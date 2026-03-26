@@ -89,19 +89,20 @@ jobs:
         if: contains(matrix.platform.target, 'windows')
         shell: pwsh
         run: |
+          # Prevent PowerShell 7.4+ from treating non-zero native exit codes as errors.
+          # procdump exits 1 when no dumps are captured (i.e. tests pass).
+          $PSNativeCommandUseErrorActionPreference = $false
           $buildOutput = Get-Content "${{ runner.temp }}\build-output.txt" -Raw
           $testExes = [regex]::Matches($buildOutput, 'Executable unittests.*\(([^)]+)\)') | ForEach-Object { $_.Groups[1].Value }
           foreach ($exe in $testExes) {
             Write-Host "Running under procdump: $exe"
-            $output = & "${{ runner.temp }}\Procdump\procdump.exe" -accepteula -e -ma -x "${{ github.workspace }}\CrashDumps" $exe --nocapture 2>&1 | Out-String
-            Write-Host $output
-            # Extract the child process exit code from procdump output
-            if ($output -match 'Exit Code\s+0x([0-9A-Fa-f]+)') {
-              $childExit = [Convert]::ToUInt32($Matches[1], 16)
-              if ($childExit -ne 0) {
-                Write-Host "Test process exited with code 0x$($Matches[1])"
-                exit 1
-              }
+            & "${{ runner.temp }}\Procdump\procdump.exe" -accepteula -e -ma -x "${{ github.workspace }}\CrashDumps" $exe --nocapture
+            # procdump exit code is about dump capture, not the child process.
+            # Check for dump files to detect a crash.
+            $dumps = Get-ChildItem "${{ github.workspace }}\CrashDumps" -Filter "*.dmp" -ErrorAction SilentlyContinue
+            if ($dumps) {
+              Write-Host "Crash dump(s) captured: $($dumps.Name -join ', ')"
+              exit 1
             }
           }
         env:
