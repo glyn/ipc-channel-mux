@@ -72,18 +72,31 @@ jobs:
           Invoke-WebRequest -Uri "https://download.sysinternals.com/files/Procdump.zip" -OutFile "${{ runner.temp }}\Procdump.zip"
           Expand-Archive -Path "${{ runner.temp }}\Procdump.zip" -DestinationPath "${{ runner.temp }}\Procdump"
           New-Item -Path "${{ github.workspace }}\CrashDumps" -ItemType Directory -Force
-          & "${{ runner.temp }}\Procdump\procdump.exe" -accepteula -i "${{ github.workspace }}\CrashDumps"
 
       - name: Cargo test
+        if: "!contains(matrix.platform.target, 'windows')"
         run: cargo test --features "${{ matrix.features }}" --target ${{ matrix.platform.target }} -- --nocapture
         env:
           RUST_MIN_STACK: ${{ contains(matrix.platform.target, 'windows') && '16777216' || '' }}
 
-      - name: Uninstall procdump
-        if: always() && contains(matrix.platform.target, 'windows')
+      - name: Build tests (Windows)
+        if: contains(matrix.platform.target, 'windows')
+        run: cargo test --features "${{ matrix.features }}" --target ${{ matrix.platform.target }} --no-run 2>&1 | tee "${{ runner.temp }}\build-output.txt"
+        env:
+          RUST_MIN_STACK: ${{ contains(matrix.platform.target, 'windows') && '16777216' || '' }}
+
+      - name: Run tests under procdump (Windows)
+        if: contains(matrix.platform.target, 'windows')
         shell: pwsh
         run: |
-          & "${{ runner.temp }}\Procdump\procdump.exe" -u
+          $buildOutput = Get-Content "${{ runner.temp }}\build-output.txt" -Raw
+          $testExes = [regex]::Matches($buildOutput, 'Executable unittests.*\(([^)]+)\)') | ForEach-Object { $_.Groups[1].Value }
+          foreach ($exe in $testExes) {
+            Write-Host "Running under procdump: $exe"
+            & "${{ runner.temp }}\Procdump\procdump.exe" -accepteula -e -ma -x "${{ github.workspace }}\CrashDumps" $exe --nocapture
+          }
+        env:
+          RUST_MIN_STACK: ${{ contains(matrix.platform.target, 'windows') && '16777216' || '' }}
 
       - name: Upload crash dumps
         if: failure() && contains(matrix.platform.target, 'windows')
