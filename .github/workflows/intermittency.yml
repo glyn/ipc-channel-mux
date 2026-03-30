@@ -79,11 +79,13 @@ jobs:
           RUST_LOG: trace
           RUST_MIN_STACK: ${{ contains(matrix.target, 'windows') && '16777216' || '' }}
 
-      - name: Upload crash dumps
+      - name: Upload crash dumps and symbols
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: crash-dumps-${{ matrix.target }}-run${{ matrix.run }}
-          path: ${{ github.workspace }}/CrashDumps/
+          path: |
+            ${{ github.workspace }}/CrashDumps/
+            ${{ github.workspace }}/target/${{ matrix.target }}/debug/deps/*.pdb
           if-no-files-found: ignore
 
