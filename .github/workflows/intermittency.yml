@@ -41,6 +41,17 @@ jobs:
         env:
           RUST_MIN_STACK: ${{ contains(matrix.target, 'windows') && '16777216' || '' }}
 
+      - name: Enable Page Heap
+        shell: pwsh
+        run: |
+          $buildOutput = Get-Content "${{ runner.temp }}\build-output.txt" -Raw
+          $testExes = [regex]::Matches($buildOutput, 'Executable.*\(([^)]+)\)') | ForEach-Object { $_.Groups[1].Value }
+          foreach ($exe in $testExes) {
+            $name = Split-Path $exe -Leaf
+            Write-Host "Enabling full page heap for $name"
+            & gflags /p /enable $name /full
+          }
+
       - name: Run tests under procdump
         shell: pwsh
         run: |
