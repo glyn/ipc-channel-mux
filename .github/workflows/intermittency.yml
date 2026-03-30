@@ -49,7 +49,10 @@ jobs:
           foreach ($exe in $testExes) {
             $name = Split-Path $exe -Leaf
             Write-Host "Enabling full page heap for $name"
-            & gflags /p /enable $name /full
+            $key = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\$name"
+            New-Item -Path $key -Force | Out-Null
+            Set-ItemProperty -Path $key -Name "GlobalFlag" -Value 0x02000000 -Type DWord
+            Set-ItemProperty -Path $key -Name "PageHeapFlags" -Value 0x3 -Type DWord
           }
 
       - name: Run tests under procdump
