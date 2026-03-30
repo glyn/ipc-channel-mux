@@ -79,13 +79,17 @@ jobs:
           RUST_LOG: trace
           RUST_MIN_STACK: ${{ contains(matrix.target, 'windows') && '16777216' || '' }}
 
+      - name: Collect symbols
+        if: failure()
+        shell: pwsh
+        run: |
+          Copy-Item "${{ github.workspace }}\target\${{ matrix.target }}\debug\deps\*.pdb" "${{ github.workspace }}\CrashDumps\" -ErrorAction SilentlyContinue
+
       - name: Upload crash dumps and symbols
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: crash-dumps-${{ matrix.target }}-run${{ matrix.run }}
-          path: |
-            ${{ github.workspace }}/CrashDumps/
-            ${{ github.workspace }}/target/${{ matrix.target }}/debug/deps/*.pdb
+          path: ${{ github.workspace }}/CrashDumps/
           if-no-files-found: ignore
 
