@@ -93,7 +93,7 @@ jobs:
           # procdump exits 1 when no dumps are captured (i.e. tests pass).
           $PSNativeCommandUseErrorActionPreference = $false
           $buildOutput = Get-Content "${{ runner.temp }}\build-output.txt" -Raw
-          $testExes = [regex]::Matches($buildOutput, 'Executable unittests.*\(([^)]+)\)') | ForEach-Object { $_.Groups[1].Value }
+          $testExes = [regex]::Matches($buildOutput, 'Executable.*\(([^)]+)\)') | ForEach-Object { $_.Groups[1].Value }
           foreach ($exe in $testExes) {
             Write-Host "Running under procdump: $exe"
             & "${{ runner.temp }}\Procdump\procdump.exe" -accepteula -e -ma -x "${{ github.workspace }}\CrashDumps" $exe --nocapture
