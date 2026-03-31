@@ -3,7 +3,7 @@ name: Intermittency
 on:
   workflow_dispatch:
   push:
-    branches: [33-windows-ci-access-violation]
+    branches: [33-baseline]
 
 jobs:
   test:
