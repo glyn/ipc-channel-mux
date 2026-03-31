@@ -3,7 +3,7 @@ name: Intermittency
 on:
   workflow_dispatch:
   push:
-    branches: [33-baseline]
+    branches: [33-with-message-loss-fix]
 
 jobs:
   test:
