@@ -96,7 +96,7 @@ jobs:
           $testExes = [regex]::Matches($buildOutput, 'Executable.*\(([^)]+)\)') | ForEach-Object { $_.Groups[1].Value }
           foreach ($exe in $testExes) {
             Write-Host "Running under procdump: $exe"
-            & "${{ runner.temp }}\Procdump\procdump.exe" -accepteula -e -ma -x "${{ github.workspace }}\CrashDumps" $exe -- -- --nocapture
+            & "${{ runner.temp }}\Procdump\procdump.exe" -accepteula -e -ma -x "${{ github.workspace }}\CrashDumps" $exe
             # procdump exit code is about dump capture, not the child process.
             # Check for dump files to detect a crash.
             $dumps = Get-ChildItem "${{ github.workspace }}\CrashDumps" -Filter "*.dmp" -ErrorAction SilentlyContinue
@@ -108,6 +108,7 @@ jobs:
           exit 0
         env:
           RUST_MIN_STACK: ${{ contains(matrix.platform.target, 'windows') && '16777216' || '' }}
+          RUST_TEST_NOCAPTURE: 1
 
       - name: Upload crash dumps
         if: failure() && contains(matrix.platform.target, 'windows')
