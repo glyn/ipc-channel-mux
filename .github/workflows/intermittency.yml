@@ -76,7 +76,6 @@ jobs:
           }
           exit 0
         env:
-          RUST_LOG: trace
           RUST_MIN_STACK: ${{ contains(matrix.target, 'windows') && '16777216' || '' }}
           RUST_TEST_NOCAPTURE: 1
 
