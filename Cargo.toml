@@ -1,6 +1,6 @@
 [package]
 name = "ipc-channel-mux"
-version = "0.0.9"
+version = "0.0.10"
 description = "IPC channel multiplexer"
 authors = ["The Servo Project Developers"]
 license = "MIT OR Apache-2.0"
