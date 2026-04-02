@@ -10,6 +10,12 @@ The `serde` library is used to serialize and deserialize messages sent over `ipc
 
 [^mux]: The term _mux_ is an abbreviation for multiplexer.
 
+## Important caveats
+
+1. The author of this crate makes no commitment to maintain the code henceforth.
+2. Some latter changes were implemented using Claude Code. If this is not acceptable, those areas would need to be re-implemented.
+3. There is at least one [undiagnosed issue](https://github.com/glyn/ipc-channel-mux/issues/33) on Windows which surfaces as intermittent failures in CI testing. It seems likely that the unsafe Windows code in `ipc-channel` is responsible, but it is conceivable that this crate is to blame.
+
 ## Design goals
 
 * **Resource efficiency**: Multiplex subchannels over shared IPC channels to reduce OS resource consumption (file descriptors, sockets, etc.). Subsenders can be cloned and sent without consuming additional OS resources. See [When is multiplexing beneficial?](#when-is-multiplexing-beneficial) for more detail.
